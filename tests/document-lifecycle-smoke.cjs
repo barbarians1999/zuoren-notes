@@ -1,0 +1,69 @@
+const {test, after}=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs/promises');
+const path=require('node:path');
+const {spawnSync}=require('node:child_process');
+const {_electron:electron}=require('playwright');
+const appRoot=path.resolve(__dirname,'..');
+let application;
+after(async()=>{
+ const child=application?.process();
+ if(child) { try{await Promise.race([application.close(),new Promise(r=>setTimeout(r,2500))]);}catch{} if(child.exitCode===null)spawnSync('taskkill',['/PID',String(child.pid),'/T','/F'],{stdio:'ignore'}); }
+});
+test('table editing, source clipboard, undo, reload, conflict and close save', {timeout:90000}, async()=>{
+ const fixture=await fs.mkdtemp(path.join(appRoot,'work','lifecycle-')),userData=path.join(fixture,'profile');
+ const note=path.join(fixture,'table.md'),other=path.join(fixture,'other.md');
+ const original='# Title\n\n| Left | Right |\n| :--- | ---: |\n| **bold** | value |\n\n~~~md\n# literal\n- [ ] literal\n~~~\n\n`<br />` and \\~~literal~~\n';
+ await fs.writeFile(note,original);await fs.writeFile(other,'# Other\n\nsecond\n');
+ const executablePath=process.env.ZHAOYE_SMOKE_EXECUTABLE||path.join(appRoot,'node_modules/electron/dist/electron.exe');
+ application=await electron.launch({executablePath,args:process.env.ZHAOYE_SMOKE_EXECUTABLE?[fixture]:[appRoot,fixture],env:{...process.env,ZHAOYE_TEST_USER_DATA:userData}});
+ assert.equal(await application.evaluate(({app})=>app.getVersion()),require('../package.json').version,'test the expected release, not a stale executable');
+ const page=await application.firstWindow();page.setDefaultTimeout(10000);
+ const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.locator('.file-row').filter({hasText:'table.md'}).click();
+ const editor=page.locator('.markdown-source-editor .cm-content');
+ await editor.waitFor();
+ const table=page.locator('.cm-md-table table');await table.waitFor();
+ assert.equal(await table.locator('th').count(),2);
+ assert.match(await table.locator('th').nth(1).evaluate(el=>getComputedStyle(el).textAlign),/right$/);
+ await page.screenshot({path:path.join(fixture,'table-live-preview.png')});
+ assert.equal(await page.locator('.cm-md-task-checkbox').count(),0,'code sample must not contain live checkbox');
+ await table.locator('td').last().click();
+ await page.waitForFunction(()=>!document.querySelector('.cm-md-table'));
+ await page.keyboard.insertText('EDIT-');
+ await page.keyboard.press('Control+Home');
+ await table.waitFor();assert.match(await table.innerText(),/EDIT-/);
+ await page.keyboard.press('Control+z');
+ await page.waitForFunction(()=>!document.querySelector('.cm-content')?.textContent?.includes('EDIT-'));
+ await page.keyboard.press('Control+Home');
+ await page.keyboard.press('Control+a');
+ const copied=await editor.evaluate(el=>{
+  const data=new DataTransfer();el.dispatchEvent(new ClipboardEvent('copy',{clipboardData:data,bubbles:true,cancelable:true}));
+  return {plain:data.getData('text/plain'),md:data.getData('text/markdown')};
+ });
+ assert.equal(copied.md,original);assert.equal(copied.plain,original);
+ await page.keyboard.press('ArrowRight');
+ await editor.evaluate(el=>{
+  const data=new DataTransfer();data.setData('text/html','<p><strong>rich</strong><br>line two</p><ul><li>list</li></ul>');
+  el.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));
+ });
+ await page.waitForTimeout(1400);
+ const pasted=await fs.readFile(note,'utf8');assert.match(pasted,/\*\*rich\*\*/);assert.match(pasted,/line two/);assert.match(pasted,/- list/);
+ // Clean external reload then Ctrl+Z must not silently discard that disk version.
+ await fs.writeFile(note,'# External\n\nexternal-body\n');
+ await page.waitForFunction(()=>document.querySelector('.cm-content')?.textContent?.includes('external-body'),null,{timeout:8000});
+ await editor.click();await page.keyboard.press('Control+z');
+ assert.match(await editor.innerText(),/external-body/,'undo cannot restore a pre-reload document');
+ await page.locator('.file-row').filter({hasText:'other.md'}).click();await page.waitForFunction(()=>document.querySelector('.cm-content')?.textContent?.includes('second'));
+ await page.locator('.file-row').filter({hasText:'table.md'}).click();await page.waitForFunction(()=>document.querySelector('.cm-content')?.textContent?.includes('external-body'));
+ await editor.click();await page.keyboard.press('Control+End');await page.keyboard.insertText('local-unsaved');
+ await fs.writeFile(note,'# Disk\n\ndisk-version\n');
+ await page.getByRole('button',{name:'保留我的内容',exact:true}).waitFor();
+ await page.getByRole('button',{name:'保留我的内容',exact:true}).click();
+ await page.waitForTimeout(1600);assert.match(await fs.readFile(note,'utf8'),/local-unsaved/);
+ await editor.click();await page.keyboard.press('Control+End');await page.keyboard.insertText('close-flush');
+ await application.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());
+ await application.waitForEvent('close',{timeout:12000});
+ assert.match(await fs.readFile(note,'utf8'),/close-flush/);application=undefined;
+ assert.deepEqual(errors,[]);
+});

@@ -1,0 +1,104 @@
+{
+  "name": "zuoren-notes-reader",
+  "productName": "左人笔记",
+  "version": "0.2.13",
+  "type": "module",
+  "description": "本地 PDF、EPUB 与 Markdown 研究阅读和笔记软件",
+  "private": true,
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "start": "electron .",
+    "test": "node --test tests/*.test.cjs",
+    "download:ocr": "node scripts/download-ocr.cjs",
+    "package": "node scripts/package.cjs",
+    "package:installer": "pnpm verify && node scripts/installer.cjs",
+    "test:editor": "node --test --test-concurrency=1 tests/source-editor-smoke.cjs tests/document-lifecycle-smoke.cjs tests/clipboard-smoke.cjs tests/linebreak-smoke.cjs",
+    "test:readers": "node tests/readers-smoke.cjs",
+    "test:workspace": "node --test --test-concurrency=1 tests/startup-preservation-smoke.cjs tests/settings-startup-smoke.cjs tests/appearance-smoke.cjs tests/path-reuse-smoke.cjs tests/recovery-smoke.cjs tests/electron-smoke.cjs",
+    "verify": "pnpm build && pnpm test && pnpm test:editor && pnpm test:readers && pnpm test:workspace"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.11.0",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/state": "^6.7.2",
+    "@codemirror/view": "^6.43.11",
+    "clsx": "^2.1.1",
+    "codemirror": "^6.0.2",
+    "dompurify": "^3.4.14",
+    "epubjs": "^0.3.93",
+    "lucide-react": "^1.40.0",
+    "marked": "^18.0.11",
+    "pdfjs-dist": "^6.3.289",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tesseract.js": "^7.0.0"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "@types/node": "^26.4.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "electron": "^44.1.1",
+    "electron-builder": "24.13.3",
+    "jszip": "^3.10.1",
+    "pdf-lib": "^1.17.1",
+    "playwright": "^1.62.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2"
+  },
+  "build": {
+    "appId": "com.zuoren.notes",
+    "productName": "左人笔记",
+    "asar": true,
+    "npmRebuild": false,
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "src/sessionState.cjs",
+      "package.json"
+    ],
+    "directories": {
+      "output": "../../Documents/Codex/2026-09-05/bang-w/outputs/左人笔记-Windows-Setup"
+    },
+    "fileAssociations": [
+      {
+        "ext": [
+          "md",
+          "markdown"
+        ],
+        "name": "ZuorenNotes.Markdown",
+        "description": "Markdown 文档",
+        "role": "Editor"
+      }
+    ],
+    "win": {
+      "icon": "electron/assets/app.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "executableName": "ZuorenNotes",
+      "artifactName": "左人笔记-Setup-${version}.${ext}",
+      "signAndEditExecutable": true
+    },
+    "nsis": {
+      "installerIcon": "electron/assets/app.ico",
+      "uninstallerIcon": "electron/assets/app.ico",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "左人笔记",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true
+    }
+  }
+}
