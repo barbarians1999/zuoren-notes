@@ -53,6 +53,7 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, setText,
   const host = useRef<HTMLDivElement>(null);
   const findInput = useRef<HTMLInputElement>(null);
   const replaceInput = useRef<HTMLInputElement>(null);
+  const findFocusTarget = useRef<'find' | 'replace'>('find');
   const lastPath = useRef(note?.path);
   const totalUnits = useMemo(() => note ? countMarkdownUnits(text) : 0, [note, text]);
   const matches = useMemo(() => mode === 'preview'
@@ -100,16 +101,15 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, setText,
       if (scroller) { scroller.removeEventListener('scroll', onScroll); capture(); }
     };
   }, [note?.path, mode, paneId, revision]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!findCommand || findCommand.pane !== paneId) return;
+    findFocusTarget.current = 'find';
     setFindOpen(true); setReplaceOpen(findCommand.mode === 'replace');
-    requestAnimationFrame(() => findInput.current?.focus());
+    findInput.current?.focus();
   }, [findCommand?.sequence, findCommand?.pane, paneId]);
-  useEffect(() => {
-    if (!replaceOpen) return;
-    const frame = requestAnimationFrame(() => replaceInput.current?.focus());
-    return () => cancelAnimationFrame(frame);
-  }, [replaceOpen]);
+  useLayoutEffect(() => {
+    if (findOpen) (findFocusTarget.current === 'replace' ? replaceInput.current : findInput.current)?.focus();
+  }, [findOpen, replaceOpen]);
   useEffect(() => {
     if (findOpen) setCurrentIndex(matches.length ? 0 : -1);
   }, [findText, caseSensitive, note?.path, findOpen]);
@@ -187,8 +187,8 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, setText,
   function navigate(direction: 1 | -1) { setCurrentIndex(stepMatchIndex(matches.length, currentIndex, direction)); }
   function toggleReplace() {
     const opening = !replaceOpen;
+    findFocusTarget.current = opening ? 'replace' : 'find';
     setReplaceOpen(opening);
-    requestAnimationFrame(() => (opening ? replaceInput.current : findInput.current)?.focus());
   }
   function closeFind() {
     setFindOpen(false);
@@ -258,7 +258,7 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, setText,
 
   }
   return <section className="pane note-pane markdown-workspace" data-pane-id={paneId} style={hidden ? { display: 'none' } : undefined} onPointerDownCapture={() => onActivate(paneId)} onFocusCapture={() => onActivate(paneId)}>
-    <MarkdownWorkspaceHeader path={note?.path || ''} caption={caption} label={label} mode={mode === 'preview' ? 'preview' : 'edit'} outline={outline} onFind={() => { setFindOpen(true); setReplaceOpen(false); requestAnimationFrame(() => findInput.current?.focus()); }} onToggleMode={() => setMode(mode === 'preview' ? 'edit' : 'preview')} onToggleOutline={() => setOutline(value => !value)} />
+    <MarkdownWorkspaceHeader path={note?.path || ''} caption={caption} label={label} mode={mode === 'preview' ? 'preview' : 'edit'} outline={outline} onFind={() => { findFocusTarget.current = 'find'; setFindOpen(true); setReplaceOpen(false); findInput.current?.focus(); }} onToggleMode={() => setMode(mode === 'preview' ? 'edit' : 'preview')} onToggleOutline={() => setOutline(value => !value)} />
     {findOpen && <div className="find-bar" role="search" aria-label={`查找当前${paneId === 'primary' ? '左' : '右'}栏笔记`}>
       <input ref={findInput} aria-label="查找文本" placeholder="查找" value={findText} onChange={event => setFindText(event.target.value)} onKeyDown={onFindKeyDown}/>
       <button type="button" className="find-replace-toggle" aria-label={replaceOpen ? '收起替换' : '展开替换'} title={replaceOpen ? '收起替换' : '展开替换'} aria-expanded={replaceOpen} onClick={toggleReplace}><span aria-hidden="true">替</span></button>

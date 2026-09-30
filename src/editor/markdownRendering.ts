@@ -1,5 +1,6 @@
 import DOMPurify from 'dompurify';
 import { Marked } from 'marked';
+import { matchHighlight } from './markdownPolicy';
 
 // Extend the default policy only for URLs issued by our checked asset IPC.
 if (typeof window !== 'undefined') DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
@@ -11,8 +12,8 @@ parser.use({ extensions: [{
   name: 'highlight', level: 'inline',
   start(source) { return source.indexOf('=='); },
   tokenizer(source) {
-    const match = /^==([^=\n]+)==/.exec(source);
-    if (match) return { type: 'highlight', raw: match[0], tokens: this.lexer.inlineTokens(match[1]) };
+    const match = matchHighlight(source);
+    if (match) return { type: 'highlight', raw: match.raw, tokens: this.lexer.inlineTokens(match.inner) };
   },
   renderer(token) { return '<mark>' + this.parser.parseInline(token.tokens || []) + '</mark>'; },
 }] });

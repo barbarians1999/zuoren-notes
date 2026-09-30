@@ -86,3 +86,15 @@ test('inactive fenced code renders a literal block and active code keeps editabl
   assert.equal(inactive.state.doc.toString(), text);
  }
 });
+
+test('moving the caret within the same active line reuses decorations; crossing lines updates source visibility', async () => {
+ const { EditorState } = await import('@codemirror/state');
+ const { markdownSyntax } = await import('../src/editor/markdownLanguage.ts');
+ const { livePreview } = await import('../src/editor/markdownLivePreview.ts');
+ let state = EditorState.create({ doc: '**first**\n\n**second**', selection: { anchor: 2 }, extensions: [markdownSyntax(), livePreview] });
+ const before = state.field(livePreview);
+ state = state.update({ selection: { anchor: 5 } }).state;
+ assert.equal(state.field(livePreview), before);
+ state = state.update({ selection: { anchor: state.doc.length - 2 } }).state;
+ assert.notEqual(state.field(livePreview), before);
+});

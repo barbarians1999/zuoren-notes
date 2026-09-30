@@ -1,8 +1,8 @@
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
+import { matchHighlight } from './markdownPolicy';
 
-// A delimiter parser lets the Markdown parser own escaping, nesting and code
-// boundaries; the view never searches raw lines for formatting punctuation.
-const highlightDelimiter = { resolve: 'Highlight', mark: 'HighlightMark' };
+// The shared policy chooses highlight boundaries; the Markdown parser still
+// owns nested inline content and code/escape contexts. Decorations use nodes.
 export function markdownSyntax() {
   return markdown({
     base: markdownLanguage,
@@ -12,7 +12,11 @@ export function markdownSyntax() {
         name: 'Highlight',
         parse(cx, next, pos) {
           if (next !== 61 || cx.char(pos + 1) !== 61) return -1;
-          return cx.addDelimiter(highlightDelimiter, pos, pos + 2, true, true);
+          const match = matchHighlight(cx.slice(pos, cx.end));
+          if (!match) return -1;
+          const to = pos + match.raw.length;
+          return cx.addElement(cx.elt('Highlight', pos, to, [cx.elt('HighlightMark', pos, pos + 2),
+            ...cx.parser.parseInline(match.inner, pos + 2), cx.elt('HighlightMark', to - 2, to)]));
         },
       }],
     },

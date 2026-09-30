@@ -7,7 +7,10 @@ import { reader, resolveLocal, NOTE_BODY_FONTS, type Layout, type NoteMode, type
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AlertTriangle, ArrowLeft, ArrowLeftRight, BookOpen, ChevronLeft, ChevronRight, Columns2, Copy, Crop, List, FileText, Folder, FolderOpen, FolderPlus, FolderTree, Highlighter, Maximize2, MessageSquare, Minimize2, Minus, Monitor, Moon, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings2, Square, Sun, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react';
-import { DocumentPersistence } from './documentPersistence.cjs';
+import { useNoteSession } from './workspace/useNoteSession';
+import { diagnostics } from './diagnostics.cjs';
+import { LatestRequest } from './asyncRequest.cjs';
+import { MetadataWriter } from './metadataWriter.cjs';
 import { findLiteralMatches, stepMatchIndex, type LiteralMatch } from './findReplace';
 import type { DirectoryListing, EpubAnchor, EpubAnnotation, EpubMeta, MarkdownScrollMemory, NoteRead, OcrProgress, PdfAnchor, PdfAnnotation, PdfMeta, PdfRect, ReaderAnchor, ReaderSessionV2, RecoveryCheckResult, RecoveryV1, SaveNoteResult, SearchResult, WorkspaceDirectoryEntry, WorkspaceFile } from './types';
 import { decodeReaderAnchor, encodeReaderAnchor, formatEpubAnchor, isEpubAnchor } from './readerAnchor.cjs';
@@ -15,6 +18,8 @@ import { resolveScrollTop, upsertScrollMemory } from './sessionState.cjs';
 import { MutationBarrier, remapDescendantPath, sameOrDescendantPath } from './fileOperations.cjs';
 import { sameNoteContent } from './noteContent.cjs';
 import './styles.css';
+
+Object.defineProperty(window, 'readerDiagnostics', { configurable: true, value: Object.freeze({ snapshot: () => diagnostics.snapshot() }) });
 
 const readThemePreference = (): ThemePreference => {
   const saved = window.localStorage.getItem('zhaoye-theme');
@@ -44,25 +49,20 @@ function App() {
   });
   const [noteBodyFont, setNoteBodyFont] = useState<NoteBodyFont>(readNoteBodyFont);
   const [splitAt, setSplitAt] = useState(52);
-  const [root, setRoot] = useState('');
+  const [root, setRootState] = useState('');
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [directory, setDirectory] = useState<DirectoryListing | null>(null);
-  const [query, setQuery] = useState('');
+  const [query, setQueryState] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [activePdf, setActivePdf] = useState<ActivePdf | null>(null);
   const [activeEpub, setActiveEpub] = useState<ActiveEpub | null>(null);
-  const [note, setNote] = useState<NoteRead | null>(null);
   const [noteTabs, setNoteTabs] = useState<WorkspaceFile[]>([]);
   const [secondNote, setSecondNote] = useState<NoteRead | null>(null);
   const [secondNoteMode, setSecondNoteMode] = useState<NoteMode>('edit');
   const secondSave = useRef<() => Promise<boolean>>(async () => true);
   const secondInsertExcerpt = useRef<(block: string) => boolean>(() => false);
   const primaryInsertExcerpt = useRef<(block: string) => boolean>(() => false);
-  const [noteText, setNoteTextState] = useState('');
   const [noteMode, setNoteMode] = useState<NoteMode>('edit');
-  const [editorRevision, setEditorRevision] = useState(0);
-  const [saveLabel, setSaveLabel] = useState<SaveLabel>('已保存');
-  const [conflict, setConflict] = useState<SaveNoteResult | null>(null);
   const [message, setMessage] = useState('');
   const [page, setPage] = useState(1);
   const [scale, setScale] = useState(1);
@@ -83,21 +83,24 @@ function App() {
   const [inlineEntryEdit, setInlineEntryEdit] = useState<InlineEntryEdit | null>(null);
   const findCommandSequence = useRef(0);
   const openSequence = useRef(0);
-  const noteRef = useRef<NoteRead | null>(null);
+  const directoryRequest = useRef(new LatestRequest()), searchRequest = useRef(new LatestRequest());
+  const setRoot = useCallback((value: string) => { directoryRequest.current.invalidate(); searchRequest.current.invalidate(); setRootState(value); }, []);
+  const setQuery = useCallback((value: string) => { searchRequest.current.invalidate(); setQueryState(value); setResults([]); }, []);
   const activeEpubRef = useRef<ActiveEpub | null>(null);
-  const pdfSavedMeta = useRef<{ path: string; meta: PdfMeta } | null>(null);
+  const pdfWriter = useRef(new MetadataWriter<PdfMeta>()), epubWriter = useRef(new MetadataWriter<EpubMeta>());
   const epubSaveQueue = useRef<Promise<unknown>>(Promise.resolve());
   const pdfSaveQueue = useRef<Promise<unknown>>(Promise.resolve());
-  const textRef = useRef('');
-  const editRevision = useRef(0);
-  const savedRevision = useRef(0);
-  const saving = useRef(false);
-  const persistence = useRef(new DocumentPersistence());
-  const timer = useRef<number | undefined>(undefined);
   const settingsRef = useRef<HTMLDivElement>(null);
   const fileContextMenuRef = useRef<HTMLDivElement>(null);
   const inlineEntryInputRef = useRef<HTMLInputElement>(null);
   const mutationBarrier = useRef(new MutationBarrier());
+  const primarySession = useNoteSession({ pane: 'primary', ready: sessionReady, recoveryPending: !!recoveryConflict,
+    recoveryId, barrier: mutationBarrier.current, onMessage: setMessage });
+  const { note, setNote, text: noteText, setText: setNoteText, replaceText: replaceNoteText,
+    label: saveLabel, setLabel: setSaveLabel, conflict, setConflict, editorRevision, noteRef, textRef,
+    conflictRef: primaryConflict, save: saveCurrent, flushRecovery: flushPrimaryRecovery } = primarySession;
+  const excerptContext = useRef({ activePdf, secondNote, secondRecoveryId });
+  excerptContext.current = { activePdf, secondNote, secondRecoveryId };
   const openEntryRef = useRef<(file: WorkspaceFile, options?: { replaceCurrentNote?: boolean; skipUnsavedPrompt?: boolean }) => Promise<void>>(async () => {});
 
   // A successful rename/delete leaves a short-lived barrier so delayed work
@@ -107,11 +110,6 @@ function App() {
   function releaseMutationBarrier(path: string) { mutationBarrier.current.release(path); }
 
   useEffect(() => { activeEpubRef.current = activeEpub; }, [activeEpub]);
-  useEffect(() => {
-    if (!activePdf) { pdfSavedMeta.current = null; return; }
-    if (pdfSavedMeta.current?.path !== activePdf.path || pdfSavedMeta.current.meta.id !== activePdf.meta.id)
-      pdfSavedMeta.current = { path: activePdf.path, meta: activePdf.meta };
-  }, [activePdf]);
 
   useEffect(() => {
     window.localStorage.setItem('zhaoye-reading-size', String(readingSize));
@@ -217,21 +215,14 @@ function App() {
   }, [inlineEntryEdit?.kind, inlineEntryEdit?.entry?.path, inlineEntryEdit?.error]);
 
   const loadDirectory = useCallback(async (workspaceRoot: string, path: string) => {
+    const current = directoryRequest.current.begin();
     setFileContextMenu(null);
     setInlineEntryEdit(null);
-    const listing = await reader().listDirectory({ root: workspaceRoot, directory: path });
-    setDirectory(listing);
+    try {
+      const listing = await reader().listDirectory({ root: workspaceRoot, directory: path });
+      if (current()) setDirectory(listing);
+    } catch (error) { if (current()) throw error; }
   }, []);
-
-  const persistRecovery = useCallback(async (current: NoteRead | null, content: string, id: string | null, paneHint: 'primary' | 'secondary') => {
-    if (!current || !id || sameNoteContent(content, current.content) || mutationBarrier.current.has(current.path)) return null;
-    return reader().writeRecovery({ sourcePath: current.path, paneHint, recoveryId: id, baseHash: current.hash, content, encoding: { bom: current.bom, eol: current.eol } });
-  }, []);
-
-  const flushPrimaryRecovery = useCallback(async () => {
-    try { await persistRecovery(noteRef.current, textRef.current, recoveryId, 'primary'); return true; }
-    catch (error) { setMessage(`恢复稿保存失败：${error instanceof Error ? error.message : String(error)}`); return false; }
-  }, [persistRecovery, recoveryId]);
 
   const sessionSnapshot = useCallback((): ReaderSessionV2 => ({
     version: 2,
@@ -256,43 +247,6 @@ function App() {
     try { await reader().saveSession(sessionSnapshot()); return true; }
     catch (error) { setMessage(`工作现场保存失败：${error instanceof Error ? error.message : String(error)}`); return false; }
   }, [sessionSnapshot]);
-
-  const setNoteText = useCallback((value: string) => {
-    textRef.current = value;
-    setNoteTextState(value);
-    if (noteRef.current && !sameNoteContent(value, noteRef.current.content)) { editRevision.current += 1; setSaveLabel('编辑中'); }
-  }, []);
-  const replaceNoteText = useCallback((value: string) => {
-    textRef.current = value; editRevision.current = 0; savedRevision.current = 0; setNoteTextState(value); setEditorRevision(value => value + 1);
-  }, []);
-
-  const primaryConflict = useRef(conflict); primaryConflict.current = conflict;
-  // Saving/closing must never observe a document before startup hydration
-  // and recovery selection have finished, or bypass an unresolved draft.
-  const startupReady = useRef(sessionReady); startupReady.current = sessionReady;
-  const pendingRecovery = useRef(recoveryConflict); pendingRecovery.current = recoveryConflict;
-  const saveCurrent = useCallback((expectedCurrent?: NoteRead): Promise<boolean> => {
-    if (expectedCurrent && noteRef.current !== expectedCurrent) return Promise.resolve(true);
-    saving.current = true;
-    const task = persistence.current.save({
-      snapshot: () => ({ note: noteRef.current, text: textRef.current, revision: editRevision.current }),
-      blocked: () => !startupReady.current || !!pendingRecovery.current || !!primaryConflict.current || !!(noteRef.current && mutationBarrier.current.has(noteRef.current.path)),
-      recovery: state => persistRecovery(state.note, state.text, recoveryId, 'primary'),
-      recoveryError: () => setMessage('恢复稿暂时无法更新，正在继续保存正文。'),
-      write: state => reader().saveNote({ ...state.note!, content: state.text, recoveryId: recoveryId || undefined }),
-      saving: () => setSaveLabel('保存中'),
-      clean: () => setSaveLabel('已保存'),
-      conflict: result => { primaryConflict.current = result; setConflict(result); setSaveLabel('外部冲突'); },
-      commit: (result, state) => {
-        const updated = { ...state.note!, content: result.content, hash: result.hash };
-        noteRef.current = updated; setNote(updated); savedRevision.current = state.revision;
-        setSaveLabel(sameNoteContent(textRef.current, result.content) ? '已保存' : '编辑中');
-      },
-      error: error => { setSaveLabel('保存失败'); setMessage('保存失败：' + String(error)); },
-    });
-    void task.finally(() => { saving.current = false; });
-    return task;
-  }, [persistRecovery, recoveryId]);
 
   useEffect(() => {
     void (async () => {
@@ -323,7 +277,7 @@ function App() {
             const file = launch.files[0];
             try {
               const loaded = await reader().readNote(file.path);
-              noteRef.current = loaded; setNote(loaded); setNoteTabs([file]); setNoteMode(launchRecovery.mode);
+              setNote(loaded); setNoteTabs([file]); setNoteMode(launchRecovery.mode);
               setRecoveryId(launchRecovery.recoveryId); replaceNoteText(loaded.content); setLayout('note');
               try {
                 const recovery = await reader().checkRecovery({ sourcePath: loaded.path, recoveryId: launchRecovery.recoveryId });
@@ -350,7 +304,7 @@ function App() {
               // Hydrate text together with the disk snapshot, before any
               // asynchronous recovery lookup can expose this document.
               replaceNoteText(loaded.content);
-              noteRef.current = loaded; setNote(loaded); setNoteMode(session.primaryNote.mode); setRecoveryId(session.primaryNote.recoveryId);
+              setNote(loaded); setNoteMode(session.primaryNote.mode); setRecoveryId(session.primaryNote.recoveryId);
               if (!restoredTabs.some(tab => tab.path === loaded.path)) setNoteTabs(tabs => [...tabs, fromPath(loaded.path)]);
               try {
                 const recovery = await reader().checkRecovery({ sourcePath: loaded.path, recoveryId: session.primaryNote.recoveryId });
@@ -409,47 +363,10 @@ function App() {
   }, [loadDirectory]);
 
   useEffect(() => {
-    window.clearTimeout(timer.current);
-    const expected = noteRef.current;
-    if (sessionReady && expected && !sameNoteContent(noteText, expected.content) && !conflict && !recoveryConflict) {
-      timer.current = window.setTimeout(() => void saveCurrent(expected), 900);
-    }
-    return () => window.clearTimeout(timer.current);
-  }, [sessionReady, noteText, conflict, recoveryConflict, saveCurrent]);
-
-  useEffect(() => {
-    if (!sessionReady || !noteRef.current || !recoveryId || sameNoteContent(noteText, noteRef.current.content) || recoveryConflict) return;
-    const expected = noteRef.current;
-    const expectedContent = noteText;
-    const expectedRecoveryId = recoveryId;
-    const timeout = window.setTimeout(() => {
-      if (noteRef.current !== expected || textRef.current !== expectedContent) return;
-      void persistRecovery(expected, expectedContent, expectedRecoveryId, 'primary').catch(error => setMessage(`恢复稿保存失败：${error instanceof Error ? error.message : String(error)}`));
-    }, 400);
-    return () => window.clearTimeout(timeout);
-  }, [sessionReady, noteText, note?.path, note?.hash, recoveryId, recoveryConflict, persistRecovery]);
-
-  useEffect(() => {
     if (!sessionReady) return;
     const timeout = window.setTimeout(() => void saveSessionNow(), 300);
     return () => window.clearTimeout(timeout);
   }, [sessionReady, saveSessionNow]);
-
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      if (!sessionReady) return;
-      void persistence.current.poll({
-        snapshot: () => ({ note: noteRef.current, text: textRef.current, revision: editRevision.current }),
-        blocked: () => !startupReady.current || !!pendingRecovery.current || !!primaryConflict.current || !!(noteRef.current && mutationBarrier.current.has(noteRef.current.path)),
-        read: path => reader().readNote(path),
-        apply: (disk, hasConflict) => {
-          if (hasConflict) { const problem = { conflict: true as const, ...disk }; primaryConflict.current = problem; setConflict(problem); setSaveLabel('外部冲突'); }
-          else { noteRef.current = disk; setNote(disk); if (!sameNoteContent(disk.content, textRef.current)) replaceNoteText(disk.content); setSaveLabel('已保存'); }
-        },
-      }).catch(() => {});
-    }, 3000);
-    return () => { window.clearInterval(interval); persistence.current.invalidate(); };
-  }, [sessionReady, replaceNoteText]);
 
   const finishClosing = useCallback(async () => {
     setClosing(true);
@@ -484,7 +401,7 @@ function App() {
         });
         setNoteMode('edit');
         setRecoveryId(crypto.randomUUID()); setRecoveryConflict(null);
-        noteRef.current = loaded; setNote(loaded); replaceNoteText(loaded.content); setSaveLabel('已保存'); setLayout('note');
+        setNote(loaded); replaceNoteText(loaded.content); setSaveLabel('已保存'); setLayout('note');
       } else if (file.type === 'pdf') {
         const loaded = await reader().openPdf(file.path);
         if (request !== openSequence.current) return;
@@ -535,7 +452,7 @@ function App() {
         const newPath = renamed.path;
         const remap = (value: string) => remapDescendantPath(value, oldPath, newPath);
         setNoteTabs(tabs => tabs.map(tab => ({ ...tab, path: remap(tab.path), name: remap(tab.path).split(/[\\/]/).pop() || tab.name })));
-        if (noteRef.current && sameOrDescendantPath(noteRef.current.path, oldPath)) { const next = { ...noteRef.current, path: remap(noteRef.current.path) }; noteRef.current = next; setNote(next); }
+        if (noteRef.current && sameOrDescendantPath(noteRef.current.path, oldPath)) { const next = { ...noteRef.current, path: remap(noteRef.current.path) }; setNote(next); }
         if (secondNote && sameOrDescendantPath(secondNote.path, oldPath)) setSecondNote(current => current ? { ...current, path: remap(current.path) } : current);
         setFiles(items => items.map(item => ({ ...item, path: remap(item.path), name: remap(item.path).split(/[\\/]/).pop() || item.name })));
         if (activePdf && sameOrDescendantPath(activePdf.path, oldPath)) setActivePdf(value => value ? { ...value, path: remap(value.path) } : value);
@@ -557,7 +474,7 @@ function App() {
     const oldPath = entry.path, startDirectory = directory?.directory || root;
     if (!(await saveCurrent()) || !(await secondSave.current())) return;
     mutationBarrier.current.block(oldPath);
-    try { await reader().trashEntry(oldPath); const affected = (value: string) => sameOrDescendantPath(value, oldPath); if (note?.path && affected(note.path)) { noteRef.current = null; setNote(null); replaceNoteText(''); setRecoveryId(null); } if (secondNote?.path && affected(secondNote.path)) { setSecondNote(null); setSecondRecoveryId(null); } setNoteTabs(tabs => tabs.filter(tab => !affected(tab.path))); setFiles(items => items.filter(item => !affected(item.path))); setScrollMemory(items => items.filter(item => !affected(item.path))); if (activePdf?.path && affected(activePdf.path)) setActivePdf(null); if (activeEpub?.path && affected(activeEpub.path)) { activeEpubRef.current = null; setActiveEpub(null); } try { await loadDirectory(root, startDirectory); } catch (error) { setMessage(`刷新目录失败：${error instanceof Error ? error.message : String(error)}`); } }
+    try { await reader().trashEntry(oldPath); const affected = (value: string) => sameOrDescendantPath(value, oldPath); if (note?.path && affected(note.path)) { setNote(null); replaceNoteText(''); setRecoveryId(null); } if (secondNote?.path && affected(secondNote.path)) { setSecondNote(null); setSecondRecoveryId(null); } setNoteTabs(tabs => tabs.filter(tab => !affected(tab.path))); setFiles(items => items.filter(item => !affected(item.path))); setScrollMemory(items => items.filter(item => !affected(item.path))); if (activePdf?.path && affected(activePdf.path)) setActivePdf(null); if (activeEpub?.path && affected(activeEpub.path)) { activeEpubRef.current = null; setActiveEpub(null); } try { await loadDirectory(root, startDirectory); } catch (error) { setMessage(`刷新目录失败：${error instanceof Error ? error.message : String(error)}`); } }
     catch (error) { releaseMutationBarrier(oldPath); setMessage(`删除失败：${error instanceof Error ? error.message : String(error)}`); }
     finally { /* retain successful tombstone; remove only on backend failure */ }
   }
@@ -573,7 +490,7 @@ function App() {
     releaseMutationBarrier(loaded.path);
     setNoteTabs(tabs => [...tabs, { path: loaded.path, name: loaded.path.split(/[\\/]/).pop() || '新笔记.md', relative: loaded.path, type: 'md' }]);
     setRecoveryId(crypto.randomUUID()); setRecoveryConflict(null);
-    noteRef.current = loaded; setNote(loaded); replaceNoteText(loaded.content); setSaveLabel('已保存'); setLayout('note');
+    setNote(loaded); replaceNoteText(loaded.content); setSaveLabel('已保存'); setLayout('note');
     setFiles(previous => [{ path: loaded.path, name: loaded.path.split(/[\\/]/).pop() || '新笔记.md', relative: loaded.path, type: 'md' }, ...previous]);
     if (root && directory) {
       try { const listing = await reader().listWorkspace(root); setFiles(listing.files); await loadDirectory(root, directory.directory); } catch { /* the note may have been created outside this workspace */ }
@@ -607,7 +524,7 @@ function App() {
       const leftPath = noteRef.current.path, rightPath = secondNote.path;
       const [nextLeft, nextRight] = await Promise.all([reader().readNote(rightPath), reader().readNote(leftPath)]);
       const oldLeftMode = noteMode, oldRightMode = secondNoteMode;
-      noteRef.current = nextLeft; setNote(nextLeft); replaceNoteText(nextLeft.content); setNoteMode(oldRightMode); setRecoveryId(crypto.randomUUID()); setRecoveryConflict(null); setSaveLabel('已保存');
+      setNote(nextLeft); replaceNoteText(nextLeft.content); setNoteMode(oldRightMode); setRecoveryId(crypto.randomUUID()); setRecoveryConflict(null); setSaveLabel('已保存');
       setSecondNote(nextRight); setSecondNoteMode(oldLeftMode); setSecondRecoveryId(crypto.randomUUID()); setSecondRecoveryCheck(undefined); setActiveNotePane(pane => pane === 'primary' ? 'secondary' : 'primary');
     } catch (error) { setMessage(`无法交换左右笔记：${error instanceof Error ? error.message : String(error)}`); }
     finally { setSwappingNotes(false); }
@@ -625,52 +542,53 @@ function App() {
     });
   }
   async function runSearch() {
+    const current = searchRequest.current.begin();
     if (!root || !query.trim()) { setResults([]); return; }
-    try { setResults(await reader().search({ root, query })); }
-    catch (error) { setMessage(`搜索失败：${error instanceof Error ? error.message : String(error)}`); }
+    try { const results = await reader().search({ root, query }); if (current()) setResults(results); }
+    catch (error) { if (current()) setMessage(`搜索失败：${error instanceof Error ? error.message : String(error)}`); }
   }
   async function updateMeta(change: (current: PdfMeta) => PdfMeta) {
     const active = activePdf;
     if (!active) return false;
-    const write = pdfSaveQueue.current.catch(() => undefined).then(async () => {
-      const saved = pdfSavedMeta.current?.path === active.path ? pdfSavedMeta.current.meta : active.meta;
-      if (saved.id !== active.meta.id) return false;
-      const meta = change(saved);
-      if (meta.id !== saved.id) return false;
-      await reader().savePdfMeta({ path: active.path, meta });
-      pdfSavedMeta.current = { path: active.path, meta };
-      setActivePdf(current => current && current.path === active.path && current.meta.id === meta.id ? { ...current, meta } : current);
-      return true;
+    const write = pdfWriter.current.write({ key: active.data, initial: active.meta, change,
+      persist: meta => reader().savePdfMeta({ path: active.path, meta }),
+      commit: meta => setActivePdf(current => current && current.path === active.path && current.meta.id === meta.id ? { ...current, meta } : current),
     });
     pdfSaveQueue.current = write;
     try { return await write; }
     catch (error) { setMessage(`标记保存失败：${error instanceof Error ? error.message : String(error)}`); return false; }
   }
-  async function updateEpubMeta(meta: EpubMeta): Promise<boolean> {
-    const active = activeEpubRef.current;
-    if (!active || active.meta.id !== meta.id) return false;
-    const merged = { ...active.meta, ...meta, annotations: meta.annotations || active.meta.annotations };
-    const next = { ...active, meta: merged };
-    activeEpubRef.current = next;
-    const write = epubSaveQueue.current.catch(() => undefined).then(() => reader().saveEpubMeta({ path: active.path, meta: merged }));
+  async function updateEpubMeta(change: (current: EpubMeta) => EpubMeta): Promise<boolean> {
+    const active = activeEpub;
+    if (!active) return false;
+    const write = epubWriter.current.write({ key: active.data, initial: active.meta, change,
+      persist: meta => reader().saveEpubMeta({ path: active.path, meta }),
+      commit: meta => {
+        const current = activeEpubRef.current;
+        if (current?.path === active.path && current.meta.id === meta.id) {
+          const next = { ...current, meta }; activeEpubRef.current = next; setActiveEpub(next);
+        }
+      },
+    });
     epubSaveQueue.current = write;
-    try {
-      await write;
-      const current = activeEpubRef.current;
-      if (!current || current.path !== active.path || current.meta.id !== merged.id) return false;
-      if (current === next) setActiveEpub(next); return true;
-    }
-    catch (error) { if (activeEpubRef.current === next) activeEpubRef.current = active; setMessage(`EPUB 标注或阅读位置保存失败：${error instanceof Error ? error.message : String(error)}`); return false; }
+    try { return await write; }
+    catch (error) { setMessage(`EPUB 标注或阅读位置保存失败：${error instanceof Error ? error.message : String(error)}`); return false; }
   }
   async function insertExcerpt(asset: string | null, anchor: PdfAnchor, quote?: string) {
     if (!noteRef.current || !activePdf) { setMessage('请先打开或新建一份 Markdown 笔记'); return; }
     if (conflict || recoveryConflict || mutationBarrier.current.has(noteRef.current.path)) { setMessage('请先处理当前笔记的保存或恢复冲突'); return; }
-    const source = await reader().makeAnchorPath({ fromFile: noteRef.current.path, toFile: activePdf.path });
+    const path = noteRef.current.path, documentId = primarySession.documentId.current;
+    const insert = primaryInsertExcerpt.current, opening = openSequence.current, pdf = activePdf;
+    const source = await reader().makeAnchorPath({ fromFile: path, toFile: pdf.path });
+    if (opening !== openSequence.current || path !== noteRef.current?.path || documentId !== primarySession.documentId.current ||
+        insert !== primaryInsertExcerpt.current || pdf.meta.id !== excerptContext.current.activePdf?.meta.id || primarySession.blocked()) {
+      setMessage('文件已切换，未插入过期摘录，请重新摘录。'); return;
+    }
     const fullAnchor = { ...anchor, source };
     const link = `#reader-anchor-${encodeReaderAnchor(fullAnchor)}`;
     const image = asset ? `![PDF 第 ${anchor.page} 页摘录](${asset})\n\n` : '';
     const quotation = quote ? `> ${quote.replace(/\n+/g, '\n> ')}\n\n` : '';
-    if (!primaryInsertExcerpt.current(`\n\n${image}${quotation}> 来源：《${activePdf.name}》 · 第 ${anchor.page} 页 · [回到原文](${link})\n`)) { setMessage('编辑器尚未就绪，请稍后重试摘录'); return; }
+    if (!insert(`\n\n${image}${quotation}> 来源：《${pdf.name}》 · 第 ${anchor.page} 页 · [回到原文](${link})\n`)) { setMessage('编辑器尚未就绪，请稍后重试摘录'); return; }
     setLayout('split');
   }
   async function insertEpubExcerpt(anchor: EpubAnchor, quote: string, comment: string) {
@@ -679,14 +597,21 @@ function App() {
     if (!currentNotePath) { setMessage('请先打开 Markdown 笔记，再摘录到笔记。'); return; }
     const book = activeEpubRef.current;
     if (!book || book.meta.id !== anchor.epubId) { setMessage('电子书已切换，请重新选择要摘录的原文。'); return; }
+    const insert = useSecondary ? secondInsertExcerpt.current : primaryInsertExcerpt.current;
+    const documentId = primarySession.documentId.current, secondaryId = secondRecoveryId, opening = openSequence.current;
     try {
       const source = await reader().makeAnchorPath({ fromFile: currentNotePath, toFile: book.path });
+      if (opening !== openSequence.current || activeEpubRef.current?.path !== book.path ||
+          (useSecondary ? excerptContext.current.secondNote?.path !== currentNotePath || excerptContext.current.secondRecoveryId !== secondaryId || insert !== secondInsertExcerpt.current
+            : noteRef.current?.path !== currentNotePath || documentId !== primarySession.documentId.current || insert !== primaryInsertExcerpt.current || primarySession.blocked())) {
+        setMessage('文件或笔记栏已切换，未插入过期摘录，请重新摘录。'); return;
+      }
       const fullAnchor = { ...anchor, source };
       const link = `#reader-anchor-${encodeReaderAnchor(fullAnchor)}`;
       const quotation = quote ? `> ${quote.replace(/\n+/g, '\n> ')}\n\n` : '';
       const commentLine = comment.trim() ? `> 批注：${comment.trim().replace(/\n+/g, ' ')}\n\n` : '';
       const block = `\n\n${quotation}${commentLine}> 来源：《${formatEpubAnchor(anchor, book.name)}》 · [回到原文](${link})\n`;
-      const inserted = useSecondary ? secondInsertExcerpt.current(block) : !conflict && !recoveryConflict && !mutationBarrier.current.has(currentNotePath) && primaryInsertExcerpt.current(block);
+      const inserted = !mutationBarrier.current.has(currentNotePath) && insert(block);
       if (!inserted) { setMessage('当前笔记栏暂不可写入摘录。'); return; }
       setLayout('split');
     } catch (error) { setMessage(`无法插入 EPUB 摘录：${error instanceof Error ? error.message : String(error)}`); }
@@ -733,7 +658,7 @@ function App() {
       const previousPath = old.path;
       await clearRecoveryIfMatches(previousPath, recoveryId, submitted);
       releaseMutationBarrier(loaded.path);
-      noteRef.current = loaded; setNote(loaded); setRecoveryId(crypto.randomUUID()); setRecoveryConflict(null);
+      setNote(loaded); setRecoveryId(crypto.randomUUID()); setRecoveryConflict(null);
       setNoteTabs(tabs => [...tabs.filter(tab => tab.path !== previousPath && tab.path !== loaded.path), { path: loaded.path, name: loaded.path.split(/[\\/]/).pop() || loaded.path, relative: loaded.path, type: 'md' }]);
       replaceNoteText(loaded.content); primaryConflict.current = null; setConflict(null); setSaveLabel('已保存'); if (closing) await finishClosing();
     }
@@ -749,7 +674,7 @@ function App() {
   async function useDisk() {
     if (!conflict?.conflict) return;
     await clearRecoveryIfMatches(conflict.path, recoveryId, undefined);
-    noteRef.current = conflict; setNote(conflict); replaceNoteText(conflict.content); primaryConflict.current = null; setConflict(null); setSaveLabel('已保存'); if (closing) await finishClosing();
+    setNote(conflict); replaceNoteText(conflict.content); primaryConflict.current = null; setConflict(null); setSaveLabel('已保存'); if (closing) await finishClosing();
   }
   async function clearRecoveryIfMatches(sourcePath: string, id: string | null, content: string | undefined) {
     if (!id) return;
@@ -766,12 +691,12 @@ function App() {
     const result = await reader().saveNote({ path: disk.path, content: recovery.content, hash: disk.hash, bom: disk.bom, eol: disk.eol, recoveryId: id });
     if (result.conflict) { setRecoveryConflict({ note: result, recovery, recoveryId: id }); return; }
     const saved = { ...disk, ...result };
-    noteRef.current = saved; setNote(saved); replaceNoteText(saved.content); setRecoveryConflict(null); setSaveLabel('已保存');
+    setNote(saved); replaceNoteText(saved.content); setRecoveryConflict(null); setSaveLabel('已保存');
   }
   async function discardRecoveryDraft() {
     if (!recoveryConflict) return;
     await reader().deleteRecovery({ sourcePath: recoveryConflict.note.path, recoveryId: recoveryConflict.recoveryId, draftHash: recoveryConflict.recovery.draftHash });
-    noteRef.current = recoveryConflict.note; setNote(recoveryConflict.note); replaceNoteText(recoveryConflict.note.content); setRecoveryConflict(null); setSaveLabel('已保存');
+    setNote(recoveryConflict.note); replaceNoteText(recoveryConflict.note.content); setRecoveryConflict(null); setSaveLabel('已保存');
   }
   async function saveRecoveryDraftAs() {
     if (!recoveryConflict) return;
@@ -779,7 +704,7 @@ function App() {
     if (!saved) return;
     releaseMutationBarrier(saved.path);
     await reader().deleteRecovery({ sourcePath: recoveryConflict.note.path, recoveryId: recoveryConflict.recoveryId, draftHash: recoveryConflict.recovery.draftHash });
-    noteRef.current = saved; setNote(saved); setRecoveryId(crypto.randomUUID()); replaceNoteText(saved.content); setRecoveryConflict(null); setSaveLabel('已保存');
+    setNote(saved); setRecoveryId(crypto.randomUUID()); replaceNoteText(saved.content); setRecoveryConflict(null); setSaveLabel('已保存');
   }
 
   async function closeNoteTab(tab: WorkspaceFile) {
@@ -788,7 +713,7 @@ function App() {
       if (tab.path === note?.path) {
         if (!(await saveCurrent())) return;
         const next = noteTabs.find(item => item.path !== tab.path && item.path !== secondNote?.path);
-        if (next) await openEntry(next); else { noteRef.current = null; setNote(null); setRecoveryId(null); setRecoveryConflict(null); replaceNoteText(''); }
+        if (next) await openEntry(next); else { setNote(null); setRecoveryId(null); setRecoveryConflict(null); replaceNoteText(''); }
       }
       setNoteTabs(tabs => tabs.filter(item => item.path !== tab.path));
     };
@@ -913,9 +838,9 @@ function App() {
     </div>
     {fileContextMenu && <div ref={fileContextMenuRef} className="file-context-menu" role="menu" style={{ left: fileContextMenu.x, top: fileContextMenu.y }} onPointerDown={event => event.stopPropagation()}><button role="menuitem" onClick={() => { setFileContextMenu(null); void reader().showItemInFolder(fileContextMenu.entry.path); }}>打开所在路径</button>{fileContextMenu.entry.kind === 'file' && fileContextMenu.entry.type === 'md' && <button role="menuitem" onClick={() => { const entry = fileContextMenu.entry as WorkspaceFile; setFileContextMenu(null); void openEntry(entry); }}>在新标签页中打开</button>}<button role="menuitem" onClick={() => beginRename(fileContextMenu.entry)}>重命名</button><button role="menuitem" onClick={() => void deleteEntry(fileContextMenu.entry)}>移到回收站</button></div>}
     {message && <div className="toast"><span>{message}</span><button onClick={() => setMessage('')}><X size={16}/></button></div>}
-    {unsavedAction && <UnsavedDialog description={unsavedAction.description} onCancel={() => setUnsavedAction(null)} onDiscard={async () => { const action = unsavedAction.action; const current = noteRef.current; const id = recoveryId; setUnsavedAction(null); if (current) await clearRecoveryIfMatches(current.path, id, textRef.current); await action(); }} onSave={async () => { const action = unsavedAction.action; setUnsavedAction(null); if (await saveCurrent()) await action(); }}/>} 
-    {conflict?.conflict && <ConflictDialog conflict={conflict} mine={noteText} closing={closing} onClose={() => { primaryConflict.current = null; setConflict(null); setClosing(false); }} onMine={() => void keepMine()} onDisk={useDisk} onSaveAs={() => void saveAs()}/>} 
-    {recoveryConflict && <ConflictDialog conflict={{ conflict: true, ...recoveryConflict.note }} mine={recoveryConflict.recovery.content} closing={false} onClose={() => setRecoveryConflict(null)} onMine={() => void keepRecoveryDraft()} onDisk={() => void discardRecoveryDraft()} onSaveAs={() => void saveRecoveryDraftAs()}/>}
+    {unsavedAction && <UnsavedDialog description={unsavedAction.description} onCancel={() => setUnsavedAction(null)} onDiscard={async () => { const action = unsavedAction.action; const current = noteRef.current; const id = recoveryId; setUnsavedAction(null); if (current) { await clearRecoveryIfMatches(current.path, id, textRef.current); replaceNoteText(current.content); setSaveLabel('已保存'); } await action(); }} onSave={async () => { const action = unsavedAction.action; setUnsavedAction(null); if (await saveCurrent()) await action(); }}/>}
+    {conflict?.conflict && <ConflictDialog conflict={conflict} mine={noteText} closing={closing} onMine={() => void keepMine()} onDisk={useDisk} onSaveAs={() => void saveAs()}/>}
+    {recoveryConflict && <ConflictDialog conflict={{ conflict: true, ...recoveryConflict.note }} mine={recoveryConflict.recovery.content} closing={false} onMine={() => void keepRecoveryDraft()} onDisk={() => void discardRecoveryDraft()} onSaveAs={() => void saveRecoveryDraftAs()}/>}
   </div>;
 }
 

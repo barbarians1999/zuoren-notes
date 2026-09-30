@@ -50,16 +50,17 @@ function applyEpubTheme(contentsOrView: any, theme: 'light' | 'dark', fontFamily
   style.textContent = epubThemeCss(theme, fontFamily);
 }
 
-export function EpubPane({ epub, theme, noteBodyFont, onMeta, onMessage, onExcerpt, excerptTarget, target }: { epub: ActiveEpub; theme: 'light' | 'dark'; noteBodyFont: NoteBodyFont; onMeta: (meta: EpubMeta) => Promise<boolean>; onMessage: (message: string) => void; onExcerpt: (anchor: EpubAnchor, quote: string, comment: string) => Promise<void>; excerptTarget: string | null; target: EpubAnchor | null }) {
+export function EpubPane({ epub, theme, noteBodyFont, onMeta, onMessage, onExcerpt, excerptTarget, target }: { epub: ActiveEpub; theme: 'light' | 'dark'; noteBodyFont: NoteBodyFont; onMeta: (change: (current: EpubMeta) => EpubMeta) => Promise<boolean>; onMessage: (message: string) => void; onExcerpt: (anchor: EpubAnchor, quote: string, comment: string) => Promise<void>; excerptTarget: string | null; target: EpubAnchor | null }) {
   const host = useRef<HTMLDivElement>(null);
   const bookRef = useRef<Book | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
   const metaRef = useRef(epub.meta);
+  const readingPosition = useRef({ cfi: epub.meta.cfi, progress: epub.meta.progress, fontSize: epub.meta.fontSize });
   const generationRef = useRef(0);
   const savingRef = useRef(false);
   const metaWriter = useRef(onMeta); metaWriter.current = onMeta;
   useEffect(() => {
-    const flush = () => { void metaWriter.current(metaRef.current); };
+    const flush = () => { const position = { ...readingPosition.current }; void metaWriter.current(current => ({ ...current, ...position })); };
     window.addEventListener('reader-flush', flush);
     return () => window.removeEventListener('reader-flush', flush);
   }, [epub.path]);
@@ -83,10 +84,10 @@ export function EpubPane({ epub, theme, noteBodyFont, onMeta, onMessage, onExcer
 
   useEffect(() => { metaRef.current = epub.meta; }, [epub.meta]);
   useEffect(() => {
-    if (!deletedAnnotation) return;
+    if (!deletedAnnotation || savingAnnotation) return;
     const timer = window.setTimeout(() => setDeletedAnnotation(null), 7000);
     return () => window.clearTimeout(timer);
-  }, [deletedAnnotation]);
+  }, [deletedAnnotation, savingAnnotation]);
 
   useEffect(() => {
     const element = host.current;
@@ -200,9 +201,9 @@ export function EpubPane({ epub, theme, noteBodyFont, onMeta, onMessage, onExcer
           const measured = locationsReady && location.start.cfi ? book.locations.percentageFromCfi(location.start.cfi) : chapterEstimate;
           const nextProgress = Number.isFinite(measured) ? Math.min(1, Math.max(0, measured)) : 0;
           setCurrentHref(item?.href || href); setChapter(item?.label || '正文'); setProgress(nextProgress);
-          const nextMeta: EpubMeta = { ...metaRef.current, cfi: location.start.cfi || '', progress: nextProgress };
-          metaRef.current = nextMeta;
-          void onMeta(nextMeta);
+          const position = { cfi: location.start.cfi || '', progress: nextProgress };
+          readingPosition.current = { ...readingPosition.current, ...position };
+          void metaWriter.current(current => ({ ...current, ...position }));
         };
         rendition.on('relocated', relocated);
         await rendition.display(target?.epubId === epub.meta.id ? target.cfiRange : epub.meta.cfi || undefined);
@@ -277,12 +278,10 @@ export function EpubPane({ epub, theme, noteBodyFont, onMeta, onMessage, onExcer
       ...(selection.chapterLabel ? { chapterLabel: selection.chapterLabel } : {}),
       createdAt: now, updatedAt: now,
     };
-    const previousMeta = metaRef.current;
-    const nextMeta: EpubMeta = { ...previousMeta, annotations: [...previousMeta.annotations, annotation] };
-    metaRef.current = nextMeta;
     try {
       const generation = generationRef.current;
-      if (!(await onMeta(nextMeta))) { if (generationRef.current === generation) metaRef.current = previousMeta; return; }
+      if (!(await onMeta(current => ({ ...current, annotations: [...current.annotations, annotation] })))) return;
+      if (generationRef.current !== generation) return;
       if (generationRef.current === generation) renditionRef.current?.annotations.highlight(annotation.cfiRange, { annotationId: annotation.id }, undefined, 'zhaoye-epub-highlight', { fill: '#e4c95b', 'fill-opacity': '0.42', 'mix-blend-mode': 'multiply' });
       setSelection(null); setDeleteConfirm(null);
       if (excerpt) await onExcerpt({ epubId: epub.meta.id, cfiRange: annotation.cfiRange, quote: annotation.quote, annotationId: annotation.id, chapterHref: annotation.chapterHref, chapterLabel: annotation.chapterLabel }, annotation.quote, annotation.comment || '');
@@ -294,10 +293,8 @@ export function EpubPane({ epub, theme, noteBodyFont, onMeta, onMessage, onExcer
     if (savingRef.current) return;
     savingRef.current = true; setSavingAnnotation(true);
     const previousMeta = metaRef.current;
-    const nextMeta: EpubMeta = { ...previousMeta, annotations: previousMeta.annotations.filter(item => item.id !== annotation.id) };
-    metaRef.current = nextMeta;
     try {
-      if (!(await onMeta(nextMeta))) { metaRef.current = previousMeta; return; }
+      if (!(await onMeta(current => ({ ...current, annotations: current.annotations.filter(item => item.id !== annotation.id) })))) return;
       renditionRef.current?.annotations.remove(annotation.cfiRange, 'highlight');
       setDeleteConfirm(null); if (flashId === annotation.id) setFlashId(null);
       setDeletedAnnotation({ annotation, index: previousMeta.annotations.findIndex(item => item.id === annotation.id) });
@@ -309,14 +306,8 @@ export function EpubPane({ epub, theme, noteBodyFont, onMeta, onMessage, onExcer
     savingRef.current = true; setSavingAnnotation(true);
     const commentText = editingComment.trim();
     const updatedAt = new Date().toISOString();
-    const previousMeta = metaRef.current;
-    const nextMeta: EpubMeta = {
-      ...previousMeta,
-      annotations: updateAnnotationComment(previousMeta.annotations, annotation.id, commentText, updatedAt),
-    };
-    metaRef.current = nextMeta;
     try {
-      if (!(await onMeta(nextMeta))) { metaRef.current = previousMeta; return; }
+      if (!(await onMeta(current => ({ ...current, annotations: updateAnnotationComment(current.annotations, annotation.id, commentText, updatedAt) })))) return;
       setEditingAnnotation(null); setEditingComment('');
     } catch (error) { onMessage(`EPUB 批注保存失败：${error instanceof Error ? error.message : String(error)}`); }
     finally { savingRef.current = false; setSavingAnnotation(false); }
@@ -339,14 +330,13 @@ export function EpubPane({ epub, theme, noteBodyFont, onMeta, onMessage, onExcer
   async function undoDelete() {
     if (!deletedAnnotation || savingRef.current) return;
     savingRef.current = true; setSavingAnnotation(true);
-    const previousMeta = metaRef.current;
-    const annotations = [...previousMeta.annotations];
-    const index = Math.max(0, Math.min(deletedAnnotation.index, annotations.length));
-    annotations.splice(index, 0, deletedAnnotation.annotation);
-    const nextMeta = { ...previousMeta, annotations };
-    metaRef.current = nextMeta;
     try {
-      if (!(await onMeta(nextMeta))) { metaRef.current = previousMeta; return; }
+      if (!(await onMeta(current => {
+        if (current.annotations.some(item => item.id === deletedAnnotation.annotation.id)) return current;
+        const annotations = [...current.annotations];
+        annotations.splice(Math.max(0, Math.min(deletedAnnotation.index, annotations.length)), 0, deletedAnnotation.annotation);
+        return { ...current, annotations };
+      }))) return;
       renditionRef.current?.annotations.highlight(deletedAnnotation.annotation.cfiRange, { annotationId: deletedAnnotation.annotation.id }, undefined, 'zhaoye-epub-highlight', { fill: '#e4c95b', 'fill-opacity': '0.42', 'mix-blend-mode': 'multiply' });
       setDeletedAnnotation(null);
     } finally { savingRef.current = false; setSavingAnnotation(false); }
@@ -355,8 +345,8 @@ export function EpubPane({ epub, theme, noteBodyFont, onMeta, onMessage, onExcer
   function changeFont(next: number) {
     const value = Math.min(180, Math.max(70, next));
     setFontSize(value); renditionRef.current?.themes.fontSize(`${value}%`);
-    const nextMeta = { ...metaRef.current, fontSize: value };
-    metaRef.current = nextMeta; void onMeta(nextMeta);
+    readingPosition.current = { ...readingPosition.current, fontSize: value };
+    void onMeta(current => ({ ...current, fontSize: value }));
   }
   function display(target: string) {
     if (target) { setLoading(true); void renditionRef.current?.display(target).finally(() => setLoading(false)); }

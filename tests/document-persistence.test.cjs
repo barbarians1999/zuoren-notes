@@ -50,3 +50,12 @@ test('real conflict does not delete recovery and blocks a successful flush',asyn
  assert.equal(await h.session.save(h.options),false);assert.equal(h.conflicts.length,1);
 });
 
+for (const reason of ['startup', 'recovery', 'conflict', 'mutation']) test(reason + ' gate blocks both save and poll, including a newly blocked pending read', async () => {
+  const h = harness(), disk = deferred(); let blocked = false, applied = false, reads = 0;
+  const options = { snapshot: h.options.snapshot, blocked: () => blocked, read: () => { reads++; return disk.promise; }, apply: () => applied = true };
+  const pending = h.session.poll(options); blocked = true;
+  disk.resolve({ path: 'A.md', content: 'external', hash: 'external' }); await pending;
+  await h.session.poll(options); assert.equal(applied, false); assert.equal(reads, 1);
+  assert.equal(await h.session.save({ ...h.options, blocked: () => blocked }), false); assert.deepEqual(h.writes, []);
+});
+

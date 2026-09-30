@@ -1,5 +1,6 @@
 import DOMPurify from 'dompurify';
 import { EditorView } from '@codemirror/view';
+import { isolateHistory } from '@codemirror/commands';
 
 const escape = (text: string) => text.replace(/([\\`*_[\]~])/g, '\\$1');
 export function htmlToMarkdown(html: string): string {
@@ -72,7 +73,7 @@ export const markdownClipboard = EditorView.domEventHandlers({
     const source = markdown || (html && !data.getData('vscode-editor-data') && (rich || !text) ? htmlToMarkdown(html) : text);
     if (!source) return false;
     event.preventDefault();
-    view.dispatch(view.state.replaceSelection(source), { userEvent: 'input.paste', scrollIntoView: true });
+    view.dispatch(view.state.replaceSelection(source), { userEvent: 'input.paste', scrollIntoView: true, annotations: isolateHistory.of('full') });
     return true;
   },
 });
@@ -85,6 +86,6 @@ function copy(event: ClipboardEvent, view: EditorView, cut: boolean) {
   event.clipboardData.setData('text/plain', source);
   event.clipboardData.setData('text/markdown', source);
   event.preventDefault(); event.stopPropagation();
-  if (cut && !view.state.readOnly) view.dispatch(view.state.replaceSelection(''), { userEvent: 'delete.cut', scrollIntoView: true });
+  if (cut && !view.state.readOnly) view.dispatch(view.state.replaceSelection(''), { userEvent: 'delete.cut', scrollIntoView: true, annotations: isolateHistory.of('full') });
   return true;
 }

@@ -121,14 +121,12 @@ class HorizontalRuleWidget extends WidgetType {
   }
 }
 
-export function buildMarkdownLivePreview(state: EditorState): DecorationSet {
+export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120): DecorationSet {
   const ranges: ReturnType<Decoration['range']>[] = [];
-  // CodeMirror parses incrementally. A large note can therefore expose a
-  // partial tree at the caret for one update, which used to make list/quote
-  // decorations disappear until another edit forced a reparse. Live Preview
-  // needs a complete block tree because list items and blockquotes are nested
-  // block nodes; wait briefly for the complete tree, then fall back safely.
-  const tree = ensureSyntaxTree(state, state.doc.length, 120) || syntaxTree(state);
+  // Initial hydration may parse briefly. Typing has a smaller budget and
+  // selection-only updates never force a synchronous full-document parse.
+  // Language-worker tree updates finish the remaining decorations safely.
+  const tree = (parseBudget > 0 && ensureSyntaxTree(state, state.doc.length, parseBudget)) || syntaxTree(state);
   const active = (from: number, to: number) => state.selection.ranges.some(range => {
     const start = state.doc.lineAt(range.from).from, end = state.doc.lineAt(range.to).to;
     return from <= end && to >= start;
@@ -230,8 +228,15 @@ export function buildMarkdownLivePreview(state: EditorState): DecorationSet {
 export const livePreview = StateField.define<DecorationSet>({
   create: buildMarkdownLivePreview,
   update(value, transaction) {
-    return transaction.docChanged || transaction.selection || syntaxTree(transaction.startState) !== syntaxTree(transaction.state)
-      ? buildMarkdownLivePreview(transaction.state) : value;
+    const treeChanged = syntaxTree(transaction.startState) !== syntaxTree(transaction.state);
+    if (!transaction.docChanged && !treeChanged) {
+      if (!transaction.selection || activeLineKey(transaction.startState) === activeLineKey(transaction.state)) return value;
+    }
+    return buildMarkdownLivePreview(transaction.state, transaction.docChanged ? 20 : 0);
   },
   provide: field => EditorView.decorations.from(field),
 });
+
+function activeLineKey(state: EditorState) {
+  return state.selection.ranges.map(range => `${state.doc.lineAt(range.from).number}:${state.doc.lineAt(range.to).number}`).join(',');
+}
