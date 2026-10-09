@@ -6,25 +6,25 @@
 
 **[下载 Windows 安装版（0.3.2）](https://github.com/barbarians1999/zuoren-notes/releases/latest)** · [查看全部版本](https://github.com/barbarians1999/zuoren-notes/releases)
 
-> 下方为功能界面示意图，用于展示主要工作流程；不是应用实际运行截图。
+下方为左人笔记 0.3.2 的实际运行截图，笔记与书籍内容使用虚构的演示样本。
 
 ## 功能预览
 
 ### Markdown 写作
 
-![Markdown 编辑界面示意](docs/previews/markdown.svg)
+![Markdown Live Preview 实际运行截图](docs/previews/markdown.png)
 
 提供接近 Obsidian 的 Live Preview 编辑方式：在 Markdown 源文本中直接写作，标题、列表、引用、表格等格式在编辑时即时呈现，并支持撤销与自动保存。
 
 ### PDF 阅读与摘录
 
-![PDF 阅读界面示意](docs/previews/pdf.svg)
+![PDF 深色阅读实际运行截图](docs/previews/pdf.png)
 
 支持页码跳转、缩放、全文查找、文字选择、高亮、批注和摘录；深色模式下可切换深色阅读效果。摘录可进入当前笔记，方便边读边整理。
 
 ### EPUB 阅读
 
-![EPUB 阅读界面示意](docs/previews/epub.svg)
+![EPUB 阅读实际运行截图](docs/previews/epub.png)
 
 支持目录导航、双页阅读、滚轮或方向键翻页、全书搜索，以及把选段摘录到笔记。
 
