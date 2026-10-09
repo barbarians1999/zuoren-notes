@@ -1,7 +1,7 @@
 {
   "name": "zuoren-notes-reader",
   "productName": "左人笔记",
-  "version": "0.2.14",
+  "version": "0.3.2",
   "type": "module",
   "description": "本地 PDF、EPUB 与 Markdown 研究阅读和笔记软件",
   "private": true,
@@ -14,9 +14,10 @@
     "download:ocr": "node scripts/download-ocr.cjs",
     "package": "node scripts/package.cjs",
     "package:installer": "pnpm verify && node scripts/installer.cjs",
-    "test:editor": "node --test --test-concurrency=1 tests/source-editor-smoke.cjs tests/document-lifecycle-smoke.cjs tests/clipboard-smoke.cjs tests/linebreak-smoke.cjs tests/stability-smoke.cjs",
-    "test:readers": "node tests/readers-smoke.cjs",
-    "test:workspace": "node --test --test-concurrency=1 tests/startup-preservation-smoke.cjs tests/settings-startup-smoke.cjs tests/appearance-smoke.cjs tests/path-reuse-smoke.cjs tests/recovery-smoke.cjs tests/electron-smoke.cjs",
+    "test:editor": "node --test --test-concurrency=1 tests/source-editor-smoke.cjs tests/markdown-interaction-smoke.cjs tests/document-lifecycle-smoke.cjs tests/clipboard-smoke.cjs tests/linebreak-smoke.cjs tests/stability-smoke.cjs tests/editor-polish-smoke.cjs tests/reading-actions-smoke.cjs tests/note-tabs-smoke.cjs tests/note-toolbar-smoke.cjs",
+    "test:readers": "node --test --test-concurrency=1 tests/readers-smoke.cjs tests/reader-reliability-smoke.cjs tests/epub-search-smoke.cjs tests/pdf-toolbar-smoke.cjs tests/pdf-selection-smoke.cjs tests/pdf-appearance-smoke.cjs",
+    "test:packaged": "node tests/packaged-smoke.cjs",
+    "test:workspace": "node --test --test-concurrency=1 tests/startup-preservation-smoke.cjs tests/settings-startup-smoke.cjs tests/window-startup-smoke.cjs tests/fullscreen-chrome-smoke.cjs tests/appearance-smoke.cjs tests/input-focus-smoke.cjs tests/themes-smoke.cjs tests/path-reuse-smoke.cjs tests/recovery-smoke.cjs tests/wide-review-smoke.cjs tests/electron-smoke.cjs",
     "verify": "pnpm build && pnpm test && pnpm test:editor && pnpm test:readers && pnpm test:workspace"
   },
   "dependencies": {
@@ -62,7 +63,7 @@
       "package.json"
     ],
     "directories": {
-      "output": "../../Documents/Codex/2026-09-05/bang-w/outputs/左人笔记-Windows-Setup"
+      "output": "../../Documents/ChatGPT/笔记软件/releases"
     },
     "fileAssociations": [
       {
@@ -76,7 +77,7 @@
       }
     ],
     "win": {
-      "icon": "electron/assets/app.ico",
+      "icon": "electron/assets/app-constructivist.ico",
       "target": [
         {
           "target": "nsis",
@@ -90,8 +91,8 @@
       "signAndEditExecutable": true
     },
     "nsis": {
-      "installerIcon": "electron/assets/app.ico",
-      "uninstallerIcon": "electron/assets/app.ico",
+      "installerIcon": "electron/assets/app-constructivist.ico",
+      "uninstallerIcon": "electron/assets/app-constructivist.ico",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": "always",

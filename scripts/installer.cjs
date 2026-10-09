@@ -2,13 +2,12 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { createRequire } = require('node:module');
+const { releaseDirectory } = require('./release-paths.cjs');
 
 const root = path.resolve(__dirname, '..');
 const workRoot = path.join(root, 'work');
 const staging = path.join(workRoot, `installer-${Date.now()}`);
-const output = process.env.ZHAOYE_INSTALLER_OUTPUT
-  ? path.resolve(process.env.ZHAOYE_INSTALLER_OUTPUT)
-  : path.resolve(root, '..', '..', 'Documents', 'Codex', '2026-09-05', 'bang-w', 'outputs', '左人笔记-Windows-Setup');
+const output = releaseDirectory(root, process.env.ZHAOYE_INSTALLER_OUTPUT);
 
 async function packageRoot(name, from) {
   const localRequire = createRequire(path.join(from, 'package.json'));
@@ -58,6 +57,10 @@ async function runBuilder() {
 async function main() {
   const manifest = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
   const electron = await packageRoot('electron', root);
+  const electronDist = path.join(electron.directory, 'dist');
+  const runtimeVersion = (await fs.readFile(path.join(electronDist, 'version'), 'utf8')).trim();
+  if (runtimeVersion !== electron.manifest.version) throw new Error('Installed Electron runtime version does not match its package.');
+  await fs.access(path.join(electronDist, 'electron.exe'));
   await fs.mkdir(path.join(staging, 'src'), { recursive: true });
   await fs.cp(path.join(root, 'electron'), path.join(staging, 'electron'), { recursive: true });
   await fs.cp(path.join(root, 'dist'), path.join(staging, 'dist'), { recursive: true });
@@ -73,6 +76,7 @@ async function main() {
     build: {
       ...manifest.build,
       electronVersion: electron.manifest.version,
+      electronDist,
       files: [...manifest.build.files, 'node_modules/**/*'],
       directories: { output },
     },
@@ -87,6 +91,8 @@ main().catch(error => {
 }).finally(async () => {
   const relative = path.relative(workRoot, staging);
   if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
-    await fs.rm(staging, { recursive: true, force: true });
+    // Preserve failed builds; after a validated release the recycle-only
+    // release cleanup audits and retires this exact generated staging tree.
+    console.log(`Staging retained for verified recycle cleanup: ${staging}`);
   }
 });

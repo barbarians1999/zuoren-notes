@@ -1,6 +1,6 @@
 import { EditorView } from '@codemirror/view';
 import { markdownLanguage } from '@codemirror/lang-markdown';
-import { syntaxTree } from '@codemirror/language';
+import { ensureSyntaxTree, syntaxTree } from '@codemirror/language';
 export type MarkdownInlineFormat = 'bold' | 'italic' | 'code' | 'highlight' | 'strike' | 'link';
 export type MarkdownBlockFormat = 'heading' | 'quote' | 'bullet' | 'ordered' | 'task' | 'table';
 
@@ -28,14 +28,61 @@ export function exitEmptyBlockquote(view: EditorView) {
 }
 
 export function formatSourceSelection(view: EditorView, format: MarkdownInlineFormat) {
-  const { from, to } = view.state.selection.main;
+  const { state } = view;
+  const range = state.selection.main;
+  const { from, to } = range;
   const selected = view.state.sliceDoc(from, to);
   const wrapper = { bold: '**', italic: '*', code: '`', highlight: '==', strike: '~~', link: '' }[format];
-  const outside = wrapper && from >= wrapper.length && view.state.sliceDoc(from - wrapper.length, from) === wrapper && view.state.sliceDoc(to, to + wrapper.length) === wrapper;
-  if (outside) view.dispatch({ changes: [{ from: from - wrapper.length, to: from, insert: '' }, { from: to, to: to + wrapper.length, insert: '' }], selection: { anchor: from - wrapper.length, head: to - wrapper.length }, userEvent: 'input.format' });
-  else {
-    const replacement = wrapper ? wrapper + selected + wrapper : '[' + selected + '](https://)';
-    view.dispatch({ changes: { from, to, insert: replacement }, selection: { anchor: from + (wrapper.length || 1), head: to + (wrapper.length || 1) }, userEvent: 'input.format' });
+  const nodeName = { bold: 'StrongEmphasis', italic: 'Emphasis', code: 'InlineCode', highlight: 'Highlight', strike: 'Strikethrough', link: 'Link' }[format];
+  // Ask the parser, not a delimiter search: literal stars in code/escaped text
+  // and nested bold/italic must not be mistaken for the requested style.
+  const tree = ensureSyntaxTree(state, to + (to < state.doc.length ? 1 : 0), 100) || syntaxTree(state);
+  if (format !== 'code') {
+    for (let node: ReturnType<typeof tree.resolveInner> | null = tree.resolveInner(from, 1); node; node = node.parent) {
+      if (['InlineCode', 'FencedCode', 'CodeBlock'].includes(node.name) && to <= node.to) { view.focus(); return true; }
+    }
+  }
+  const matching: ReturnType<typeof tree.resolveInner>[] = [];
+  tree.iterate({ from, to, enter(node) {
+    if (node.name === nodeName && node.from <= from && node.to >= to &&
+      (!range.empty || from > node.from && from < node.to)) matching.push(node.node);
+  } });
+  const active = matching.at(-1);
+  let remove: { from: number; to: number; insert: string }[] | undefined;
+  if (active) {
+    const first = active.firstChild, last = active.lastChild;
+    if (first && last) {
+      if (format === 'link') {
+        const close = active.getChildren('LinkMark').find(mark => state.sliceDoc(mark.from, mark.to) === ']');
+        if (close) remove = [{ from: active.from, to: first.to, insert: '' }, { from: close.from, to: active.to, insert: '' }];
+      } else {
+        let start = first.to, end = last.from;
+        // CommonMark inline-code padding is syntax, not part of the value.
+        const body = state.sliceDoc(start, end);
+        if (format === 'code' && body.startsWith(' ') && body.endsWith(' ') && /\S/.test(body)) { start++; end--; }
+        remove = [{ from: active.from, to: start, insert: '' }, { from: end, to: active.to, insert: '' }];
+      }
+    }
+  }
+  // Empty placeholders (**** / ** / ==== / ~~~~ / ``) are not syntax nodes.
+  // Also support text-only callers without a Markdown language extension.
+  const outside = wrapper && from >= wrapper.length && state.sliceDoc(from - wrapper.length, from) === wrapper && state.sliceDoc(to, to + wrapper.length) === wrapper;
+  const exactRun = wrapper && (wrapper !== '*' || state.sliceDoc(Math.max(0, from - 2), from - 1) !== '*' && state.sliceDoc(to + 1, to + 2) !== '*');
+  if (!remove && outside && exactRun && (range.empty || tree.topNode.name !== 'Document')) remove = [{ from: from - wrapper.length, to: from, insert: '' }, { from: to, to: to + wrapper.length, insert: '' }];
+  if (remove) {
+    const changes = state.changes(remove);
+    view.dispatch({ changes, selection: { anchor: changes.mapPos(range.anchor), head: changes.mapPos(range.head) }, userEvent: 'input.format' });
+  } else {
+    let before = wrapper || '[', after = wrapper || '](https://)';
+    if (format === 'code') {
+      const longest = Math.max(0, ...Array.from(selected.matchAll(/`+/g), match => match[0].length));
+      before = after = '`'.repeat(longest + 1);
+      if (/^`|`$/.test(selected) || /^ .* $/.test(selected) && /\S/.test(selected)) { before += ' '; after = ' ' + after; }
+    }
+    view.dispatch({ changes: { from, to, insert: before + selected + after }, selection: {
+      anchor: (range.anchor === from ? from : to) + before.length,
+      head: (range.head === to ? to : from) + before.length,
+    }, userEvent: 'input.format' });
   }
   view.focus(); return true;
 }

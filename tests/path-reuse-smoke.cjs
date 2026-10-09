@@ -35,10 +35,11 @@ test('a deleted Markdown path can be recreated and autosaved', { timeout: 90000 
   page.setDefaultTimeout(15000);
   await page.waitForSelector('.topbar');
   await page.locator('.file-row').filter({ hasText: '可重用.md' }).click();
-  const deletionDialog = new Promise(resolve => page.once('dialog', async dialog => { await dialog.accept(); resolve(); }));
   await page.locator('.file-row').filter({ hasText: '可重用.md' }).click({ button: 'right' });
   await page.getByRole('menuitem', { name: '移到回收站' }).click();
-  await deletionDialog;
+  const confirmation = page.getByRole('dialog', { name: '移到回收站' });
+  await confirmation.waitFor();
+  await confirmation.getByRole('button', { name: '移到回收站', exact: true }).click();
   await page.locator('.file-row').filter({ hasText: '可重用.md' }).waitFor({ state: 'detached' });
   await assert.rejects(fs.access(notePath));
 

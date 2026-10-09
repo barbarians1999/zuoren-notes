@@ -5,6 +5,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { _electron: electron } = require('playwright');
 const { createSmokeWorkspace, cleanupSmokeWorkspace } = require('./smokeWorkspace.cjs');
+const { waitForFile } = require('./waitForFile.cjs');
 const appRoot = path.resolve(__dirname, '..');
 let smokeWorkspace;
 let application;
@@ -69,7 +70,7 @@ test('clipboard source, HTML tasks/tables, styling, safe images and undo round-t
   await page.waitForFunction(() => document.querySelector('.markdown-preview img')?.naturalWidth === 1);
   assert.match(await preview.locator('pre').innerText(), /!\[literal\]\(pixel.png\)/, 'code examples must not be rewritten');
   await page.getByRole('button', { name: '切换到源码编辑' }).click();
-  await page.waitForTimeout(1300); assert.equal(await fs.readFile(note, 'utf8'), source);
+  await waitForFile(note, text => text === source); assert.equal(await fs.readFile(note, 'utf8'), source);
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
   await application.waitForEvent('close'); application = undefined;
   assert.deepEqual(errors, []);

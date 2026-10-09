@@ -1,34 +1,43 @@
-import React, { useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { EditorState, Prec, type Extension } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
-import { indentWithTab } from '@codemirror/commands';
+import { indentWithTab, historyField } from '@codemirror/commands';
 import { basicSetup } from 'codemirror';
-import { indentUnit } from '@codemirror/language';
+import { defaultHighlightStyle, HighlightStyle, indentUnit, syntaxHighlighting } from '@codemirror/language';
 import { markdownSyntax } from './markdownLanguage';
 import { livePreview } from './markdownLivePreview';
 import { markdownClipboard } from './markdownClipboard';
+import { markdownTextSelection } from './markdownSelection';
 import { exitEmptyBlockquote, formatSourceSelection } from './markdownCommands';
+import { undoNoteView, redoNoteView, type NoteDocument, type NoteViewState } from '../workspace/noteDocument';
 
-export function MarkdownSourceEditor({ notePath, value, onChange, onView, onSelectionChange }: { notePath: string; value: string; onChange: (value: string) => void; onView: (view: EditorView | null) => void; onSelectionChange: (selection: { from: number; to: number; left: number; top: number; width: number; height: number } | null) => void }) {
+// Keep the existing editing setup, but store undo data only in the document.
+function withoutViewHistory(extension: Extension): Extension {
+  return extension === historyField ? [] : Array.isArray(extension) ? extension.map(withoutViewHistory) : extension;
+}
+const documentViewSetup = withoutViewHistory(basicSetup);
+// The default code highlight style underlines headings. Override its heading
+// rule at the syntax source (which can wrap our decorations), retaining links,
+// strike and code colors instead of attempting descendant-only CSS resets.
+const proseHighlighting = syntaxHighlighting(HighlightStyle.define(defaultHighlightStyle.specs.map(spec =>
+  spec.textDecoration === 'underline' && spec.fontWeight === 'bold' ? { ...spec, textDecoration: 'none' } : spec
+)));
+
+export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, sharedDocument, tab }: { notePath: string; onView: (view: EditorView | null) => void; onSelectionChange: (selection: { from: number; to: number; left: number; top: number; width: number; height: number } | null) => void; sharedDocument: NoteDocument; tab: NoteViewState }) {
   const root = useRef<HTMLDivElement>(null), viewRef = useRef<EditorView | null>(null);
-  const change = useRef(onChange); change.current = onChange;
   const callback = useRef(onView); callback.current = onView;
   const selectionCallback = useRef(onSelectionChange); selectionCallback.current = onSelectionChange;
-  const lastEmitted = useRef(value);
   const extensionsRef = useRef<Extension[]>([]);
-  const externalUpdate = useRef(false);
+  const shared = useRef({ document: sharedDocument, tab }); shared.current = { document: sharedDocument, tab };
   useEffect(() => {
     if (!root.current) return;
     const extensions: Extension[] = [
-        markdownClipboard, basicSetup, markdownSyntax(), livePreview, indentUnit.of('\t'), EditorState.tabSize.of(4),
-        Prec.highest(keymap.of([{ key: 'Enter', run: exitEmptyBlockquote }])),
-        keymap.of([indentWithTab, { key: 'Mod-b', run: view => formatSourceSelection(view, 'bold') }, { key: 'Mod-i', run: view => formatSourceSelection(view, 'italic') }, { key: 'Mod-Shift-x', run: view => formatSourceSelection(view, 'strike') }]),
+        markdownClipboard, documentViewSetup, markdownSyntax(), proseHighlighting, livePreview, markdownTextSelection, indentUnit.of('\t'), EditorState.tabSize.of(4),
+        Prec.highest(keymap.of([{ key: 'Enter', run: exitEmptyBlockquote }, { key: 'Mod-z', run: undoNoteView }, { key: 'Mod-Shift-z', run: redoNoteView }, { key: 'Mod-y', run: redoNoteView }])),
+        keymap.of([indentWithTab]),
+        Prec.highest(keymap.of([{ key: 'Mod-b', run: view => formatSourceSelection(view, 'bold') }, { key: 'Mod-i', run: view => formatSourceSelection(view, 'italic') }, { key: 'Mod-Shift-x', run: view => formatSourceSelection(view, 'strike') }])),
         EditorView.lineWrapping,
         EditorView.updateListener.of(update => {
-          if (update.docChanged && !externalUpdate.current) {
-            lastEmitted.current = update.state.doc.toString();
-            change.current(lastEmitted.current);
-          }
           if (update.selectionSet || update.focusChanged) {
             const selection = update.state.selection.main;
             if (!update.view.hasFocus || selection.empty) {
@@ -62,20 +71,17 @@ export function MarkdownSourceEditor({ notePath, value, onChange, onView, onSele
         }),
       ];
     extensionsRef.current = extensions;
-    const view = new EditorView({ parent: root.current, state: EditorState.create({ doc: value, extensions }) });
+    const view = new EditorView({ parent: root.current, state: EditorState.create({ doc: shared.current.document.state.doc, selection: shared.current.tab.selection, extensions }), dispatchTransactions: (transactions, view) => {
+      shared.current.document.dispatch(view, transactions);
+    } });
     viewRef.current = view; callback.current(view);
     return () => { callback.current(null); viewRef.current = null; view.destroy(); };
   }, []);
   useEffect(() => {
     const view = viewRef.current;
-    if (!view || value === lastEmitted.current || value === view.state.doc.toString()) return;
-    // External reloads are explicit snapshots, not local typing echoes.
-    externalUpdate.current = true;
-    try {
-      const anchor = Math.min(view.state.selection.main.head, value.length);
-      view.setState(EditorState.create({ doc: value, selection: { anchor }, extensions: extensionsRef.current }));
-      lastEmitted.current = value;
-    } finally { externalUpdate.current = false; }
-  }, [value]);
+    if (!view) return;
+    view.setState(EditorState.create({ doc: sharedDocument.state.doc, selection: tab.selection, extensions: extensionsRef.current }));
+    return sharedDocument.attach(view, tab);
+  }, [sharedDocument, tab]);
   return <div className="markdown-source-editor" data-note-path={notePath} ref={root} aria-label="Markdown 源码编辑器"/>;
 }

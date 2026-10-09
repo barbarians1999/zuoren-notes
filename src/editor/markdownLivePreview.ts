@@ -158,7 +158,10 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
     if (name === 'Table' && !active(from, to)) {
       const cells: number[] = [];
       const cursor = node.cursor();
-      do { if (cursor.name === 'TableCell') cells.push(cursor.from); } while (cursor.next());
+      // SyntaxNode.cursor() retains its ancestors: next() can leave this table
+      // and walk the rest of the document. Bound the scan to this table so cell
+      // click targets stay local and multiple tables do not cause quadratic work.
+      do { if (cursor.name === 'TableCell') cells.push(cursor.from); } while (cursor.next() && cursor.from < to);
       hide(from, to, new TableWidget(state.sliceDoc(from, to), from, cells), true);
       return false;
     }

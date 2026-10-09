@@ -1,3 +1,4 @@
+const { noteUI, focusNote, moreAction } = require('./noteUi.cjs');
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
@@ -36,7 +37,7 @@ async function launchApplication() {
 
 async function openPrimaryNote(page) {
   if (await page.locator('.note-pane[data-pane-id="primary"] .cm-content').count()) return;
-  const primaryPane = page.locator('.note-pane[data-pane-id="primary"]');
+  const primaryPane = noteUI(page, 'primary');
   if (!await primaryPane.locator('.markdown-preview').count()) {
     await page.locator('.file-row').filter({ hasText: '甲笔记.md' }).click();
   }
@@ -60,10 +61,12 @@ async function waitForFonts(page) {
   const result = await page.evaluate(async () => {
     await document.fonts.ready;
     const songti = ['SimSun', 'Songti SC', 'STSong'].find(name => document.fonts.check(`16px "${name}"`)) || null;
-    return { bundled: document.fonts.check('16px "Zhaoye Reading"'), songti };
+    const fangsong = ['字体管家仿宋体 (非商业使用)', '仿宋_GB2312', '仿宋', 'FangSong'].find(name => document.fonts.check(`16px "${name}"`)) || null;
+    return { fangsong, heading: document.fonts.check('700 24px "Zhaoye Heading"'), buttons: document.fonts.check('500 16px "Zhaoye Buttons"'), songti };
   });
-  assert.equal(result.bundled, true, 'bundled FangSong face should load');
-  process.stderr.write(`[appearance-smoke] Songti face: ${result.songti || 'generic serif fallback'}\n`);
+  assert.equal(result.heading, true, 'bundled Source Han Serif heading face should load');
+  assert.equal(result.buttons, true, 'bundled Source Han Sans button face should load');
+  process.stderr.write(`[appearance-smoke] System FangSong: ${result.fangsong || 'generic serif fallback'}; Songti: ${result.songti || 'generic serif fallback'}\n`);
   return result;
 }
 
@@ -83,6 +86,8 @@ async function settingsColors(page) {
 }
 
 async function menuAppearance(menu) {
+  // Inspect the final opaque menu, not the first frame of its 120ms entrance.
+  await menu.evaluate(async element => { await Promise.all(element.getAnimations().map(animation => animation.finished.catch(() => {}))); });
   const item = menu.getByRole('menuitem').first();
   const base = await menu.evaluate(element => {
     const probe = document.createElement('span');
@@ -98,8 +103,10 @@ async function menuAppearance(menu) {
     return result;
   });
   await item.hover();
-  const hover = await item.evaluate(element => getComputedStyle(element).backgroundColor);
-  return { ...base, hover };
+  await menu.page().waitForTimeout(180);
+  const hovered = await item.evaluate(element => ({ hover: getComputedStyle(element).backgroundColor,
+    hoverText: getComputedStyle(element).color, hoverMarker: getComputedStyle(element).boxShadow }));
+  return { ...base, ...hovered };
 }
 
 function assertOpaque(color) {
@@ -133,23 +140,36 @@ test('note font setting persists without rebuilding editors and context menus st
   const primaryHeading = primary.locator('.cm-md-heading-6');
   const codeScroller = primary.locator('.cm-md-code-preview code, .cm-md-code-block').first();
   await primaryHeading.waitFor();
+  assert.equal(await primaryHeading.evaluate(element => Array.from(element.closest('.cm-line').querySelectorAll('span')).some(span => getComputedStyle(span).textDecorationLine.includes('underline'))), false, 'heading syntax must not underline inner or outer decorations');
   await codeScroller.waitFor();
   await primary.click();
   await page.keyboard.press('Control+P');
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
   assert.equal(await page.getByRole('button', { name: '打开命令面板' }).count(), 0);
   assert.equal(await page.getByRole('dialog', { name: '命令面板' }).count(), 0);
-  await page.getByRole('button', { name: '展开大纲', exact: true }).click();
+  await moreAction(page, '展开大纲');
   await page.locator('.note-pane[data-pane-id="primary"] .note-outline').waitFor();
-  await page.locator('.note-pane[data-pane-id="primary"]').getByRole('button', { name: '收起大纲' }).click();
+  await moreAction(page, '收起大纲');
   await openSettings(page);
   const fontSelect = page.getByRole('combobox', { name: 'Markdown 正文字体' });
   assert.equal(await fontSelect.inputValue(), 'fangsong');
-  assert.match(await fontFamily(primary), /Zhaoye Reading/);
-  assert.match(await fontFamily(primaryHeading), /Zhaoye Reading/);
+  assert.match(await fontFamily(primary), /字体管家仿宋体 \(非商业使用\)/);
+  assert.match(await fontFamily(primaryHeading), /Zhaoye Heading/);
   assert.equal(await page.evaluate(() => localStorage.getItem('zhaoye-note-font')), 'fangsong');
 
   const interfaceFont = await fontFamily(page.locator('.settings-popover'));
+  assert.match(interfaceFont, /Consolas/);
+  assert.match(await fontFamily(page.locator('.sidebar')), /Consolas/);
+  assert.match(await fontFamily(page.locator('.file-row').first()), /Consolas/);
+  assert.match(await fontFamily(page.locator('.document-tab').first()), /Consolas/);
+  assert.match(await fontFamily(page.getByRole('button', { name: '设置', exact: true })), /Zhaoye Buttons/);
+  const uiWidths = await page.locator('.settings-popover').evaluate(element => {
+    const probe = document.createElement('span'); probe.style.font = getComputedStyle(element).font; probe.style.position = 'absolute'; element.append(probe);
+    probe.textContent = 'iiii'; const narrow = probe.getBoundingClientRect().width;
+    probe.textContent = 'WWWW'; const wide = probe.getBoundingClientRect().width; probe.remove(); return { narrow, wide };
+  });
+  assert.ok(Math.abs(uiWidths.narrow - uiWidths.wide) < .1, 'UI Latin glyphs must be monospaced');
+  assert.match(await fontFamily(primaryHeading), /Zhaoye Heading/);
   const codeFont = await fontFamily(codeScroller);
   const inlineCodeFont = await fontFamily(primary.locator('.cm-md-inline-code').first());
   await primary.evaluate(element => { window.__appearanceEditor = element; });
@@ -188,15 +208,16 @@ test('note font setting persists without rebuilding editors and context menus st
 
   await fontSelect.selectOption('default');
   assert.match(await fontFamily(primary), /Segoe UI/);
-  assert.match(await fontFamily(primaryHeading), /Segoe UI/);
+  assert.match(await fontFamily(primaryHeading), /Zhaoye Heading/);
   assert.equal(await page.evaluate(() => localStorage.getItem('zhaoye-note-font')), 'default');
   assert.equal(await page.evaluate(() => window.__appearanceEditor === document.querySelector('.note-pane[data-pane-id="primary"] .cm-content')), true);
 
   await fontSelect.selectOption('fangsong');
-  assert.match(await fontFamily(primary), /Zhaoye Reading/);
+  assert.match(await fontFamily(primary), /字体管家仿宋体 \(非商业使用\)/);
+  assert.match(await fontFamily(primaryHeading), /Zhaoye Heading/);
   await fontSelect.selectOption('songti');
   assert.match(await fontFamily(primary), /SimSun/);
-  assert.match(await fontFamily(primaryHeading), /SimSun/);
+  assert.match(await fontFamily(primaryHeading), /Zhaoye Heading/);
   assert.equal(await page.evaluate(() => localStorage.getItem('zhaoye-note-font')), 'songti');
   assert.equal(await fontFamily(page.locator('.settings-popover')), interfaceFont);
   assert.equal(await fontFamily(codeScroller), codeFont);
@@ -213,16 +234,20 @@ test('note font setting persists without rebuilding editors and context menus st
   assert.equal(await page.getByRole('button', { name: '打开命令面板' }).count(), 0);
   assert.match(await fontFamily(primary), /SimSun/);
   assert.match(await fontFamily(secondary), /SimSun/);
-  await page.locator('.note-pane[data-pane-id="primary"] .note-toolbar button[aria-label="切换到预览"]').click();
+  await focusNote(page, 'primary');
+  await noteUI(page, 'primary').getByRole('button', { name: '切换到预览', exact: true }).click();
   const preview = page.locator('.note-pane[data-pane-id="primary"] .markdown-preview');
   await preview.waitFor();
   await openSettings(page);
-  for (const [value, pattern] of [['default', /Segoe UI/], ['fangsong', /Zhaoye Reading/], ['songti', /SimSun/]]) {
+  for (const [value, pattern] of [['default', /Segoe UI/], ['fangsong', /字体管家仿宋体 \(非商业使用\)/], ['songti', /宋体/], ['hanyi-shufang-55w', /汉仪书仿 55W/]]) {
     await page.getByRole('combobox', { name: 'Markdown 正文字体' }).selectOption(value);
     assert.match(await fontFamily(preview), pattern);
-    assert.match(await fontFamily(preview.getByRole('heading', { name: '六级' })), pattern);
+    if (value === 'fangsong') assert.equal(await page.evaluate(() => document.fonts.check('18px "字体管家仿宋体 (非商业使用)"')), true, 'installed Font Manager FangSong family resolves');
+    if (value === 'hanyi-shufang-55w') assert.equal(await page.evaluate(() => document.fonts.check('18px "汉仪书仿 55W"')), true, 'installed HanYi 55W family resolves');
+    assert.match(await fontFamily(preview.getByRole('heading', { name: '六级' })), /Zhaoye Heading/);
     assert.match(await fontFamily(secondary), pattern);
   }
+  assert.equal(await page.getByRole('option', { name: /思源宋体/ }).count(), 0, 'Source Han Serif remains a heading font, not a body option');
   assert.equal(await fontFamily(page.locator('.settings-popover')), interfaceFont);
   await page.keyboard.press('Escape');
   await page.waitForTimeout(900);
@@ -260,7 +285,7 @@ test('note font setting persists without rebuilding editors and context menus st
   assert.equal(darkMenu.background, darkMenu.surface);
   assert.equal(darkMenu.opacity, '1');
   assert.notEqual(darkMenu.text, darkMenu.background);
-  assert.notEqual(darkMenu.hover, darkMenu.background);
+  assert.ok(darkMenu.hover !== darkMenu.background || darkMenu.hoverText !== darkMenu.text || darkMenu.hoverMarker !== 'none', 'night hover remains distinguishable on pure black');
   assert.notEqual(darkMenu.background, lightMenu.background);
   await page.keyboard.press('Escape');
   const folderRow = page.locator('.file-row').filter({ hasText: '资料夹' });
@@ -271,7 +296,7 @@ test('note font setting persists without rebuilding editors and context menus st
   assert.equal(folderMenu.opacity, '1');
   await page.keyboard.press('Escape');
 
-  for (const [value, pattern] of [['default', /Segoe UI/], ['fangsong', /Zhaoye Reading/], ['songti', /SimSun/]]) {
+  for (const [value, pattern] of [['default', /Segoe UI/], ['fangsong', /字体管家仿宋体 \(非商业使用\)/], ['songti', /宋体/], ['hanyi-shufang-55w', /汉仪书仿 55W/]]) {
     await openSettings(page);
     await page.getByRole('combobox', { name: 'Markdown 正文字体' }).selectOption(value);
     await page.keyboard.press('Escape');
@@ -288,9 +313,15 @@ test('note font setting persists without rebuilding editors and context menus st
   await stopApplication();
   page = await launchApplication();
   await openPrimaryNote(page);
+  await page.evaluate(() => localStorage.setItem('zhaoye-note-font', 'source-han-serif'));
+  await stopApplication();
+  page = await launchApplication();
+  await openPrimaryNote(page);
   await openSettings(page);
-  assert.equal(await page.getByRole('combobox', { name: 'Markdown 正文字体' }).inputValue(), 'songti');
-  assert.match(await fontFamily(page.locator('.note-pane[data-pane-id="primary"] .cm-content')), /SimSun/);
+  assert.equal(await page.getByRole('combobox', { name: 'Markdown 正文字体' }).inputValue(), 'songti', 'legacy Source Han body preference migrates to Songti');
+  await page.waitForFunction(() => localStorage.getItem('zhaoye-note-font') === 'songti');
+  assert.match(await fontFamily(page.locator('.note-pane[data-pane-id="primary"] .cm-content')), /宋体/);
+  assert.match(await fontFamily(page.locator('.note-pane[data-pane-id="primary"] .cm-md-heading-1').first()), /Zhaoye Heading/);
 
   await page.evaluate(() => localStorage.setItem('zhaoye-note-font', 'invalid-font'));
   await stopApplication();
@@ -298,7 +329,7 @@ test('note font setting persists without rebuilding editors and context menus st
   await openPrimaryNote(page);
   await openSettings(page);
   assert.equal(await page.getByRole('combobox', { name: 'Markdown 正文字体' }).inputValue(), 'fangsong');
-  assert.match(await fontFamily(page.locator('.note-pane[data-pane-id="primary"] .cm-content')), /Zhaoye Reading/);
+  assert.match(await fontFamily(page.locator('.note-pane[data-pane-id="primary"] .cm-content')), /字体管家仿宋体 \(非商业使用\)/);
   assert.equal(await page.evaluate(() => localStorage.getItem('zhaoye-note-font')), 'fangsong');
 
   await page.evaluate(() => localStorage.setItem('zhaoye-note-font', 'songti'));
@@ -316,6 +347,6 @@ test('note font setting persists without rebuilding editors and context menus st
   await openPrimaryNote(page);
   await openSettings(page);
   assert.equal(await page.getByRole('combobox', { name: 'Markdown 正文字体' }).inputValue(), 'fangsong');
-  assert.match(await fontFamily(page.locator('.note-pane[data-pane-id="primary"] .cm-content')), /Zhaoye Reading/);
+  assert.match(await fontFamily(page.locator('.note-pane[data-pane-id="primary"] .cm-content')), /字体管家仿宋体 \(非商业使用\)/);
   assert.deepEqual(readFaultErrors, [], 'storage read failure should be handled without an uncaught error');
 });

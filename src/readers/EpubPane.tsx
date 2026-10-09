@@ -1,43 +1,44 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowLeft, ArrowLeftRight, BookOpen, ChevronLeft, ChevronRight, Columns2, Copy, Crop, List, FileText, Folder, FolderOpen, FolderPlus, FolderTree, Highlighter, Maximize2, MessageSquare, Minimize2, Minus, Monitor, Moon, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings2, Square, Sun, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react';
-import type { EpubAnchor, EpubAnnotation, EpubMeta, MarkdownScrollMemory, NoteRead, PdfAnchor, PdfAnnotation, PdfMeta, PdfRect, ReaderAnchor, RecoveryCheckResult, RecoveryV1, SaveNoteResult, WorkspaceFile } from '../types';
-import { reader, resolveLocal, NOTE_BODY_FONTS, EPUB_MIN_SPREAD_WIDTH, type ActivePdf, type ActiveEpub, type FlatNavItem, type OcrDialog, type NoteMode, type NoteBodyFont, type SaveLabel, type FindCommand } from '../readerContext';
+import { useEffect, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import type { EpubAnchor, EpubAnnotation, EpubMeta } from '../types';
+import { NOTE_BODY_FONTS, EPUB_MIN_SPREAD_WIDTH, type ActiveEpub, type FlatNavItem, type NoteBodyFont } from '../readerContext';
 import ePub, { type Book, type Location, type NavItem, type Rendition } from 'epubjs';
-import readingFontUrl from '../assets/ZhaoyeFangSong.ttf?url';
 import { annotationExcerpt, updateAnnotationComment } from '../epubAnnotationActions.cjs';
+import { THEMES, type ThemeName } from '../appearanceTheme.cjs';
+import { EpubSearchPanel } from './EpubSearchPanel';
+import type { EpubSearchResult } from './epubSearch';
+import type { ExcerptFlowResult } from './excerptFlow';
 function flattenToc(items: NavItem[], depth = 0): FlatNavItem[] {
   return items.flatMap(item => [{ href: item.href, label: item.label.trim(), depth }, ...flattenToc(item.subitems || [], depth + 1)]);
 }
 
 const EPUB_THEME_STYLE_ID = 'zuoren-notes-epub-theme';
-function epubThemeCss(theme: 'light' | 'dark', fontFamily: string) {
-  const dark = theme === 'dark';
-  const background = dark ? '#171d19' : '#ffffff';
-  const text = dark ? '#dfe7e1' : '#242925';
-  const heading = dark ? '#b8d8c8' : '#1d3d30';
-  const muted = dark ? '#aebbb3' : '#58645d';
-  const link = dark ? '#83bfa1' : '#1d6549';
-  const codeBackground = dark ? '#101512' : '#f5f6f4';
+function epubThemeCss(theme: ThemeName, fontFamily: string) {
+  const { colors, colorScheme } = THEMES[theme];
   return `
-    @font-face { font-family: "Zhaoye Reading"; src: url("${readingFontUrl}") format("truetype"); font-weight: 400; font-style: normal; font-display: swap; }
-    :root { color-scheme: ${dark ? 'dark' : 'light'}; }
-    html, body { background: ${background} !important; color: ${text} !important; }
+    :root { color-scheme: ${colorScheme}; }
+    html, body { background: ${colors.surface} !important; color: ${colors.text} !important; }
     body { max-width: 880px; margin: 0 auto !important; padding: 32px clamp(22px, 4vw, 56px) 72px !important; font-family: ${fontFamily} !important; line-height: 1.95 !important; letter-spacing: .015em; }
     body, p, li, dt, dd, blockquote, table, th, td, h1, h2, h3, h4, h5, h6 { font-family: ${fontFamily} !important; }
-    h1, h2, h3, h4, h5, h6 { color: ${heading} !important; line-height: 1.35 !important; }
+    p, li, dt, dd, table, th, td { color: ${colors.text} !important; }
+    span { color: inherit !important; }
+    h1, h2, h3, h4, h5, h6 { color: ${colors.heading} !important; line-height: 1.35 !important; }
     h1 { margin: .15em 0 .8em !important; font-size: 2em !important; }
     h2 { margin: 1.6em 0 .65em !important; font-size: 1.48em !important; }
     h3 { margin: 1.4em 0 .55em !important; font-size: 1.2em !important; }
     p { margin: .72em 0 !important; }
-    blockquote { margin: 1.2em 0 !important; padding-left: 1em !important; border-left: 3px solid ${dark ? '#668c79' : '#8bb29f'} !important; color: ${muted} !important; }
-    a { color: ${link} !important; text-underline-offset: 3px; }
-    code, pre { font-family: "Cascadia Code", ui-monospace, monospace !important; color: ${text} !important; background: ${codeBackground} !important; }
+    blockquote { margin: 1.2em 0 !important; padding-left: 1em !important; border-left: 3px solid ${colors['quote-line']} !important; color: ${colors.quote} !important; }
+    a { color: ${colors.link} !important; text-underline-offset: 3px; }
+    code, pre { font-family: "Cascadia Code", ui-monospace, monospace !important; color: ${colors.text} !important; background: ${colors['code-bg']} !important; }
+    th, td { border-color: ${colors.line} !important; }
+    th { background: ${colors['surface-muted']} !important; }
+    mark { background: ${colors['mark-bg']} !important; color: ${colors['mark-text']} !important; }
     img, svg { max-width: 100% !important; height: auto !important; }
-    hr { border-color: ${dark ? '#3a463f' : '#dfe3df'} !important; }
+    hr { border-color: ${colors.line} !important; }
   `;
 }
 
-function applyEpubTheme(contentsOrView: any, theme: 'light' | 'dark', fontFamily: string) {
+function applyEpubTheme(contentsOrView: any, theme: ThemeName, fontFamily: string) {
   const contents = contentsOrView?.document ? contentsOrView : contentsOrView?.contents;
   const document = contents?.document as Document | undefined;
   if (!document?.head) return;
@@ -50,7 +51,7 @@ function applyEpubTheme(contentsOrView: any, theme: 'light' | 'dark', fontFamily
   style.textContent = epubThemeCss(theme, fontFamily);
 }
 
-export function EpubPane({ epub, theme, noteBodyFont, onMeta, onMessage, onExcerpt, excerptTarget, target }: { epub: ActiveEpub; theme: 'light' | 'dark'; noteBodyFont: NoteBodyFont; onMeta: (change: (current: EpubMeta) => EpubMeta) => Promise<boolean>; onMessage: (message: string) => void; onExcerpt: (anchor: EpubAnchor, quote: string, comment: string) => Promise<void>; excerptTarget: string | null; target: EpubAnchor | null }) {
+export function EpubPane({ epub, theme, noteBodyFont, onMeta, onMessage, onExcerpt, onSelectionAction, excerptTarget, target }: { epub: ActiveEpub; theme: ThemeName; noteBodyFont: NoteBodyFont; onMeta: (change: (current: EpubMeta) => EpubMeta) => Promise<boolean>; onMessage: (message: string) => void; onExcerpt: (anchor: EpubAnchor, quote: string, comment: string) => Promise<ExcerptFlowResult>; onSelectionAction: (annotation: EpubAnnotation, excerpt: boolean) => Promise<ExcerptFlowResult>; excerptTarget: string | null; target: EpubAnchor | null }) {
   const host = useRef<HTMLDivElement>(null);
   const bookRef = useRef<Book | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
@@ -58,9 +59,30 @@ export function EpubPane({ epub, theme, noteBodyFont, onMeta, onMessage, onExcer
   const readingPosition = useRef({ cfi: epub.meta.cfi, progress: epub.meta.progress, fontSize: epub.meta.fontSize });
   const generationRef = useRef(0);
   const savingRef = useRef(false);
+  const selectionActionGeneration = useRef(0);
+  const [selectionFlow, setSelectionFlow] = useState<ExcerptFlowResult | null>(null);
+  const selectionAnnotation = useRef<EpubAnnotation | null>(null);
+  const [annotationFlows, setAnnotationFlows] = useState<Record<string, ExcerptFlowResult>>({});
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchHighlight = useRef<string | null>(null), searchJumpToken = useRef(0);
+  const showSearchRef = useRef(() => {});
+  showSearchRef.current = () => {
+    setSearchOpen(true);
+    requestAnimationFrame(() => host.current?.parentElement?.querySelector<HTMLInputElement>('[aria-label="EPUB 搜索文本"]')?.focus());
+  };
   const metaWriter = useRef(onMeta); metaWriter.current = onMeta;
   useEffect(() => {
-    const flush = () => { const position = { ...readingPosition.current }; void metaWriter.current(current => ({ ...current, ...position })); };
+    const flush = () => {
+      // display() can finish before epub.js emits its RAF-delayed relocation.
+      // Capture the visible CFI synchronously before main awaits this write.
+      try {
+        // epub.js types expose the deprecated flat shape; runtime returns Location.
+        const location = renditionRef.current?.currentLocation() as unknown as Location | undefined;
+        if (location?.start?.cfi) readingPosition.current = { ...readingPosition.current, cfi: location.start.cfi };
+      } catch { /* retain the last confirmed position while layout is unavailable */ }
+      const position = { ...readingPosition.current };
+      void metaWriter.current(current => ({ ...current, ...position }));
+    };
     window.addEventListener('reader-flush', flush);
     return () => window.removeEventListener('reader-flush', flush);
   }, [epub.path]);
@@ -123,6 +145,13 @@ export function EpubPane({ epub, theme, noteBodyFont, onMeta, onMessage, onExcer
       });
     };
     const handlePageKeyDown = (event: KeyboardEvent) => {
+      if ((event.key === 'F6' || event.key === 'F11') && !event.repeat && !event.isComposing && !event.ctrlKey && !event.metaKey && !event.altKey && event.currentTarget !== element) {
+        event.preventDefault();
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: event.key })); return;
+      }
+      if (!event.defaultPrevented && !event.isComposing && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'f') {
+        event.preventDefault(); event.stopPropagation(); showSearchRef.current(); return;
+      }
       if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
       event.preventDefault(); event.stopPropagation();
@@ -161,7 +190,8 @@ export function EpubPane({ epub, theme, noteBodyFont, onMeta, onMessage, onExcer
         const href = String(contents?.section?.href || currentHref || '').split('#')[0];
         const item = flat.find(entry => entry.href.split('#')[0] === href);
         setSelection({ cfiRange, quote, chapterHref: href || undefined, chapterLabel: item?.label || chapter || undefined });
-        setComment('');
+        selectionActionGeneration.current += 1;
+        setComment(''); setSelectionFlow(null); selectionAnnotation.current = null;
       } catch { /* an incomplete or invalid iframe range is not actionable */ }
     };
     rendition.on('selected', selectedListener);
@@ -206,8 +236,21 @@ export function EpubPane({ epub, theme, noteBodyFont, onMeta, onMessage, onExcer
           void metaWriter.current(current => ({ ...current, ...position }));
         };
         rendition.on('relocated', relocated);
-        await rendition.display(target?.epubId === epub.meta.id ? target.cfiRange : epub.meta.cfi || undefined);
+        const initialTarget = target?.epubId === epub.meta.id ? target.cfiRange : epub.meta.cfi || undefined;
+        let usedFallback = false;
+        try { await rendition.display(initialTarget); }
+        catch (error) {
+          if (disposed || generationRef.current !== generation) return;
+          if (!initialTarget) throw error;
+          // A stale CFI or deleted chapter must not make an intact book blank.
+          // Only persist the fallback after display succeeds and relocates.
+          await rendition.display();
+          usedFallback = true;
+        }
         if (!disposed && generationRef.current === generation) {
+          const location = rendition.currentLocation() as unknown as Location | undefined;
+          if (location?.start?.cfi) relocated(location);
+          if (usedFallback) onMessage('原阅读位置已失效，已返回电子书起始章节。');
           for (const annotation of epub.meta.annotations || []) {
             try { rendition.annotations.highlight(annotation.cfiRange, { annotationId: annotation.id }, undefined, 'zhaoye-epub-highlight', { fill: '#e4c95b', 'fill-opacity': '0.42', 'mix-blend-mode': 'multiply' }); } catch { /* one stale CFI must not block the book */ }
           }
@@ -221,6 +264,7 @@ export function EpubPane({ epub, theme, noteBodyFont, onMeta, onMessage, onExcer
 
     return () => {
       disposed = true;
+      searchJumpToken.current++; searchHighlight.current = null;
       if (generationRef.current === generation) generationRef.current++;
       window.clearTimeout(navigationReleaseTimer);
       element.removeEventListener('keydown', handlePageKeyDown, true);
@@ -270,21 +314,27 @@ export function EpubPane({ epub, theme, noteBodyFont, onMeta, onMessage, onExcer
   async function saveSelection(excerpt: boolean) {
     if (!selection || savingRef.current) return;
     savingRef.current = true; setSavingAnnotation(true);
-    const now = new Date().toISOString();
-    const annotation: EpubAnnotation = {
-      id: crypto.randomUUID(), kind: 'highlight', cfiRange: selection.cfiRange, quote: selection.quote,
-      ...(comment.trim() ? { comment: comment.trim() } : {}),
-      ...(selection.chapterHref ? { chapterHref: selection.chapterHref } : {}),
-      ...(selection.chapterLabel ? { chapterLabel: selection.chapterLabel } : {}),
-      createdAt: now, updatedAt: now,
-    };
     try {
-      const generation = generationRef.current;
-      if (!(await onMeta(current => ({ ...current, annotations: [...current.annotations, annotation] })))) return;
+      const generation = generationRef.current, actionGeneration = selectionActionGeneration.current;
+      let outcome: ExcerptFlowResult, annotation = selectionAnnotation.current;
+      if (selectionFlow?.retry) outcome = await selectionFlow.retry();
+      else {
+        const now = new Date().toISOString();
+        annotation = {
+          id: crypto.randomUUID(), kind: 'highlight', cfiRange: selection.cfiRange, quote: selection.quote,
+          ...(comment.trim() ? { comment: comment.trim() } : {}),
+          ...(selection.chapterHref ? { chapterHref: selection.chapterHref } : {}),
+          ...(selection.chapterLabel ? { chapterLabel: selection.chapterLabel } : {}),
+          createdAt: now, updatedAt: now,
+        };
+        selectionAnnotation.current = annotation;
+        outcome = await onSelectionAction(annotation, excerpt);
+      }
       if (generationRef.current !== generation) return;
-      if (generationRef.current === generation) renditionRef.current?.annotations.highlight(annotation.cfiRange, { annotationId: annotation.id }, undefined, 'zhaoye-epub-highlight', { fill: '#e4c95b', 'fill-opacity': '0.42', 'mix-blend-mode': 'multiply' });
-      setSelection(null); setDeleteConfirm(null);
-      if (excerpt) await onExcerpt({ epubId: epub.meta.id, cfiRange: annotation.cfiRange, quote: annotation.quote, annotationId: annotation.id, chapterHref: annotation.chapterHref, chapterLabel: annotation.chapterLabel }, annotation.quote, annotation.comment || '');
+      if (outcome.saved && !selectionFlow?.saved && annotation) renditionRef.current?.annotations.highlight(annotation.cfiRange, { annotationId: annotation.id }, undefined, 'zhaoye-epub-highlight', { fill: '#e4c95b', 'fill-opacity': '0.42', 'mix-blend-mode': 'multiply' });
+      if (selectionActionGeneration.current !== actionGeneration) return;
+      if (outcome.done) { setSelection(null); setComment(''); setSelectionFlow(null); selectionAnnotation.current = null; setDeleteConfirm(null); }
+      else { setSelectionFlow(outcome); if (outcome.error) onMessage(outcome.error); }
     } catch (error) { onMessage(`EPUB 标注保存失败：${error instanceof Error ? error.message : String(error)}`); }
     finally { savingRef.current = false; setSavingAnnotation(false); }
   }
@@ -314,10 +364,20 @@ export function EpubPane({ epub, theme, noteBodyFont, onMeta, onMessage, onExcer
   }
 
   async function excerptAnnotation(annotation: EpubAnnotation) {
+    if (savingRef.current) return;
+    savingRef.current = true; setSavingAnnotation(true);
     try {
+      const pending = annotationFlows[annotation.id];
       const excerpt = annotationExcerpt(epub.meta.id, annotation);
-      await onExcerpt(excerpt.anchor, excerpt.quote, excerpt.comment);
+      const outcome = pending?.retry ? await pending.retry() : await onExcerpt(excerpt.anchor, excerpt.quote, excerpt.comment);
+      setAnnotationFlows(current => {
+        const next = { ...current };
+        if (outcome.done) delete next[annotation.id]; else next[annotation.id] = outcome;
+        return next;
+      });
+      if (outcome.error) onMessage(outcome.error);
     } catch (error) { onMessage(`无法插入 EPUB 摘录：${error instanceof Error ? error.message : String(error)}`); }
+    finally { savingRef.current = false; setSavingAnnotation(false); }
   }
 
   async function jumpAnnotation(annotation: EpubAnnotation) {
@@ -352,17 +412,50 @@ export function EpubPane({ epub, theme, noteBodyFont, onMeta, onMessage, onExcer
     if (target) { setLoading(true); void renditionRef.current?.display(target).finally(() => setLoading(false)); }
   }
 
-  return <section className="pane epub-pane">
+  function clearSearchHighlight() {
+    searchJumpToken.current++;
+    if (searchHighlight.current) {
+      try { renditionRef.current?.annotations.remove(searchHighlight.current, 'underline'); } catch { /* a disposed view has no search mark */ }
+      searchHighlight.current = null;
+    }
+  }
+  async function jumpSearch(result: EpubSearchResult): Promise<boolean> {
+    clearSearchHighlight();
+    const rendition = renditionRef.current, generation = generationRef.current, token = searchJumpToken.current;
+    if (!rendition || loading) return false;
+    try {
+      await rendition.display(result.cfi);
+      if (generationRef.current !== generation || searchJumpToken.current !== token) return false;
+      // A separate annotation type cannot replace the user's saved highlights.
+      rendition.annotations.underline(result.cfi, {}, undefined, 'zuoren-epub-search-hit', { stroke: THEMES[theme].colors.accent, 'stroke-width': '3', 'stroke-opacity': '1' });
+      searchHighlight.current = result.cfi;
+      return true;
+    } catch {
+      if (generationRef.current === generation && searchJumpToken.current === token) onMessage('无法定位这个 EPUB 搜索结果。');
+      return false;
+    }
+  }
+  function closeSearch() {
+    clearSearchHighlight(); setSearchOpen(false); host.current?.focus({ preventScroll: true });
+  }
+
+  return <section className="pane epub-pane" onKeyDownCapture={event => {
+    if (!event.defaultPrevented && !event.nativeEvent.isComposing && event.keyCode !== 229 && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'f') {
+      event.preventDefault(); event.stopPropagation(); showSearchRef.current();
+    }
+  }}>
     <div className="pane-toolbar epub-navigation">
       <button className="icon-button" title="上一节" aria-label="上一节" onClick={() => void renditionRef.current?.prev()}><ChevronLeft size={18}/></button>
       <select aria-label="EPUB 目录" value={toc.some(item => item.href === currentHref) ? currentHref : ''} onChange={event => display(event.target.value)}><option value="">目录</option>{toc.map(item => <option key={`${item.href}-${item.label}`} value={item.href}>{'　'.repeat(Math.min(3, item.depth))}{item.label}</option>)}</select>
       <span className="epub-chapter" title={chapter}>{chapter || (loading ? '正在打开…' : '正文')}</span>
       <button className="icon-button" title="下一节" aria-label="下一节" onClick={() => void renditionRef.current?.next()}><ChevronRight size={18}/></button>
       <span className="toolbar-spacer"/><span className="keyboard-hints" aria-label="EPUB 快捷键">←→ / 滚轮翻页</span>
+      <button className="icon-button" aria-label="在 EPUB 中查找" title="全书搜索（Ctrl+F）" onClick={() => showSearchRef.current()}><Search size={16}/></button>
       <div className="toolbar-group epub-font-control"><button title="减小字号" aria-label="减小字号" onClick={() => changeFont(fontSize - 10)}>A−</button><span>{fontSize}%</span><button title="增大字号" aria-label="增大字号" onClick={() => changeFont(fontSize + 10)}>A＋</button></div>
     </div>
     <div className="epub-reader-shell"><div ref={host} className="epub-viewer"/>{loading && <div className="loading epub-loading">正在载入电子书…</div>}
-      {selection && <div className="epub-selection-actions" role="group" aria-label="处理选中文本"><span title={selection.quote}>{selection.quote.slice(0, 72)}{selection.quote.length > 72 ? '…' : ''}</span><input aria-label="EPUB 批注" maxLength={10000} value={comment} onChange={event => setComment(event.target.value)} placeholder="可选批注"/><button className="primary" disabled={savingAnnotation} onClick={() => void saveSelection(false)}>高亮</button><button disabled={savingAnnotation} onClick={() => void saveSelection(!!excerptTarget)}>{excerptTarget ? `批注并${excerptTarget}` : '批注'}</button><button disabled={savingAnnotation} onClick={() => { setSelection(null); setComment(''); }}>取消</button></div>}
+      {searchOpen && <EpubSearchPanel data={epub.data} toc={toc} onNavigate={jumpSearch} onClose={closeSearch} onClear={clearSearchHighlight}/>}
+      {selection && <div className="epub-selection-actions" role="group" aria-label="处理选中文本"><span title={selection.quote}>{selection.quote.slice(0, 72)}{selection.quote.length > 72 ? '…' : ''}</span>{selectionFlow ? <><span className="epub-flow-status" role="status">{selectionFlow.error || '操作尚未完成'}</span><button className="primary" disabled={savingAnnotation || !selectionFlow.retry} onClick={() => void saveSelection(false)}>{selectionFlow.saved ? '重试摘录' : '重试保存'}</button></> : <><input aria-label="EPUB 批注" maxLength={10000} value={comment} onChange={event => setComment(event.target.value)} placeholder="可选批注"/><button className="primary" disabled={savingAnnotation} onClick={() => void saveSelection(false)}>高亮</button><button disabled={savingAnnotation} onClick={() => void saveSelection(!!excerptTarget)}>{excerptTarget ? `批注并${excerptTarget}` : '批注'}</button></>}<button disabled={savingAnnotation} onClick={() => { selectionActionGeneration.current += 1; setSelection(null); setComment(''); setSelectionFlow(null); selectionAnnotation.current = null; }}>取消</button></div>}
     </div>
     <div className="epub-foot"><span>{chapter || '电子书'}</span><progress aria-label="阅读进度" max="1" value={progress}/><span>{Math.round(progress * 100)}%</span></div>
     <aside className="epub-annotation-panel"><button className="epub-annotation-toggle" aria-expanded={annotationsOpen} onClick={() => setAnnotationsOpen(value => !value)}>标注（{epub.meta.annotations.length}）{annotationsOpen ? '　收起' : '　展开'}</button>
@@ -370,11 +463,12 @@ export function EpubPane({ epub, theme, noteBodyFont, onMeta, onMessage, onExcer
         {editingAnnotation === annotation.id ? <div className="epub-annotation-edit"><textarea autoFocus aria-label="编辑批注" maxLength={10000} value={editingComment} onChange={event => setEditingComment(event.target.value)} placeholder="可选批注"/><div className="epub-annotation-actions"><button className="primary" disabled={savingAnnotation} onClick={() => void saveAnnotationComment(annotation)}>保存</button><button disabled={savingAnnotation} onClick={() => { setEditingAnnotation(null); setEditingComment(''); }}>取消</button></div></div> : <>
           <button className="epub-annotation-quote" title="跳转到这条标注" onClick={() => void jumpAnnotation(annotation)}><span>{annotation.quote}</span>{annotation.comment && <small>{annotation.comment}</small>}</button>
           <div className="epub-annotation-actions">
-            {excerptTarget && <button aria-label={excerptTarget} disabled={savingAnnotation} title={excerptTarget} onClick={() => void excerptAnnotation(annotation)}>摘录</button>}
+            {excerptTarget && <button aria-label={annotationFlows[annotation.id]?.retry ? '重试摘录' : excerptTarget} disabled={savingAnnotation} title={annotationFlows[annotation.id]?.retry ? '重试摘录' : excerptTarget} onClick={() => void excerptAnnotation(annotation)}>{annotationFlows[annotation.id]?.retry ? '重试摘录' : '摘录'}</button>}
             <button disabled={savingAnnotation} aria-label="编辑批注" title="编辑批注" onClick={() => { setDeleteConfirm(null); setEditingAnnotation(annotation.id); setEditingComment(annotation.comment || ''); }}>编辑</button>
             {deleteConfirm === annotation.id ? <div className="epub-delete-confirm"><button disabled={savingAnnotation} onClick={() => void confirmDelete(annotation)}>确认删除</button><button disabled={savingAnnotation} onClick={() => setDeleteConfirm(null)}>取消</button></div> : <button className="epub-delete-button" aria-label="删除标注" title="删除标注" disabled={savingAnnotation} onClick={() => setDeleteConfirm(annotation.id)}>删除</button>}
           </div>
         </>}
+        {annotationFlows[annotation.id]?.error && <small className="epub-flow-status" role="status">{annotationFlows[annotation.id].error}</small>}
       </div>)}{!epub.meta.annotations.length && <small className="epub-annotation-empty">还没有标注</small>}</div>}
     </aside>
     {deletedAnnotation && <div className="inline-undo" role="status">已删除一条标注<button onClick={() => void undoDelete()} disabled={savingAnnotation}>撤销</button><button aria-label="关闭撤销提示" onClick={() => setDeletedAnnotation(null)}>×</button></div>}

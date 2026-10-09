@@ -1,7 +1,8 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { normalizeEpubMeta } = require('./epub-meta.cjs');
+const { normalizeEpubMeta, validAnnotation } = require('./epub-meta.cjs');
+const { normalizePdfMeta } = require('./pdf-meta.cjs');
 
 const digest = data => crypto.createHash('sha256').update(data).digest('hex');
 const inside = (root, file) => { const rel = path.relative(root, file); return rel === '' || (!rel.startsWith('..' + path.sep) && rel !== '..' && !path.isAbsolute(rel)); };
@@ -28,7 +29,8 @@ function validRecovery(value, recoveryId, sourcePath) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const keys = ['version', 'recoveryId', 'sourcePath', 'paneHint', 'createdAt', 'updatedAt', 'baseHash', 'draftHash', 'content', 'encoding'];
   if (Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value, key))) return false;
-  if (value.version !== 1 || value.recoveryId !== recoveryId || value.sourcePath !== sourcePath) return false;
+  if (value.version !== 1 || value.recoveryId !== recoveryId || value.sourcePath !== sourcePath
+    || typeof sourcePath !== 'string' || !path.isAbsolute(sourcePath)) return false;
   if (!['primary', 'secondary'].includes(value.paneHint) || typeof value.content !== 'string') return false;
   if (!Number.isFinite(Date.parse(value.createdAt)) || !Number.isFinite(Date.parse(value.updatedAt))) return false;
   if (!/^[a-f0-9]{64}$/i.test(value.baseHash) || !/^[a-f0-9]{64}$/i.test(value.draftHash)) return false;
@@ -142,6 +144,46 @@ class FileStore {
     catch (error) { if (error.code === 'EEXIST') throw new Error('同名文件或文件夹已经存在'); throw error; }
     return { path: await fs.realpath(folder), name: path.basename(folder), kind: 'folder' };
   }
+  async recoveryMigrations(source, target, isDirectory) {
+    const directories = [];
+    if (!isDirectory) directories.push(path.join(path.dirname(source), '.reader', 'recovery'));
+    else {
+      const visit = async directory => {
+        directories.push(path.join(directory, '.reader', 'recovery'));
+        for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+          if (entry.isDirectory() && !entry.isSymbolicLink() && entry.name !== '.reader') await visit(path.join(directory, entry.name));
+        }
+      };
+      await visit(source);
+    }
+    const identity = value => path.resolve(value).toLocaleLowerCase('en-US');
+    const migrations = [];
+    for (let directory of directories) {
+      let entries; try {
+        const realAux = await fs.realpath(path.dirname(directory)), realRecovery = await fs.realpath(directory);
+        if (!inside(path.dirname(path.dirname(directory)), realAux) || !inside(realAux, realRecovery)) throw new Error('恢复目录指向资料目录以外，已停止重命名');
+        entries = await fs.readdir(realRecovery);
+        directory = realRecovery;
+      }
+      catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+      for (const name of entries) {
+        if (!/^[a-f0-9-]{36}\.json$/i.test(name)) continue;
+        const recoveryId = name.slice(0, -5);
+        if (!recoveryIdPattern.test(recoveryId)) continue;
+        const file = path.join(directory, name);
+        const raw = await fs.readFile(file);
+        let value; try { value = JSON.parse(raw.toString('utf8')); }
+        catch { continue; } // Damaged records are preserved byte-for-byte and remain addressable by ID.
+        if (!validRecovery(value, recoveryId, value?.sourcePath)) continue;
+        const sourceKey = identity(value.sourcePath), rootKey = identity(source);
+        if (isDirectory ? !(sourceKey === rootKey || sourceKey.startsWith(rootKey + path.sep.toLocaleLowerCase('en-US'))) : sourceKey !== rootKey) continue;
+        const nextSource = isDirectory ? path.join(target, path.relative(source, value.sourcePath)) : target;
+        migrations.push({ file, raw, next: Buffer.from(JSON.stringify({ ...value, sourcePath: nextSource })) });
+      }
+    }
+    return migrations;
+  }
+  writeRecoveryRecord(file, data) { return atomicWrite(file, data); }
   async renameEntry(source, requestedName) {
     source = await this.checked(source);
     const stat = await fs.stat(source);
@@ -153,14 +195,42 @@ class FileStore {
       else if (newExtension.toLocaleLowerCase() !== oldExtension.toLocaleLowerCase()) throw new Error('重命名时不能更改文件类型');
     } else if (!stat.isDirectory()) throw new Error('只能重命名文件或文件夹');
     const target = path.join(path.dirname(source), name);
-    if (target.toLocaleLowerCase() === source.toLocaleLowerCase() && target !== source) {
-      const temporary = path.join(path.dirname(source), `.__zuoren_rename_${crypto.randomUUID()}`);
-      await fs.rename(source, temporary);
-      try { await fs.rename(temporary, target); } catch (error) { await fs.rename(temporary, source).catch(() => {}); throw error; }
-    } else {
+    if (target === source) {
+      const real = await fs.realpath(source);
+      if (stat.isDirectory()) return { path: real, name: path.basename(real), kind: 'folder' };
+      return { path: real, name: path.basename(real), relative: real, kind: 'file', type: /\.pdf$/i.test(real) ? 'pdf' : /\.epub$/i.test(real) ? 'epub' : 'md' };
+    }
+    const sameIdentity = target.toLocaleLowerCase() === source.toLocaleLowerCase();
+    if (!sameIdentity) {
       try { await fs.access(target); throw new Error('同名文件或文件夹已经存在'); }
       catch (error) { if (error.code !== 'ENOENT') throw error; }
-      await fs.rename(source, target);
+    }
+    const migrations = stat.isFile() && /\.(md|markdown)$/i.test(source)
+      ? await this.recoveryMigrations(source, target, false)
+      : stat.isDirectory() ? await this.recoveryMigrations(source, target, true) : [];
+    let moved = false;
+    const moveEntity = async (from, to) => {
+      if (sameIdentity && from !== to) {
+        const temporary = path.join(path.dirname(source), `.__zuoren_rename_${crypto.randomUUID()}`);
+        await fs.rename(from, temporary);
+        try { await fs.rename(temporary, to); } catch (error) { await fs.rename(temporary, from).catch(() => {}); throw error; }
+      } else await fs.rename(from, to);
+    };
+    await moveEntity(source, target); moved = true;
+    const committed = [];
+    try {
+      for (const item of migrations) {
+        const relative = path.relative(source, item.file);
+        const movedFile = stat.isDirectory() ? path.join(target, relative) : item.file;
+        committed.push({ file: movedFile, raw: item.raw });
+        await this.writeRecoveryRecord(movedFile, item.next);
+      }
+    } catch (error) {
+      const rollbackErrors = [];
+      for (const item of committed.reverse()) try { await this.writeRecoveryRecord(item.file, item.raw); } catch (rollbackError) { rollbackErrors.push(rollbackError); }
+      if (moved) try { await moveEntity(target, source); } catch (rollbackError) { rollbackErrors.push(rollbackError); }
+      if (rollbackErrors.length) throw new Error(`恢复稿路径迁移失败且回滚未完全成功：${error.message}；${rollbackErrors.map(item => item.message).join('；')}`);
+      throw new Error(`恢复稿路径迁移失败，文件名已回滚：${error.message}`);
     }
     const remapSet = values => new Set([...values].map(item => inside(source, item) ? path.join(target, path.relative(source, item)) : item));
     this.files = remapSet(this.files);
@@ -322,22 +392,27 @@ class FileStore {
       if (inside(path.dirname(file), await fs.realpath(dir))) {
         const p = path.join(dir, `${id}.json`);
         if (!inside(dir, await fs.realpath(p))) throw new Error('标记文件路径异常');
-        meta = { ...meta, ...JSON.parse(await fs.readFile(p, 'utf8')) };
+        meta = normalizePdfMeta(JSON.parse(await fs.readFile(p, 'utf8')), id);
       }
     } catch (e) { if (e.code !== 'ENOENT') throw new Error('PDF 标记文件无法读取，已保留原文件：' + e.message); }
     return { data: new Uint8Array(data), meta, path: file };
   }
   async savePdf(file, meta) {
-    if (!/^[a-f0-9]{64}$/.test(meta.id) || !Array.isArray(meta.annotations)) throw new Error('无效的标记数据');
+    const normalized = normalizePdfMeta(meta, meta?.id);
     file = await this.checked(file);
     if (!/\.pdf$/i.test(file)) throw new Error('只能为 PDF 保存标记');
     return this.serialized(file, async () => {
       const currentId = await this.contentIdentity(file);
-      if (currentId !== meta.id) throw new Error('PDF 内容已变化，请重新打开后再保存标记');
+      if (currentId !== normalized.id) throw new Error('PDF 内容已变化，请重新打开后再保存标记');
       const dir = await this.auxiliary(file);
-      const target = path.join(dir, meta.id + '.json');
+      const target = path.join(dir, normalized.id + '.json');
       try { if (!inside(dir, await fs.realpath(target))) throw new Error('标记文件指向资料目录以外'); } catch(e) { if(e.code !== 'ENOENT') throw e; }
-      await atomicWrite(target, JSON.stringify({ ...meta, version: 1 }, null, 2));
+      try {
+        // The sidecar may have changed after opening (another app or version).
+        // Validate it again inside the write queue before replacing its bytes.
+        normalizePdfMeta(JSON.parse(await fs.readFile(target, 'utf8')), normalized.id);
+      } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      await atomicWrite(target, JSON.stringify(normalized, null, 2));
       return true;
     });
   }
@@ -371,11 +446,18 @@ class FileStore {
       const dir = await this.auxiliary(file);
       const target = path.join(dir, `${normalized.id}.epub.json`);
       try { if (!inside(dir, await fs.realpath(target))) throw new Error('阅读进度文件指向资料目录以外'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      let preserved = [];
       if (await fs.access(target).then(() => true, error => error.code === 'ENOENT' ? false : Promise.reject(error))) {
         const existing = JSON.parse(await fs.readFile(target, 'utf8'));
-        if (existing?.version > 2) throw new Error('此 EPUB 标注数据来自较新版本，已禁止覆盖');
+        // Revalidate the original inside the queue, including external changes.
+        // The renderer can omit damaged records for display, never for storage.
+        normalizeEpubMeta(existing, normalized.id);
+        if (existing.version === 2) {
+          if (!Array.isArray(existing.annotations)) throw new Error('EPUB 标注列表损坏，已禁止覆盖原文件');
+          preserved = existing.annotations.filter(annotation => !validAnnotation(annotation));
+        }
       }
-      await atomicWrite(target, JSON.stringify(normalized, null, 2));
+      await atomicWrite(target, JSON.stringify({ ...normalized, annotations: [...normalized.annotations, ...preserved] }, null, 2));
       return true;
     });
   }

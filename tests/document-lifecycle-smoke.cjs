@@ -4,6 +4,7 @@ const fs=require('node:fs/promises');
 const path=require('node:path');
 const {spawnSync}=require('node:child_process');
 const {_electron:electron}=require('playwright');
+const {waitForFile}=require('./waitForFile.cjs');
 const appRoot=path.resolve(__dirname,'..');
 let application;
 after(async()=>{
@@ -47,8 +48,9 @@ test('table editing, source clipboard, undo, reload, conflict and close save', {
   const data=new DataTransfer();data.setData('text/html','<p><strong>rich</strong><br>line two</p><ul><li>list</li></ul>');
   el.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));
  });
- await page.waitForTimeout(1400);
- const pasted=await fs.readFile(note,'utf8');assert.match(pasted,/\*\*rich\*\*/);assert.match(pasted,/line two/);assert.match(pasted,/- list/);
+ await page.waitForFunction(()=>document.querySelector('.cm-content')?.textContent?.includes('rich'));
+ const pasted=await waitForFile(note,text=>text.includes('**rich**')&&text.includes('line two')&&text.includes('- list'));
+ assert.match(pasted,/\*\*rich\*\*/);assert.match(pasted,/line two/);assert.match(pasted,/- list/);
  // Clean external reload then Ctrl+Z must not silently discard that disk version.
  await fs.writeFile(note,'# External\n\nexternal-body\n');
  await page.waitForFunction(()=>document.querySelector('.cm-content')?.textContent?.includes('external-body'),null,{timeout:8000});
@@ -60,7 +62,7 @@ test('table editing, source clipboard, undo, reload, conflict and close save', {
  await fs.writeFile(note,'# Disk\n\ndisk-version\n');
  await page.getByRole('button',{name:'保留我的内容',exact:true}).waitFor();
  await page.getByRole('button',{name:'保留我的内容',exact:true}).click();
- await page.waitForTimeout(1600);assert.match(await fs.readFile(note,'utf8'),/local-unsaved/);
+ assert.match(await waitForFile(note,text=>text.includes('local-unsaved')),/local-unsaved/);
  await editor.click();await page.keyboard.press('Control+End');await page.keyboard.insertText('close-flush');
  await application.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());
  await application.waitForEvent('close',{timeout:12000});

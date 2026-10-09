@@ -9,29 +9,40 @@ export interface ReplaceResult {
 }
 
 /** Find non-overlapping literal matches. Offsets use JavaScript/CodeMirror UTF-16 positions. */
-export function findLiteralMatches(text: string, query: string, caseSensitive = false): LiteralMatch[] {
-  if (!query) return [];
-  const folded: string[] = [];
-  const offsets: LiteralMatch[] = [];
-  for (let index = 0; index < text.length;) {
-    const point = text.codePointAt(index)!;
-    const character = String.fromCodePoint(point);
-    const next = index + character.length;
-    const mapped = caseSensitive ? character : character.toLowerCase();
-    for (let offset = 0; offset < mapped.length; offset += 1) {
-      folded.push(mapped[offset]);
-      offsets.push({ from: index, to: next });
+export function findLiteralMatches(text: string, query: string, caseSensitive = false, limit = Infinity): LiteralMatch[] {
+  if (!query || limit <= 0) return [];
+  // Most case folds keep their UTF-16 length. Record only expansions, rather
+  // than allocating an object for every character of every searched document.
+  const expansions: { from: number; to: number; source: number; length: number; delta: number }[] = [];
+  let delta = 0;
+  const haystack = caseSensitive ? text : text.replace(/[A-Z]|[^\x00-\x7f]/gu, (character: string, index: number) => {
+    const mapped = character.toLowerCase();
+    if (mapped.length !== character.length) {
+      const from = index + delta;
+      delta += mapped.length - character.length;
+      expansions.push({ from, to: from + mapped.length, source: index, length: character.length, delta });
     }
-    index = next;
-  }
+    return mapped;
+  });
+  const sourceOffset = (position: number, end: boolean) => {
+    let low = 0, high = expansions.length;
+    const at = end ? position - 1 : position;
+    while (low < high) { const middle = (low + high) >>> 1; if (expansions[middle].from <= at) low = middle + 1; else high = middle; }
+    const expansion = expansions[low - 1];
+    let offset = expansion && at < expansion.to ? expansion.source + (end ? expansion.length : 0) : position - (expansion?.delta || 0);
+    // A literal half-surrogate match must still cover the complete code point,
+    // matching the old offset map without retaining that map for all text.
+    if (offset > 0 && /[\uDC00-\uDFFF]/.test(text[offset] || '') && /[\uD800-\uDBFF]/.test(text[offset - 1])) offset += end ? 1 : -1;
+    return offset;
+  };
   const needle = caseSensitive ? query : query.toLowerCase();
-  const haystack = folded.join('');
   const matches: LiteralMatch[] = [];
   let cursor = 0;
   while (cursor <= haystack.length - needle.length) {
     const found = haystack.indexOf(needle, cursor);
     if (found < 0) break;
-    matches.push({ from: offsets[found].from, to: offsets[found + needle.length - 1].to });
+    matches.push({ from: sourceOffset(found, false), to: sourceOffset(found + needle.length, true) });
+    if (matches.length >= limit) break;
     cursor = found + needle.length;
   }
   return matches;

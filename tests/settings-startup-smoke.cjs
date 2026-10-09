@@ -15,11 +15,14 @@ test('damaged settings are backed up and visibly reported at startup', { timeout
   let application;
   try {
     const appRoot = path.resolve(__dirname, '..');
+    const packaged = process.env.ZHAOYE_SMOKE_EXECUTABLE || process.env.ZHAOYE_EXE;
     application = await electron.launch({
-      executablePath: path.join(appRoot, 'node_modules/electron/dist/electron.exe'),
-      args: [appRoot],
+      executablePath: packaged || path.join(appRoot, 'node_modules/electron/dist/electron.exe'),
+      args: packaged ? [] : [appRoot],
       env: { ...process.env, ZHAOYE_TEST_USER_DATA: userData },
     });
+    assert.equal(await application.evaluate(({ app }) => app.isPackaged), !!packaged);
+    assert.equal(await application.evaluate(({ app }) => app.getVersion()), require('../package.json').version);
     const page = await application.firstWindow();
     await page.getByText('设置文件损坏', { exact: false }).waitFor({ timeout: 12000 });
     const backup = (await fs.readdir(userData)).find(name => /^settings\.json\.corrupt-/.test(name));

@@ -30,7 +30,7 @@ async function cleanupSmokeWorkspace(workspace) {
     workspace.cleaned = true;
     return;
   }
-  await fs.rm(root, { recursive: true, force: true });
+  await fs.rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
   allocatedRoots.delete(root);
   workspace.cleaned = true;
 }

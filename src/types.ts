@@ -176,7 +176,23 @@ export interface ReaderSessionV2 extends Omit<ReaderSessionV1, 'version'> {
   scrollMemory: MarkdownScrollMemory[];
 }
 
-export type ReaderSession = ReaderSessionV1 | ReaderSessionV2;
+export interface NoteSessionTab {
+  id: string; path: string | null; mode: 'edit' | 'preview'; preview: boolean;
+  selection: { anchor: number; head: number }; scroll: { edit: number; preview: number };
+}
+export interface NoteSessionGroup { tabs: NoteSessionTab[]; activeId: string | null }
+export interface RecoveryReference { sourcePath: string; recoveryId: string }
+export interface ReaderSessionV3 extends Omit<ReaderSessionV2, 'version'> {
+  version: 3;
+  // Legacy fields above are derived projections, never additional owners.
+  noteGroups: { primary: NoteSessionGroup; secondary: NoteSessionGroup };
+  activeNoteGroup: 'primary' | 'secondary';
+  // retainedRecoveries is path-qualified in new V3 snapshots. Legacy V3
+  // snapshots with retainedRecoveryIds remain accepted at the session boundary.
+  noteDocuments: ({ path: string; recoveryId: string; retainedRecoveries: RecoveryReference[] }
+    | { path: string; recoveryId: string; retainedRecoveryIds: string[] })[];
+}
+export type ReaderSession = ReaderSessionV1 | ReaderSessionV2 | ReaderSessionV3;
 
 export interface RecoveryV1 {
   version: 1;

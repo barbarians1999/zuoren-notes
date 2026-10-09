@@ -1,8 +1,10 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowLeft, ArrowLeftRight, BookOpen, ChevronLeft, ChevronRight, Columns2, Copy, Crop, List, FileText, Folder, FolderOpen, FolderPlus, FolderTree, Highlighter, Maximize2, MessageSquare, Minimize2, Minus, Monitor, Moon, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings2, Square, Sun, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react';
-import type { EpubAnchor, EpubAnnotation, EpubMeta, MarkdownScrollMemory, NoteRead, PdfAnchor, PdfAnnotation, PdfMeta, PdfRect, ReaderAnchor, RecoveryCheckResult, RecoveryV1, SaveNoteResult, WorkspaceFile } from '../types';
-import { reader, resolveLocal, NOTE_BODY_FONTS, EPUB_MIN_SPREAD_WIDTH, type ActivePdf, type ActiveEpub, type FlatNavItem, type OcrDialog, type NoteMode, type NoteBodyFont, type SaveLabel, type FindCommand } from '../readerContext';
-import { isolateHistory, redo as cmRedo, undo as cmUndo } from '@codemirror/commands';
+import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ReducedMotionContext, usePanelMotion } from '../uiMotion';
+import { FileText } from 'lucide-react';
+import type { MarkdownScrollMemory, NoteRead, ReaderAnchor } from '../types';
+import { type NoteMode, type FindCommand } from '../readerContext';
+import { isolateHistory } from '@codemirror/commands';
+import { undoNoteView as cmUndo, redoNoteView as cmRedo, type NoteDocument, type NoteViewState } from '../workspace/noteDocument';
 import { Transaction } from '@codemirror/state';
 import { EditorView as CodeMirrorView } from '@codemirror/view';
 import { MarkdownSourceEditor } from './MarkdownSourceEditor';
@@ -13,8 +15,12 @@ import { findLiteralMatches, stepMatchIndex } from '../findReplace';
 import { countMarkdownUnits, countTextUnits } from '../wordCount';
 import { resolveScrollTop } from '../sessionState.cjs';
 import { MarkdownWorkspaceHeader } from '../markdownWorkspace';
-export function NotePane({ paneId, onActivate, findCommand, note, text, setText, mode, setMode, onSave, onJump, revision, label, caption, scrollMemory, onScrollMemory, excerptRegister, hidden }: { paneId: FindCommand['pane']; onActivate: (pane: FindCommand['pane']) => void; findCommand: FindCommand | null; note: NoteRead | null; text: string; setText: (text: string) => void; mode: NoteMode; setMode: (mode: NoteMode) => void; onSave: () => void; onJump: (anchor: ReaderAnchor, fromNotePath?: string) => void; revision: number; label?: string; caption?: React.ReactNode; scrollMemory: MarkdownScrollMemory[]; onScrollMemory: (entry: MarkdownScrollMemory) => void; excerptRegister?: React.MutableRefObject<(block: string) => boolean>; hidden?: boolean }) {
+import { createPortal } from 'react-dom';
+import { taskToggleChange } from './markdownTasks';
+export function NotePane({ paneId, onActivate, findCommand, note, text, mode, setMode, onSave, onJump, revision, label, caption, scrollMemory, onScrollMemory, excerptRegister, hidden, sharedDocument, tab, unifiedHeader, headerTarget, headerControls }: { paneId: FindCommand['pane']; onActivate: (pane: FindCommand['pane']) => void; findCommand: FindCommand | null; note: NoteRead | null; text: string; mode: NoteMode; setMode: (mode: NoteMode) => void; onSave: () => void; onJump: (anchor: ReaderAnchor, fromNotePath?: string) => void; revision: number; label?: string; caption?: React.ReactNode; scrollMemory: MarkdownScrollMemory[]; onScrollMemory: (entry: MarkdownScrollMemory) => void; excerptRegister?: React.MutableRefObject<(block: string) => boolean>; hidden?: boolean; sharedDocument: NoteDocument | null; tab: NoteViewState | null; unifiedHeader?: boolean; headerTarget?: HTMLElement | null; headerControls?: React.ReactNode }) {
   const [outline, setOutline] = useState(false);
+  const reducedMotion = useContext(ReducedMotionContext);
+  const outlineMotion = usePanelMotion(outline, reducedMotion, '100%', 200, () => document.querySelector(`[data-note-controls="${paneId}"] [data-outline-toggle]`) || host.current?.querySelector('[data-outline-toggle]') || null);
   const [headings, setHeadings] = useState<{ text: string; level: number; line?: number }[]>([]);
   const [findOpen, setFindOpen] = useState(false);
   const [replaceOpen, setReplaceOpen] = useState(false);
@@ -28,7 +34,8 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, setText,
   useEffect(() => {
     if (!excerptRegister) return;
     const append = (block: string) => {
-      if (!sourceView || !note || liveNotePath.current !== note.path || sourceView.dom.parentElement?.getAttribute('data-note-path') !== note.path) return false;
+      if (!sourceView || !note || !sharedDocument || sharedDocument.editingBlocked() || liveNotePath.current !== note.path || sourceView.dom.parentElement?.getAttribute('data-note-path') !== note.path) return false;
+      const revision = sharedDocument.revision;
       const doc = sourceView.state.doc.toString();
       const from = doc.trimEnd().length;
       sourceView.dispatch({
@@ -36,11 +43,11 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, setText,
         selection: { anchor: from + block.length },
         annotations: [Transaction.userEvent.of('input.excerpt'), isolateHistory.of('full')],
       });
-      return true;
+      return sharedDocument.revision !== revision;
     };
     excerptRegister.current = append;
     return () => { if (excerptRegister.current === append) excerptRegister.current = () => false; };
-  }, [excerptRegister, note?.path, sourceView]);
+  }, [excerptRegister, note?.path, sourceView, tab?.id, sharedDocument]);
   const [previewMap, setPreviewMap] = useState<DomTextMap>({ text: '', nodes: [] });
   const [selectedUnits, setSelectedUnits] = useState(0);
   const [paragraphUnits, setParagraphUnits] = useState(0);
@@ -50,16 +57,36 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, setText,
   const scrollMemoryRef = useRef(scrollMemory); scrollMemoryRef.current = scrollMemory;
   const onScrollMemoryRef = useRef(onScrollMemory); onScrollMemoryRef.current = onScrollMemory;
   const stableJump = useCallback((anchor: ReaderAnchor) => onJumpRef.current(anchor, note?.path), [note?.path]);
+  const toggleTask = useCallback((position: number, checked: boolean, expectedSource: string) => {
+    if (!sourceView || sourceView.state.readOnly || !note || hidden || sharedDocument?.editingBlocked() || label === '外部冲突' || liveNotePath.current !== note.path ||
+        sourceView.dom.parentElement?.getAttribute('data-note-path') !== note.path) return false;
+    // CodeMirror uses LF offsets; disk snapshots may retain CRLF.
+    const expected = expectedSource.replace(/\r\n/g, '\n');
+    const sourcePosition = expectedSource.slice(0, position).replace(/\r\n/g, '\n').length;
+    const change = taskToggleChange(sourceView.state.doc.toString(), expected, sourcePosition, checked);
+    if (!change) return false;
+    sourceView.dispatch({ changes: change, annotations: [Transaction.userEvent.of('input.task'), isolateHistory.of('full')] });
+    return true;
+  }, [sourceView, note?.path, hidden, label, sharedDocument]);
   const host = useRef<HTMLDivElement>(null);
   const findInput = useRef<HTMLInputElement>(null);
   const replaceInput = useRef<HTMLInputElement>(null);
   const findFocusTarget = useRef<'find' | 'replace'>('find');
   const lastPath = useRef(note?.path);
-  const totalUnits = useMemo(() => note ? countMarkdownUnits(text) : 0, [note, text]);
-  const matches = useMemo(() => mode === 'preview'
+  const [wordCount, setWordCount] = useState<{ path: string; units: number } | null>(null);
+  const notePath = note?.path;
+  // Defer only the display, never editing/recovery/save. A different document
+  // must not inherit the previous one's count while its timer is pending.
+  useEffect(() => {
+    if (!notePath) return;
+    const timer = window.setTimeout(() => setWordCount({ path: notePath, units: countMarkdownUnits(text) }), 300);
+    return () => window.clearTimeout(timer);
+  }, [notePath, text]);
+  const totalUnits = wordCount?.path === notePath ? wordCount?.units : undefined;
+  const matches = useMemo(() => !findOpen || hidden ? [] : mode === 'preview'
     ? findLiteralMatches(previewMap.text, findText, caseSensitive)
     : sourceView ? findSourceMatches(sourceView, findText, caseSensitive) : [],
-  [mode, previewMap, findText, caseSensitive, sourceView, text]);
+  [mode, previewMap, findText, caseSensitive, sourceView, text, findOpen, hidden]);
   const activeMatch = currentIndex >= 0 && currentIndex < matches.length ? matches[currentIndex] : null;
   useEffect(() => {
     if (lastPath.current === note?.path) return;
@@ -69,29 +96,32 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, setText,
   }, [note?.path]);
   useEffect(() => {
     const notePath = note?.path;
-    if (!notePath) return;
+    if (!notePath || hidden) return;
     const memoryMode: MarkdownScrollMemory['mode'] = mode === 'preview' ? 'preview' : 'edit';
     let frame = 0;
     let attempts = 0;
     let scrollTimer = 0;
     let scroller: HTMLElement | null = null;
     const capture = () => {
-      if (!scroller) return;
+      if (!scroller || !scroller.clientHeight) return;
       const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      if (tab) tab.scroll[memoryMode] = scroller.scrollTop;
       onScrollMemoryRef.current({ pane: paneId, path: notePath, mode: memoryMode, scrollTop: scroller.scrollTop, ratio: maxScrollTop ? scroller.scrollTop / maxScrollTop : 0 });
     };
     const onScroll = () => {
+      if (tab && scroller?.clientHeight) tab.scroll[memoryMode] = scroller.scrollTop;
       window.clearTimeout(scrollTimer);
       scrollTimer = window.setTimeout(capture, 140);
     };
     const attach = () => {
-      scroller = host.current?.querySelector<HTMLElement>(memoryMode === 'preview' ? '.markdown-preview' : '.markdown-source-editor .cm-scroller') || null;
+      scroller = host.current?.querySelector<HTMLElement>(memoryMode === 'preview' ? '.markdown-preview:not(.preview-loading)' : '.markdown-source-editor .cm-scroller') || null;
       if (!scroller) {
-        if (++attempts < 180) frame = requestAnimationFrame(attach);
+        if (++attempts < 600) frame = requestAnimationFrame(attach);
         return;
       }
       const saved = scrollMemoryRef.current.find(entry => entry.pane === paneId && entry.path === notePath && entry.mode === memoryMode);
-      if (saved) scroller.scrollTop = resolveScrollTop(saved, Math.max(0, scroller.scrollHeight - scroller.clientHeight));
+      if (tab) scroller.scrollTop = Math.min(tab.scroll[memoryMode], Math.max(0, scroller.scrollHeight - scroller.clientHeight));
+      else if (saved) scroller.scrollTop = resolveScrollTop(saved, Math.max(0, scroller.scrollHeight - scroller.clientHeight));
       scroller.addEventListener('scroll', onScroll, { passive: true });
     };
     frame = requestAnimationFrame(attach);
@@ -100,7 +130,7 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, setText,
       window.clearTimeout(scrollTimer);
       if (scroller) { scroller.removeEventListener('scroll', onScroll); capture(); }
     };
-  }, [note?.path, mode, paneId, revision]);
+  }, [note?.path, mode, paneId, tab?.id, hidden]);
   useLayoutEffect(() => {
     if (!findCommand || findCommand.pane !== paneId) return;
     findFocusTarget.current = 'find';
@@ -257,8 +287,24 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, setText,
     if (sourceView) { cmRedo(sourceView); sourceView.focus(); return; }
 
   }
-  return <section className="pane note-pane markdown-workspace" data-pane-id={paneId} style={hidden ? { display: 'none' } : undefined} onPointerDownCapture={() => onActivate(paneId)} onFocusCapture={() => onActivate(paneId)}>
-    <MarkdownWorkspaceHeader path={note?.path || ''} caption={caption} label={label} mode={mode === 'preview' ? 'preview' : 'edit'} outline={outline} onFind={() => { findFocusTarget.current = 'find'; setFindOpen(true); setReplaceOpen(false); findInput.current?.focus(); }} onToggleMode={() => setMode(mode === 'preview' ? 'edit' : 'preview')} onToggleOutline={() => setOutline(value => !value)} />
+  return <section className="pane note-pane markdown-workspace" data-pane-id={paneId} style={hidden ? { display: 'none' } : undefined} onPointerDownCapture={() => onActivate(paneId)} onFocusCapture={() => onActivate(paneId)} onKeyDownCapture={event => {
+    if (mode === 'preview' && sourceView && !hidden && label !== '外部冲突' && !event.nativeEvent.isComposing && event.keyCode !== 229 &&
+        !event.defaultPrevented && (event.ctrlKey || event.metaKey) && !event.altKey && (event.target as Element).closest?.('.markdown-preview')) {
+      const key = event.key.toLowerCase();
+      if ((key === 'z' || (key === 'y' && !event.shiftKey)) && (key === 'y' || event.shiftKey ? cmRedo(sourceView) : cmUndo(sourceView))) {
+        event.preventDefault(); event.stopPropagation(); return;
+      }
+    }
+    if (!note || hidden || event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229 ||
+        !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 's') return;
+    // Pane capture covers reading/Find too, with the current callback and
+    // without rebuilding CodeMirror or its undo history.
+    event.preventDefault(); event.stopPropagation(); onSave();
+  }}>
+    {(() => {
+      const header = <MarkdownWorkspaceHeader path={note?.path || ''} caption={caption} label={label} onSave={onSave} canSave={!!note && (label === '编辑中' || label === '保存失败')} mode={mode === 'preview' ? 'preview' : 'edit'} outline={outline} onFind={() => { findFocusTarget.current = 'find'; setFindOpen(true); setReplaceOpen(false); findInput.current?.focus(); }} onToggleMode={() => setMode(mode === 'preview' ? 'edit' : 'preview')} onToggleOutline={() => setOutline(value => !value)} compact={unifiedHeader} enabled={!!note} controls={headerControls}/>;
+      return unifiedHeader ? headerTarget && createPortal(<div data-note-controls={paneId}>{header}</div>, headerTarget) : header;
+    })()}
     {findOpen && <div className="find-bar" role="search" aria-label={`查找当前${paneId === 'primary' ? '左' : '右'}栏笔记`}>
       <input ref={findInput} aria-label="查找文本" placeholder="查找" value={findText} onChange={event => setFindText(event.target.value)} onKeyDown={onFindKeyDown}/>
       <button type="button" className="find-replace-toggle" aria-label={replaceOpen ? '收起替换' : '展开替换'} title={replaceOpen ? '收起替换' : '展开替换'} aria-expanded={replaceOpen} onClick={toggleReplace}><span aria-hidden="true">替</span></button>
@@ -273,8 +319,8 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, setText,
       <button type="button" aria-label="关闭查找" title="关闭（Esc）" onClick={closeFind}>×</button>
     </div>}
     <div className="note-body" ref={host}>
-      {!note ? <div className="empty-state"><FileText size={28}/><p>打开或新建 Markdown 笔记</p><small>编辑后自动保存</small></div> : <div className="note-content"><div className="note-editor-surface" style={{ display: mode === 'preview' ? 'none' : 'flex' }}><MarkdownSourceEditor key={note.path} notePath={note.path} value={text} onChange={setText} onView={setSourceView} onSelectionChange={setSourceSelection}/></div>{mode === 'preview' && <MarkdownPreview notePath={note.path} text={text} onJump={stableJump}/>}</div>}
-      {outline && <aside className="note-outline" aria-label="Markdown 大纲"><div className="outline-title">大纲</div>{headings.length ? headings.map((item, index) => <button key={index} style={{ paddingLeft: 10 + (item.level - 1) * 10 }} title={item.text} onClick={() => { if (mode === 'edit' && sourceView && item.line !== undefined) { const line = sourceView.state.doc.line(Math.min(item.line + 1, sourceView.state.doc.lines)); sourceView.dispatch({ selection: { anchor: line.from }, effects: CodeMirrorView.scrollIntoView(line.from, { y: 'start' }) }); sourceView.focus(); return; } const target = host.current?.querySelectorAll('.markdown-preview :is(h1,h2,h3,h4,h5,h6)')[index]; target?.scrollIntoView({ block: 'start', behavior: 'smooth' }); }}><small>{item.level}</small><span>{item.text}</span></button>) : <p>使用标题组织笔记后，目录会出现在这里。</p>}</aside>}
+      {!note ? <div className="empty-state"><FileText size={28}/><p>打开或新建 Markdown 笔记</p><small>编辑后自动保存</small></div> : <div className="note-content"><div className="note-editor-surface" style={{ display: mode === 'preview' ? 'none' : 'flex' }}><MarkdownSourceEditor notePath={note.path} onView={setSourceView} onSelectionChange={setSourceSelection} sharedDocument={sharedDocument!} tab={tab!}/></div>{mode === 'preview' && <MarkdownPreview notePath={note.path} text={text} onJump={stableJump} onToggleTask={toggleTask}/>}</div>}
+      {outlineMotion.present && <aside ref={outlineMotion.ref} aria-hidden={!outline} className="note-outline" aria-label="Markdown 大纲"><div className="outline-title">大纲</div>{headings.length ? headings.map((item, index) => <button key={index} style={{ paddingLeft: 10 + (item.level - 1) * 10 }} title={item.text} onClick={() => { if (mode === 'edit' && sourceView && item.line !== undefined) { const line = sourceView.state.doc.line(Math.min(item.line + 1, sourceView.state.doc.lines)); sourceView.dispatch({ selection: { anchor: line.from }, effects: CodeMirrorView.scrollIntoView(line.from, { y: 'start' }) }); sourceView.focus(); return; } const target = host.current?.querySelectorAll('.markdown-preview :is(h1,h2,h3,h4,h5,h6)')[index]; target?.scrollIntoView({ block: 'start', behavior: reducedMotion ? 'auto' : 'smooth' }); }}><small>{item.level}</small><span>{item.text}</span></button>) : <p>使用标题组织笔记后，目录会出现在这里。</p>}</aside>}
     </div>
     {selectionToolbar && mode === 'edit' && sourceView && <div className="selection-toolbar" role="toolbar" aria-label="选中文本格式" style={{ left: selectionToolbar.left, top: selectionToolbar.top }} onPointerDown={event => event.preventDefault()}>
       <button title="加粗（Ctrl+B）" onClick={() => runInlineFormat('bold')}>B</button>
@@ -294,6 +340,6 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, setText,
       <button title="撤销（Ctrl+Z）" onClick={runUndo}>撤销</button>
       <button title="重做（Ctrl+Y）" onClick={runRedo}>重做</button>
     </div>}
-    {note && <footer className="note-foot" aria-label="字数统计" aria-live="polite"><span className="word-stats"><span>全文 {totalUnits.toLocaleString('zh-CN')} 字</span><span>本段 {paragraphUnits.toLocaleString('zh-CN')} 字</span><span className={selectedUnits ? 'has-selection' : ''}>已选 {selectedUnits.toLocaleString('zh-CN')} 字</span></span></footer>}
+    {note && <footer className="note-foot" aria-label="字数统计" aria-live="polite"><span className="word-stats"><span>{totalUnits === undefined ? '全文统计中…' : `全文 ${totalUnits.toLocaleString('zh-CN')} 字`}</span><span>本段 {paragraphUnits.toLocaleString('zh-CN')} 字</span><span className={selectedUnits ? 'has-selection' : ''}>已选 {selectedUnits.toLocaleString('zh-CN')} 字</span></span></footer>}
   </section>;
 }

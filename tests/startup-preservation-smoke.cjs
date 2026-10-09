@@ -47,14 +47,19 @@ for (const { scenario, pane } of [
       app = await electron.launch({ executablePath: process.env.ZHAOYE_EXE || path.join(appRoot, 'node_modules/electron/dist/electron.exe'),
         args: process.env.ZHAOYE_EXE ? [] : [appRoot], env: { ...process.env, ZHAOYE_TEST_USER_DATA: profile }, timeout: 15000 });
       const page = await app.firstWindow(); page.setDefaultTimeout(10000);
-      const editor = page.locator(`[data-pane-id=${pane}] .cm-content`).first();
-      await editor.waitFor();
+      // A lone legacy right group is promoted to the left by the new rules.
+      const editor = page.locator('[data-pane-id=primary] .cm-content').first();
+      if (scenario === 'read-error') {
+        await page.locator('.toast').filter({hasText:'恢复稿保留'}).waitFor();
+        assert.equal(await editor.count(),0,'an unreadable recovery must not expose an autosaving editor');
+      } else await editor.waitFor();
       // Exceed recovery (400 ms), autosave (900 ms), and disk polling (3 s).
       await page.waitForTimeout(3800);
       const expected = ['recoverable', 'empty-draft'].includes(scenario) ? draft : disk;
       assert.equal(await fs.readFile(note, 'utf8'), expected, 'startup must not silently replace disk with an uninitialized empty editor');
-      const text = await editor.innerText();
-      if (expected) assert.ok(text.includes('Never lose this body.'), 'the editor must display the loaded body');
+      const text = scenario === 'read-error' ? '' : await editor.innerText();
+      if (expected && scenario !== 'read-error') assert.ok(text.includes('Never lose this body.'), 'the editor must display the loaded body');
+      if (scenario === 'read-error') assert.ok((await fs.stat(recoveryFile)).isDirectory(),'unreadable recovery bytes/location remain untouched');
       if (scenario === 'conflict') {
         assert.equal(JSON.parse(await fs.readFile(recoveryFile, 'utf8')).content, draft, 'keep conflicting recovery intact');
         await page.getByRole('button', { name: '保留我的内容', exact: true }).waitFor();

@@ -3,10 +3,11 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { FileStore, digest } = require('./storage.cjs');
-const { recoveryIdPattern, validateSession } = require('./session.cjs');
+const { recoveryIdPattern, validateSession, sessionFilePaths } = require('./session.cjs');
 const { SettingsStore } = require('./settings.cjs');
 const { readSettingsFile } = require('./settings-file.cjs');
 const { saveNoteAndCleanup } = require('./note-service.cjs');
+const { installWindowFocus } = require('./window-focus.cjs');
 
 if (process.env.ZHAOYE_TEST_USER_DATA) app.setPath('userData', process.env.ZHAOYE_TEST_USER_DATA);
 else app.setPath('userData', path.join(app.getPath('appData'), '照页'));
@@ -18,6 +19,7 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'reader-asset', privileges: { st
 const store = new FileStore();
 const jobs = new Map();
 let mainWindow;
+let withWindowDialog;
 let allowClose = false;
 let launchItems = { files: [] };
 
@@ -63,6 +65,10 @@ async function restoreGrants() {
   const savedRoots = [...new Set([...(settings.roots || []), settings.session?.root].filter(Boolean))];
   for (const root of savedRoots) try { roots.push(await store.grantRoot(root)); } catch { /* moved */ }
   for (const file of settings.recentFiles || []) try { recentFiles.push(await store.grantFile(file)); } catch { /* moved */ }
+  // A workspace can retain more tabs than the recent-files list, including
+  // notes outside the chosen root. Restore grants for the complete session.
+  const sessionFiles = sessionFilePaths(settings.session);
+  for (const file of new Set(sessionFiles)) try { await store.grantFile(file); } catch { /* renderer reports unavailable files */ }
   if (roots.length !== (settings.roots || []).length || recentFiles.length !== (settings.recentFiles || []).length) {
     // Keep cleanup inside the same read -> mutate -> write queue as every
     // other settings/session update.  A direct write here could otherwise
@@ -108,7 +114,7 @@ function deliverLaunchItems(items) {
   else send();
 }
 async function chooseWorkspace() {
-  const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
+  const result = await withWindowDialog(() => dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] }));
   if (result.canceled || !result.filePaths[0]) return null;
   const root = await store.grantRoot(result.filePaths[0]);
   const listing = await store.list(root);
@@ -119,10 +125,10 @@ async function chooseWorkspace() {
   return { path: root, files: listing.files };
 }
 async function chooseFiles() {
-  const result = await dialog.showOpenDialog(mainWindow, {
+  const result = await withWindowDialog(() => dialog.showOpenDialog(mainWindow, {
     properties: ['openFile', 'multiSelections'],
     filters: [{ name: 'PDF、EPUB 与 Markdown', extensions: ['pdf', 'epub', 'md', 'markdown'] }],
-  });
+  }));
   if (result.canceled) return [];
   const files = [];
   for (const selected of result.filePaths) {
@@ -159,13 +165,13 @@ function installHandlers() {
   handle('list-workspace', async (_event, root) => store.list(await store.checked(root)));
   handle('list-directory', async (_event, input) => store.listDirectory(input.root, input.directory));
   handle('choose-relocation', async (_event, input) => {
-    const result = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'], filters: [{ name: 'PDF', extensions: ['pdf'] }] });
+    const result = await withWindowDialog(() => dialog.showOpenDialog(mainWindow, { properties: ['openFile'], filters: [{ name: 'PDF', extensions: ['pdf'] }] }));
     if (result.canceled || !result.filePaths[0]) return null;
     const selected = await store.grantFile(result.filePaths[0]);
     return ensurePdf(selected, input.pdfId);
   });
   handle('choose-epub-relocation', async (_event, input) => {
-    const result = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'], filters: [{ name: 'EPUB', extensions: ['epub'] }] });
+    const result = await withWindowDialog(() => dialog.showOpenDialog(mainWindow, { properties: ['openFile'], filters: [{ name: 'EPUB', extensions: ['epub'] }] }));
     if (result.canceled || !result.filePaths[0]) return null;
     const selected = await store.grantFile(result.filePaths[0]);
     return ensureEpub(selected, input.epubId);
@@ -242,7 +248,7 @@ function installHandlers() {
     return true;
   });
   handle('create-note', async (_event, input = {}) => {
-    const result = await dialog.showSaveDialog(mainWindow, { defaultPath: input.suggestedName || '新笔记.md', filters: [{ name: 'Markdown', extensions: ['md'] }] });
+    const result = await withWindowDialog(() => dialog.showSaveDialog(mainWindow, { defaultPath: input.suggestedName || '新笔记.md', filters: [{ name: 'Markdown', extensions: ['md'] }] }));
     if (result.canceled || !result.filePath) return null;
     const file = path.extname(result.filePath) ? result.filePath : `${result.filePath}.md`;
     try { await fs.access(file); throw new Error('目标文件已存在，请换一个文件名'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -253,7 +259,7 @@ function installHandlers() {
     return store.readNote(granted);
   });
   handle('save-as', async (_event, input) => {
-    const result = await dialog.showSaveDialog(mainWindow, { defaultPath: input.suggestedName || '笔记.md', filters: [{ name: 'Markdown', extensions: ['md'] }] });
+    const result = await withWindowDialog(() => dialog.showSaveDialog(mainWindow, { defaultPath: input.suggestedName || '笔记.md', filters: [{ name: 'Markdown', extensions: ['md'] }] }));
     if (result.canceled || !result.filePath) return null;
     const file = path.extname(result.filePath) ? result.filePath : `${result.filePath}.md`;
     try { await fs.access(file); throw new Error('目标文件已存在，请换一个文件名'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -331,26 +337,42 @@ function installHandlers() {
 
 function createWindow(settings = {}) {
   mainWindow = new BrowserWindow({
-    icon: path.join(__dirname, 'assets', 'app.ico'),
+    icon: path.join(__dirname, 'assets', 'app-constructivist.ico'),
     width: settings.window?.width || 1440, height: settings.window?.height || 920,
+    show: false,
     minWidth: 960, minHeight: 640,
     frame: false, thickFrame: true, roundedCorners: true, hasShadow: true,
     title: '左人笔记 · 阅读与思考', backgroundColor: '#f1f3f1',
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
+  withWindowDialog = installWindowFocus(mainWindow);
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:|^mailto:/i.test(url)) void shell.openExternal(url);
     return { action: 'deny' };
+  });
+  // Native shortcut also works when focus is inside an EPUB iframe.
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.key === 'F11' && !input.isAutoRepeat && !input.control && !input.alt && !input.meta) {
+      event.preventDefault();
+      mainWindow.setFullScreen(!mainWindow.isFullScreen());
+    }
   });
   mainWindow.webContents.on('will-navigate', (event, url) => {
     event.preventDefault();
     if (/^https?:|^mailto:/i.test(url)) void shell.openExternal(url);
   });
-  const sendWindowState = () => { if (!mainWindow?.isDestroyed()) mainWindow.webContents.send('window-state', windowState(mainWindow)); };
+  // On Windows the fullscreen event can precede isFullScreen() updating.
+  // The event itself confirms the transition; do not publish an old getter.
+  const sendWindowState = fullscreen => { if (!mainWindow?.isDestroyed()) mainWindow.webContents.send('window-state', { ...windowState(mainWindow), ...(typeof fullscreen === 'boolean' ? { fullscreen } : {}) }); };
   mainWindow.on('maximize', sendWindowState);
   mainWindow.on('unmaximize', sendWindowState);
-  mainWindow.on('enter-full-screen', sendWindowState);
-  mainWindow.on('leave-full-screen', sendWindowState);
+  mainWindow.on('enter-full-screen', () => sendWindowState(true));
+  mainWindow.on('leave-full-screen', () => sendWindowState(false));
+  // Establish the native window state before loading the renderer, so its
+  // initial state query cannot race a later ready-to-show maximization.
+  // Saved dimensions remain the normal bounds for the restore button.
+  mainWindow.maximize();
+  mainWindow.show();
   mainWindow.on('close', event => {
     if (allowClose) return;
     event.preventDefault();

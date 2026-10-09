@@ -20,7 +20,7 @@ test('reader identity cache reuses stable files and rejects stale PDF/EPUB metad
       await fs.writeFile(replacement, 'changed bytes!');
       await fs.rename(replacement, file);
       assert.notEqual(await store.contentIdentity(file), first);
-      if (extension === 'pdf') await assert.rejects(() => store.savePdf(file, { id: first, page: 1, annotations: [] }), /内容已变化/);
+      if (extension === 'pdf') await assert.rejects(() => store.savePdf(file, { version: 1, id: first, page: 1, annotations: [] }), /内容已变化/);
       else await assert.rejects(() => store.saveEpub(file, { version: 2, id: first, cfi: '', progress: 0, fontSize: 100, annotations: [] }), /内容已变化/);
       await fs.unlink(file);
       await assert.rejects(() => store.contentIdentity(file), { code: 'ENOENT' });
@@ -97,6 +97,52 @@ test('renames entries without changing file type or overwriting another entry', 
   await assert.rejects(() => store.renameEntry(renamed.path, '另一份.md'), /已经存在/);
 });
 
+test('renaming a Markdown file migrates valid recovery source identity but leaves damaged recovery bytes untouched', async () => {
+  const root = await fixture(); const store = new FileStore(); await store.grantRoot(root);
+  const source = path.join(root, '中文笔记.md'), note = await store.readNote(source), recoveryId = '6a8d4aa2-cc3b-4dae-84c4-86b028ad7e19';
+  await store.writeRecovery({ sourcePath: source, recoveryId, paneHint: 'primary', baseHash: note.hash, content: '恢复中的正文', encoding: { bom: note.bom, eol: note.eol } });
+  const damagedId = '6a8d4aa2-cc3b-4dae-84c4-86b028ad7e20';
+  const damagedFile = path.join(root, '.reader', 'recovery', `${damagedId}.json`); await fs.writeFile(damagedFile, Buffer.from('{broken recovery bytes\r\n'));
+  const damagedBefore = await fs.readFile(damagedFile);
+  const renamed = await store.renameEntry(source, '重命名笔记');
+  assert.equal((await store.checkRecovery(renamed.path, recoveryId)).status, 'recoverable');
+  assert.equal((await store.checkRecovery(renamed.path, damagedId)).status, 'corrupt');
+  assert.deepEqual(await fs.readFile(damagedFile), damagedBefore);
+});
+
+test('renaming a folder migrates nested recovery source paths', async () => {
+  const root = await fixture(); const store = new FileStore(); await store.grantRoot(root);
+  const folder = path.join(root, '子文件夹'), source = path.join(folder, '下一级笔记.md'), note = await store.readNote(source);
+  const recoveryId = '6a8d4aa2-cc3b-4dae-84c4-86b028ad7e21';
+  await store.writeRecovery({ sourcePath: source, recoveryId, paneHint: 'secondary', baseHash: note.hash, content: '嵌套草稿', encoding: { bom: note.bom, eol: note.eol } });
+  const damagedId = '6a8d4aa2-cc3b-4dae-84c4-86b028ad7e23';
+  const damagedFile = path.join(folder, '.reader', 'recovery', `${damagedId}.json`); await fs.mkdir(path.dirname(damagedFile), { recursive: true });
+  await fs.writeFile(damagedFile, Buffer.from('damaged folder recovery')); const damagedBefore = await fs.readFile(damagedFile);
+  const renamed = await store.renameEntry(folder, '已整理');
+  const movedNote = path.join(renamed.path, path.basename(source));
+  assert.equal((await store.checkRecovery(movedNote, recoveryId)).status, 'recoverable');
+  assert.equal((await store.readRecovery(movedNote, recoveryId)).sourcePath, movedNote);
+  const movedDamaged = path.join(renamed.path, '.reader', 'recovery', `${damagedId}.json`);
+  assert.equal((await store.checkRecovery(movedNote, damagedId)).status, 'corrupt'); assert.deepEqual(await fs.readFile(movedDamaged), damagedBefore);
+});
+
+test('recovery metadata write failure rolls back both the filename and prior recovery bytes', async () => {
+  const root = await fixture(); const store = new FileStore(); await store.grantRoot(root);
+  const source = path.join(root, '中文笔记.md'), note = await store.readNote(source), recoveryId = '6a8d4aa2-cc3b-4dae-84c4-86b028ad7e22';
+  await store.writeRecovery({ sourcePath: source, recoveryId, paneHint: 'primary', baseHash: note.hash, content: '待恢复', encoding: { bom: note.bom, eol: note.eol } });
+  const recordFile = path.join(root, '.reader', 'recovery', `${recoveryId}.json`), before = await fs.readFile(recordFile);
+  const write = store.writeRecoveryRecord.bind(store); let fail = true;
+  store.writeRecoveryRecord = (file, data) => {
+    if (fail && file === recordFile && JSON.parse(data.toString('utf8')).sourcePath !== source) { fail = false; return Promise.reject(new Error('simulated write failure')); }
+    return write(file, data);
+  };
+  await assert.rejects(() => store.renameEntry(source, '应该回滚'), /恢复稿路径迁移失败/);
+  assert.equal(await fs.readFile(source, 'utf8').then(() => true), true);
+  await assert.rejects(() => fs.access(path.join(root, '应该回滚.md')));
+  assert.deepEqual(await fs.readFile(recordFile), before);
+  assert.equal((await store.checkRecovery(source, recoveryId)).status, 'recoverable');
+});
+
 test('rejects invalid Windows entry names for create and rename', async () => {
   const root = await fixture(); const store = new FileStore(); await store.grantRoot(root);
   for (const name of ['', '..', 'bad/name', 'CON', '结尾.']) {
@@ -109,7 +155,7 @@ test('rejects invalid Windows entry names for create and rename', async () => {
 test('stores PDF metadata beside the source and preserves PDF hash', async () => {
   const root = await fixture(); const store = new FileStore(); await store.grantRoot(root);
   const file = path.join(root, '研究.pdf'); const opened = await store.pdf(file);
-  const annotation = { id: 'a1', type: 'highlight', anchor: { pdfId: opened.meta.id, page: 1, rects: [{ x: 1, y: 2, w: 3, h: 4 }], rotation: 0 }, createdAt: new Date().toISOString() };
+  const annotation = { id: 'a1', type: 'highlight', anchor: { pdfId: opened.meta.id, page: 1, rects: [{ x: 0.1, y: 0.2, w: 0.3, h: 0.04 }], rotation: 0 }, createdAt: new Date().toISOString() };
   await store.savePdf(file, { ...opened.meta, annotations: [annotation] });
   const reopened = await store.pdf(file); assert.equal(reopened.meta.annotations[0].id, 'a1');
   assert.equal(digest(Buffer.from(reopened.data)), opened.meta.id);
@@ -168,4 +214,40 @@ test('skips a damaged individual EPUB annotation with warning and refuses future
   await assert.rejects(() => store.saveEpub(file, opened.meta), /内容已变化/);
   assert.deepEqual(await fs.readFile(sidecar), Buffer.from(JSON.stringify({ ...opened.meta, annotations: [valid] })));
   assert.notDeepEqual(await fs.readFile(file), original);
+});
+
+test('EPUB progress and annotation writes round-trip skipped raw records without duplicating or erasing them', async () => {
+  const root = await fixture(), store = new FileStore(); await store.grantRoot(root);
+  const file = path.join(root, '电子书.epub'), opened = await store.epub(file), bookBytes = await fs.readFile(file);
+  const sidecar = path.join(root, '.reader', `${opened.meta.id}.epub.json`); await fs.mkdir(path.dirname(sidecar), { recursive: true });
+  const valid = { id: '6a8d4aa2-cc3b-4dae-84c4-86b028ad7e19', kind: 'highlight', cfiRange: 'epubcfi(/6/4!/4/2,/1:0,/1:4)', quote: 'valid', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  const damaged = [{ ...valid, id: '../bad', extra: { recoverable: 'original opaque data' } }, null, { ...valid, cfiRange: 'broken' }];
+  await fs.writeFile(sidecar, JSON.stringify({ ...opened.meta, annotations: [valid, ...damaged] }));
+  const reading = await store.epub(file); assert.equal(reading.meta.annotations.length, 1);
+  for (const progress of [.2, .4]) {
+    await store.saveEpub(file, { ...reading.meta, progress, annotations: [] });
+    const raw = JSON.parse(await fs.readFile(sidecar, 'utf8'));
+    assert.deepEqual(raw.annotations, damaged); assert.equal(raw.progress, progress);
+  }
+  assert.deepEqual(await fs.readFile(file), bookBytes);
+  for (const annotations of [null, {}, 'not a list']) {
+    const bytes = JSON.stringify({ ...opened.meta, annotations }); await fs.writeFile(sidecar, bytes);
+    await assert.rejects(store.saveEpub(file, opened.meta), /禁止覆盖/); assert.equal(await fs.readFile(sidecar, 'utf8'), bytes);
+  }
+  const unknown = JSON.stringify({ ...opened.meta, newField: 'preserve externally changed sidecar' }); await fs.writeFile(sidecar, unknown);
+  await assert.rejects(store.saveEpub(file, opened.meta), /未知字段/); assert.equal(await fs.readFile(sidecar, 'utf8'), unknown);
+});
+
+test('valid JSON with an invalid recovery shape never blocks unrelated Markdown renames', async () => {
+  const root = await fixture(), store = new FileStore(); await store.grantRoot(root);
+  const directory = path.join(root, '.reader', 'recovery'); await fs.mkdir(directory, { recursive: true });
+  for (const [index, content] of ['null', '[]', '42', '"wrong shape"'].entries()) {
+    const file = path.join(directory, `6a8d4aa2-cc3b-4dae-84c4-86b028ad7e${30 + index}.json`);
+    await fs.writeFile(file, content);
+  }
+  const renamed = await store.renameEntry(path.join(root, '中文笔记.md'), 'shape-safe.md');
+  assert.ok(await fs.stat(renamed.path));
+  for (const [index, content] of ['null', '[]', '42', '"wrong shape"'].entries()) {
+    assert.equal(await fs.readFile(path.join(directory, `6a8d4aa2-cc3b-4dae-84c4-86b028ad7e${30 + index}.json`), 'utf8'), content);
+  }
 });

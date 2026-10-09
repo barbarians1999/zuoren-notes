@@ -1,3 +1,4 @@
+const { noteUI, focusNote, moreAction } = require('./noteUi.cjs');
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
@@ -80,8 +81,10 @@ test('packaged app restores session and crash draft without putting note text in
     await page.locator('.file-row').filter({ hasText: /^资料$/ }).click();
     await page.locator('.file-row').filter({ hasText: '主笔记.md' }).click();
     await page.locator('.markdown-source-editor .cm-content').locator('.cm-line').filter({ hasText: '主笔记' }).waitFor();
-    await page.getByRole('button', { name: '左右分屏笔记', exact: true }).click();
-    await page.locator('.secondary-note .cm-content').locator('.cm-line').filter({ hasText: '副笔记' }).waitFor();
+    await page.locator('.file-row').filter({ hasText: '副笔记.md' }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: '在右侧打开', exact: true }).click();
+    await page.locator('[data-tabs-group="primary"] [role="tab"]').filter({hasText:'主笔记.md'}).click();
+    await page.locator('[data-note-group="secondary"] .cm-content').locator('.cm-line').filter({ hasText: '副笔记' }).waitFor();
     await page.locator('.file-row').filter({ hasText: '阅读.pdf' }).click();
     console.log('SMOKE opened PDF');
     await page.waitForSelector('canvas');
@@ -129,9 +132,9 @@ test('packaged app restores session and crash draft without putting note text in
     await page.getByRole('button', { name: '阅读', exact: true }).waitFor();
     assert.equal(await page.locator('.sidebar').count(), 0);
     assert.equal(await page.locator('.layout-tabs button[aria-pressed="true"]').textContent(), '对照');
-    assert.equal(await page.locator('.secondary-note select').inputValue(), secondPath);
+    assert.equal(await page.locator('[data-tabs-group="secondary"] [role="tab"][aria-selected="true"]').evaluate(el => el.querySelector('.tab-file-name').textContent), '副笔记.md');
     await page.locator('.document-tab').filter({ hasText: '主笔记.md' }).waitFor();
-    await page.locator('.document-tab').filter({ hasText: '副笔记.md' }).waitFor();
+    await page.locator('[data-tabs-group="secondary"] .document-tab').filter({ hasText: '副笔记.md' }).waitFor({state:'attached'});
     await page.locator('input[aria-label="当前页码"]').waitFor();
     await page.waitForFunction(() => document.querySelector('input[aria-label="当前页码"]')?.value === '2');
     console.log('SMOKE session UI restored');
@@ -141,9 +144,9 @@ test('packaged app restores session and crash draft without putting note text in
     await page.waitForTimeout(3800);
     assert.equal(await fs.readFile(notePath, 'utf8'), '# 主笔记\n\n原有正文。\n');
     assert.equal(await fs.readFile(secondPath, 'utf8'), '# 副笔记\n\n第二栏。\n');
-    assert.ok((await page.locator('.panes > .note-pane .cm-content').first().innerText()).includes('原有正文。'));
+    assert.ok((await page.locator('.panes [data-note-group="primary"] .note-pane .cm-content').first().innerText()).includes('原有正文。'));
 
-    const editor = page.locator('.panes > .note-pane .markdown-source-editor .cm-content').first();
+    const editor = page.locator('.panes [data-note-group="primary"] .note-pane .markdown-source-editor .cm-content').first();
     await editor.waitFor();
     await editor.click(); await page.keyboard.press('Control+End'); await page.keyboard.press('Enter'); await page.keyboard.insertText(canary);
     await page.locator('.note-toolbar .compact-save').filter({ hasText: '编辑中' }).waitFor();
@@ -162,8 +165,9 @@ test('packaged app restores session and crash draft without putting note text in
     console.log('SMOKE forced stop completed');
     ({ instance, page } = await launch(executablePath));
     console.log('SMOKE crash recovery launch');
-    await page.locator('.panes > .note-pane .markdown-source-editor .cm-content').first().getByText(canary, { exact: false }).waitFor();
-    await page.waitForTimeout(1400);
+    await page.locator('.panes [data-note-group="primary"] .note-pane .markdown-source-editor .cm-content').first().getByText(canary, { exact: false }).waitFor();
+    await require('./waitForFile.cjs').waitForFile(notePath, text => text.replaceAll('\\_', '_').includes(canary));
+    await page.locator('[data-note-controls="primary"] .markdown-save-state.state-已保存').first().waitFor();
     console.log('SMOKE crash draft autosaved');
     assert.ok((await fs.readFile(notePath, 'utf8')).replaceAll('\\_', '_').includes(canary));
     await assert.rejects(() => fs.access(recoveryFile));
@@ -173,7 +177,7 @@ test('packaged app restores session and crash draft without putting note text in
     console.log('SMOKE recovery app closed');
 
     ({ instance, page } = await launch(executablePath));
-    const explicitDraftEditor = page.locator('.panes > .note-pane .markdown-source-editor .cm-content').first();
+    const explicitDraftEditor = page.locator('.panes [data-note-group="primary"] .note-pane .markdown-source-editor .cm-content').first();
     await explicitDraftEditor.waitFor();
     await explicitDraftEditor.click(); await page.keyboard.press('Control+End'); await page.keyboard.press('Enter'); await page.keyboard.insertText(explicitCanary);
     await page.locator('.note-toolbar .compact-save').filter({ hasText: '编辑中' }).waitFor();
@@ -186,9 +190,10 @@ test('packaged app restores session and crash draft without putting note text in
     await forceStop(instance); instance = null;
     ({ instance, page } = await launch(executablePath, notePath));
     console.log('SMOKE explicit recovery launch');
-    await page.locator('.panes > .note-pane .markdown-source-editor .cm-content').first().getByText(explicitCanary, { exact: false }).waitFor();
-    assert.equal(await page.locator('.document-tab.active').innerText(), '主笔记.md');
-    await page.waitForTimeout(1400);
+    await page.locator('.panes [data-note-group="primary"] .note-pane .markdown-source-editor .cm-content').first().getByText(explicitCanary, { exact: false }).waitFor();
+    assert.match(await page.locator('.document-tab.foreground-tab').innerText(), /^主笔记\.md/);
+    await require('./waitForFile.cjs').waitForFile(notePath, text => text.replaceAll('\\_', '_').includes(explicitCanary));
+    await page.locator('[data-note-controls="primary"] .markdown-save-state.state-已保存').first().waitFor();
     assert.ok((await fs.readFile(notePath, 'utf8')).replaceAll('\\_', '_').includes(explicitCanary));
     await assert.rejects(() => fs.access(explicitRecoveryFile));
     await closeNormally(instance, page); instance = null;

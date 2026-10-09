@@ -1,3 +1,4 @@
+const { noteUI, focusNote, moreAction } = require('./noteUi.cjs');
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
@@ -121,11 +122,12 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   const windowControlSize = await page.getByRole('button', { name: '最小化窗口' }).evaluate(element => {
     const bounds = element.getBoundingClientRect(); return { width: bounds.width, height: bounds.height };
   });
-  assert.deepEqual(windowControlSize, { width: 44, height: 48 });
-  await page.getByRole('button', { name: '最大化窗口' }).click();
-  await page.getByRole('button', { name: '还原窗口' }).waitFor();
+  assert.deepEqual(windowControlSize, { width: 44, height: 47 }); // Leave the bottom separator unobstructed.
+  await page.getByRole('button', { name: '还原窗口' }).waitFor(); // Startup is maximized.
   await page.getByRole('button', { name: '还原窗口' }).click();
   await page.getByRole('button', { name: '最大化窗口' }).waitFor();
+  await page.getByRole('button', { name: '最大化窗口' }).click();
+  await page.getByRole('button', { name: '还原窗口' }).waitFor();
   await page.getByText('专题资料', { exact: true }).click();
   await page.getByText('下一级笔记.md', { exact: true }).waitFor();
   await page.getByRole('button', { name: '专题资料' }).waitFor();
@@ -144,20 +146,21 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   await page.locator('.file-row').filter({ hasText: '已重命名文件夹' }).waitFor();
   await fs.access(path.join(fixtureRoot, '已重命名文件夹'));
   await assert.rejects(fs.access(path.join(fixtureRoot, '右键测试文件夹')));
-  const deletionDialog = new Promise(resolve => page.once('dialog', async dialog => { assert.match(dialog.message(), /已重命名文件夹.*回收站/); await dialog.dismiss(); resolve(); }));
   await page.locator('.file-row').filter({ hasText: '已重命名文件夹' }).click({ button: 'right' });
   await page.getByRole('menuitem', { name: '移到回收站' }).click();
-  await deletionDialog;
+  const deletionDialog = page.getByRole('dialog', { name: '移到回收站', exact: true });
+  await deletionDialog.waitFor(); assert.match(await deletionDialog.innerText(), /已重命名文件夹.*回收站/);
+  await deletionDialog.getByRole('button', { name: '取消', exact: true }).click();
+  await deletionDialog.waitFor({ state: 'detached' });
   await fs.access(path.join(fixtureRoot, '已重命名文件夹'));
   await page.getByRole('button', { name: '新建文件夹', exact: true }).click();
   await page.getByLabel('新文件夹名称').fill('待回收测试文件夹');
   await page.getByLabel('新文件夹名称').press('Enter');
   const disposableFolder = page.locator('.file-row').filter({ hasText: '待回收测试文件夹' });
   await disposableFolder.waitFor();
-  const acceptedDeletion = new Promise(resolve => page.once('dialog', async dialog => { await dialog.accept(); resolve(); }));
   await disposableFolder.click({ button: 'right' });
   await page.getByRole('menuitem', { name: '移到回收站' }).click();
-  await acceptedDeletion;
+  await page.getByRole('dialog', { name: '移到回收站', exact: true }).getByRole('button', { name: '移到回收站', exact: true }).click();
   await disposableFolder.waitFor({ state: 'detached' });
   await assert.rejects(fs.access(path.join(fixtureRoot, '待回收测试文件夹')));
   await page.getByRole('button', { name: '新笔记', exact: true }).click();
@@ -168,14 +171,14 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   await page.locator('.file-row').filter({ hasText: '研究笔记.md' }).click({ button: 'right' });
   const contextMenu = page.getByRole('menu');
   await contextMenu.waitFor();
-  assert.equal(await contextMenu.getByRole('menuitem').count(), 4);
+  assert.equal(await contextMenu.getByRole('menuitem').count(), 5);
   await contextMenu.getByRole('menuitem', { name: '在新标签页中打开' }).click();
   await page.getByRole('button', { name: '关闭 现场笔记.md' }).click();
   const wysiwyg = page.locator('.markdown-source-editor .cm-content');
   await wysiwyg.waitFor();
   await wysiwyg.locator('.cm-md-heading-1').filter({ hasText: '剩余价值' }).waitFor();
   await page.waitForTimeout(3500);
-  assert.equal(await page.locator('.note-pane[data-pane-id="primary"] .compact-save').innerText(), '已保存');
+  assert.equal(await page.locator('[data-note-controls="primary"] .compact-save').innerText(), '已保存');
   const wordStats = page.getByLabel('字数统计');
   await wordStats.getByText(/^全文 [\d,]+ 字$/).waitFor();
   await wysiwyg.click(); await page.keyboard.press('Control+Home'); await page.keyboard.press('End'); await page.keyboard.press('Shift+ArrowLeft'); await page.keyboard.press('Shift+ArrowLeft'); await page.keyboard.press('Shift+ArrowLeft'); await page.keyboard.press('Shift+ArrowLeft');
@@ -196,15 +199,15 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   await page.screenshot({ path: path.join(outputs, '照页-资料栏收起.png'), fullPage: true });
   await page.getByRole('button', { name: '展开资料栏', exact: true }).click();
   assert.ok(await page.locator('.sidebar').isVisible());
-  await page.getByRole('button', { name: '展开大纲', exact: true }).click();
+  await moreAction(page, '展开大纲');
   await page.locator('.note-outline').getByRole('button', { name: '2 概念' }).click();
-  await page.getByRole('button', { name: '收起大纲', exact: true }).click();
-  await page.getByRole('button', { name: '展开大纲', exact: true }).click();
+  await moreAction(page, '收起大纲');
+  await moreAction(page, '展开大纲');
   const code = page.locator('.cm-editor'); await code.waitFor();
   assert.equal(await code.evaluate(element => getComputedStyle(element).fontSize), '18px');
   assert.equal(await page.locator('.cm-gutters').isVisible(), false);
   await code.locator('.cm-content').click(); await page.keyboard.press('Control+A');
-  const codeSelection = page.locator('.cm-selectionBackground').first(); await codeSelection.waitFor();
+  const codeSelection = code.locator('.cm-proseSelectionBackground:visible').first(); await codeSelection.waitFor();
   assert.notEqual(await codeSelection.evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)');
   const selectedCodeText = await code.locator('.cm-content').evaluate(element => {
     const style = getComputedStyle(element, '::selection');
@@ -214,11 +217,11 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   await page.screenshot({ path: path.join(outputs, '照页-代码选区.png'), fullPage: true });
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByRole('button', { name: '资料栏 已展开', exact: true }).waitFor();
-  await page.getByRole('button', { name: '全屏阅读 进入', exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: '资料栏 已展开', exact: true }).count(), 0, 'sidebar control lives in the topbar, not duplicated in settings');
+  await page.getByRole('button', { name: /全屏阅读.*进入/ }).waitFor();
   await page.getByRole('button', { name: '深色', exact: true }).click();
-  assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'dark');
-  assert.equal(await page.evaluate(() => localStorage.getItem('zhaoye-theme')), 'dark');
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'constructivist-dark');
+  assert.equal(await page.evaluate(() => localStorage.getItem('zhaoye-theme')), 'constructivist-dark');
   await page.waitForTimeout(220);
   const darkAppearance = await page.evaluate(() => ({
     body: getComputedStyle(document.body).backgroundColor,
@@ -229,12 +232,13 @@ test('production UI opens original files, autosaves, searches, annotates and ret
     text: getComputedStyle(document.querySelector('.markdown-source-editor .cm-content')).color,
     themeButton: getComputedStyle(document.querySelector('.theme-options button')).backgroundColor,
   }));
-  assert.equal(darkAppearance.text, 'rgb(226, 232, 228)');
-  assert.equal(darkAppearance.noteContent, 'rgb(27, 33, 29)');
+  assert.equal(darkAppearance.text, 'rgb(222, 216, 204)');
+  assert.equal(darkAppearance.noteContent, 'rgb(0, 0, 0)');
   await page.screenshot({ path: path.join(outputs, '照页-黑暗模式.png'), fullPage: true });
-  await page.getByRole('button', { name: '跟随系统', exact: true }).click();
-  assert.equal(await page.evaluate(() => localStorage.getItem('zhaoye-theme')), 'system');
-  assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), await page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+  assert.equal(await page.getByRole('button', { name: '跟随系统', exact: true }).count(), 1);
+  await page.getByRole('button', { name: '浅色', exact: true }).click();
+  assert.equal(await page.evaluate(() => localStorage.getItem('zhaoye-theme')), 'constructivist');
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'constructivist');
   const readingSize = page.getByRole('slider', { name: '正文字体大小' });
   await readingSize.fill('22');
   assert.equal(await wysiwyg.evaluate(element => getComputedStyle(element).fontSize), '22px');
@@ -245,17 +249,18 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   assert.equal(await wysiwyg.evaluate(element => getComputedStyle(element).fontSize), '18px');
   await page.keyboard.press('Escape');
   await page.screenshot({ path: path.join(outputs, '照页-大纲与代码块.png'), fullPage: true });
-  await page.getByRole('button', { name: '收起大纲', exact: true }).click();
+  await moreAction(page, '收起大纲');
   await page.locator('.file-row').filter({ hasText: '对照笔记.md' }).click();
-  await page.waitForFunction(() => document.querySelectorAll('.document-tab').length === 1);
-  assert.equal(await page.locator('.document-tab').count(), 1);
+  await page.waitForFunction(() => document.querySelectorAll('.document-tab').length === 2);
+  assert.equal(await page.locator('.document-tab').count(), 2);
   await page.locator('.document-tab').filter({ hasText: '对照笔记.md' }).waitFor();
   await page.locator('.file-row').filter({ hasText: '研究笔记.md' }).click();
-  await page.waitForFunction(() => document.querySelectorAll('.document-tab').length === 1);
-  assert.equal(await page.locator('.document-tab').count(), 1);
+  await page.waitForFunction(() => document.querySelectorAll('.document-tab').length === 2);
+  assert.equal(await page.locator('.document-tab').count(), 2);
   await page.locator('.document-tab').filter({ hasText: '研究笔记.md' }).waitFor();
-  await page.getByRole('button', { name: '左右分屏笔记', exact: true }).click();
-  const secondary = page.locator('.secondary-note .cm-content'); await secondary.waitFor();
+  await page.locator('.file-row').filter({ hasText: '对照笔记.md' }).click({ button: 'right' });
+  await page.getByRole('menuitem',{name:'在右侧打开',exact:true}).click();
+  const secondary = page.locator('[data-note-group="secondary"] .cm-content'); await secondary.waitFor();
   stage('dual panes ready');
   const splitEditorLayouts = await page.locator('.panes .markdown-source-editor .cm-scroller > .cm-content').evaluateAll(elements => elements.map(element => {
     const scroller = element.closest('.cm-scroller'), content = element.getBoundingClientRect(), viewport = scroller.getBoundingClientRect();
@@ -270,8 +275,8 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   await secondary.click(); await page.keyboard.press('Control+End'); await page.keyboard.press('Enter'); await page.keyboard.insertText('第二栏独立自动保存');
   await page.waitForTimeout(1300);
   assert.match(await fs.readFile(path.join(fixtureRoot, '对照笔记.md'), 'utf8'), /第二栏独立自动保存/);
-  const primaryPane = page.locator('.note-pane[data-pane-id="primary"]');
-  const secondaryPane = page.locator('.note-pane[data-pane-id="secondary"]');
+  const primaryPane = noteUI(page, 'primary');
+  const secondaryPane = noteUI(page, 'secondary');
   await primaryPane.locator('.markdown-source-editor .cm-content').click();
   await page.keyboard.press('Control+f');
   await primaryPane.locator('.find-bar').waitFor();
@@ -326,6 +331,7 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   stage('preview: closing secondary find');
   await withTimeout('close secondary find', secondaryPane.locator('.find-bar button[aria-label="关闭查找"]').click());
   stage('preview: switching mode');
+  await focusNote(page, 'primary');
   await withTimeout('switch primary to preview', primaryPane.locator('.note-toolbar button[aria-label="切换到预览"]').click());
   stage('preview: waiting for document');
   const primaryPreview = primaryPane.locator('.markdown-preview');
@@ -356,9 +362,11 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   await page.screenshot({ path: path.join(outputs, '照页-双栏笔记.png'), fullPage: true });
   await secondary.click(); await page.keyboard.press('Control+End');
   await page.keyboard.press('Enter'); await page.keyboard.insertText('关闭分屏前也要保存');
-  await page.locator('.secondary-note .compact-save').filter({ hasText: '编辑中' }).waitFor();
-  await page.getByRole('button', { name: '关闭笔记分屏', exact: true }).click();
-  await page.locator('.secondary-note').waitFor({ state: 'detached' });
+  await page.locator('[data-note-controls="secondary"] .compact-save').filter({ hasText: '编辑中' }).waitFor();
+  await moreAction(page, '关闭笔记分屏');
+  await page.locator('[data-note-group="secondary"]').waitFor({ state: 'hidden' });
+  await page.locator('[data-tabs-group="primary"] [role="tab"]').filter({hasText:'研究笔记.md'}).click();
+  await waitForFileMatch(path.join(fixtureRoot, '对照笔记.md'), /关闭分屏前也要保存/);
   assert.match(await fs.readFile(path.join(fixtureRoot, '对照笔记.md'), 'utf8'), /关闭分屏前也要保存/);
   await wysiwyg.click(); await page.keyboard.press('Control+A');
   await page.locator('.selection-toolbar').waitFor();
@@ -394,8 +402,7 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   await page.waitForSelector('text=文件发生外部修改');
   stage('conflict flow passed');
   await page.getByRole('button', { name: '保留我的内容' }).click();
-  await page.waitForTimeout(500);
-  assert.match(await fs.readFile(path.join(fixtureRoot, '研究笔记.md'), 'utf8'), /冲突后保留我的内容/);
+  await waitForFileMatch(path.join(fixtureRoot, '研究笔记.md'), /冲突后保留我的内容/);
   await page.getByPlaceholder('搜索文件名或笔记内容').fill('自动保存验证');
   await page.getByPlaceholder('搜索文件名或笔记内容').press('Enter');
   await page.waitForSelector('text=搜索结果');
@@ -403,7 +410,7 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   await page.getByText('研究读物.epub', { exact: false }).first().click();
   const epubFrame = page.frameLocator('.epub-viewer iframe').first();
   await epubFrame.getByText('第一章 开端').waitFor({ timeout: 20000 });
-  assert.match(await epubFrame.locator('body').evaluate(element => getComputedStyle(element).fontFamily), /Zhaoye Reading/);
+  assert.match(await epubFrame.locator('body').evaluate(element => getComputedStyle(element).fontFamily), /字体管家仿宋体 \(非商业使用\)/);
   const epubBeforeSidebar = await page.locator('.epub-viewer iframe').boundingBox(); assert.ok(epubBeforeSidebar);
   await page.getByRole('button', { name: '收起资料栏' }).first().click();
   await page.waitForTimeout(320);
@@ -535,8 +542,21 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   await page.waitForTimeout(240);
   assert.equal(await page.locator('input[aria-label="当前页码"]').inputValue(), pageBeforeZoom, 'Ctrl+滚轮缩小后应保持当前页');
   assert.equal(await visiblePdfPage(), Number(pageBeforeZoom), 'Ctrl+滚轮缩小后视口应仍位于当前页');
+  await application.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    globalThis.__fullscreenAudit = [];
+    for (const event of ['enter-full-screen', 'leave-full-screen']) win.on(event, () => globalThis.__fullscreenAudit.push({ event, state: win.isFullScreen() }));
+  });
+  await page.getByRole('button', { name: '进入全屏阅读' }).evaluate(button => { window.__fullscreenClicks = 0; button.addEventListener('click', () => window.__fullscreenClicks++); });
   await page.getByRole('button', { name: '进入全屏阅读' }).click();
-  await page.getByRole('button', { name: '退出全屏阅读' }).waitFor();
+  try { await page.getByRole('button', { name: '退出全屏阅读' }).waitFor(); }
+  catch (error) {
+    console.error('[fullscreen-audit]', await application.evaluate(({ BrowserWindow }) => ({ state: BrowserWindow.getAllWindows()[0].isFullScreen(), events: globalThis.__fullscreenAudit })), await page.evaluate(() => ({ clicks: window.__fullscreenClicks, label: document.querySelector('.zoom-control button:last-child')?.getAttribute('aria-label') })));
+    throw error;
+  }
+  await page.waitForFunction(() => document.querySelector('.app').dataset.fullscreen === 'true');
+  await page.keyboard.press('F6'); // Fullscreen deliberately hides reader controls until revealed.
+  await page.waitForFunction(() => document.querySelector('.app').dataset.chromeVisible === 'true');
   await page.getByRole('button', { name: '退出全屏阅读' }).click();
   await page.getByRole('button', { name: '进入全屏阅读' }).waitFor();
   await page.screenshot({ path: path.join(outputs, '照页-PDF连续阅读.png'), fullPage: true });
@@ -588,14 +608,14 @@ test('production UI opens original files, autosaves, searches, annotates and ret
     return { text: element.textContent, htmlLength: element.innerHTML.length, fontFamily: style.fontFamily, color: style.color, width: bounds.width, height: bounds.height, rightInset: pane.right - bounds.right, columnWidth: column?.width ?? 0 };
   });
   assert.match(previewState.text || '', /自动保存验证/);
-  assert.match(previewState.fontFamily, /Zhaoye Reading/);
+  assert.match(previewState.fontFamily, /字体管家仿宋体 \(非商业使用\)/);
   assert.ok(previewState.htmlLength > 20 && previewState.width > 300 && previewState.height > 300);
   assert.ok(previewState.rightInset <= 2, `preview scrollbar area should reach the pane's right edge: ${JSON.stringify(previewState)}`);
   assert.ok(previewState.columnWidth > 0 && previewState.columnWidth <= 882, `reading column remains centered and comfortably narrow: ${previewState.columnWidth}`);
   await page.screenshot({ path: path.join(outputs, '照页-预览.png'), fullPage: true });
   if (!process.env.ZHAOYE_CDP_URL) {
     await launchSecondInstance(executablePath, path.join(fixtureRoot, '对照笔记.md'));
-    await page.locator('.note-caption').filter({ hasText: '对照笔记.md' }).waitFor();
+    await page.locator('.document-tab.foreground-tab').filter({ hasText: '对照笔记.md' }).waitFor();
     await page.locator('.markdown-source-editor .cm-content').locator('.cm-line').filter({ hasText: '对照笔记' }).waitFor();
     await page.locator('.markdown-source-editor .cm-content').getByText('右栏已处理编辑和保存。', { exact: true }).waitFor();
   }

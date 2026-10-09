@@ -1,11 +1,11 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createRequire } = require('node:module');
+const { releaseDirectory } = require('./release-paths.cjs');
 
 const root = path.resolve(__dirname, '..');
 const staging = path.join(root, 'work', `package-${Date.now()}`);
-const defaultOutput = path.resolve(root, '..', '..', 'Documents', 'Codex', '2026-09-05', 'bang-w', 'outputs');
-const output = process.env.ZHAOYE_PACKAGE_OUTPUT ? path.resolve(process.env.ZHAOYE_PACKAGE_OUTPUT) : defaultOutput;
+const output = releaseDirectory(root, process.env.ZHAOYE_PACKAGE_OUTPUT);
 
 async function packageRoot(name, from) {
   const localRequire = createRequire(path.join(from, 'package.json'));
@@ -65,7 +65,7 @@ async function main() {
   await copyRuntime('tesseract.js', root, staging);
   const { packager } = await import('@electron/packager');
   const result = await packager({
-    icon: path.join(root, 'electron', 'assets', 'app.ico'),
+    icon: path.resolve(root, manifest.build.win.icon),
     dir: staging, name: 'ZuorenNotes', platform: 'win32', arch: 'x64',
     electronVersion: electron.manifest.version, electronZipDir: path.dirname(zip),
     out: output, overwrite: true, prune: false,

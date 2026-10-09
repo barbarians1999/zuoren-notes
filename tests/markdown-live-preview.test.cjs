@@ -35,6 +35,21 @@ test('table-like text without separator and tables in code remain source',async(
  }
 });
 
+test('each table widget collects only its own cells, including in a nested list', async () => {
+ for (const prefix of ['', '   ']) {
+  const first = '| A | B |\n' + prefix + '| --- | --- |\n' + prefix + '| x | y |';
+  const second = '| C | D |\n| --- | --- |\n| z | w |';
+  const text = 'cursor\n\n' + (prefix ? '1. ' : '') + first + '\n\n# Between\n\n' + second;
+  const { result } = await plan(text);
+  const tables = result.filter(item => item.spec.widget?.constructor.name === 'TableWidget');
+  assert.equal(tables.length, 2);
+  for (const table of tables) {
+   assert.equal(table.spec.widget.cells.length, 4);
+   assert.ok(table.spec.widget.cells.every(position => position >= table.from && position < table.to));
+  }
+ }
+});
+
 test('blockquotes render with quote styling while their markers stay editable',async()=>{
  const text='cursor\n\n> 引用第一行\n> 引用第二行';
  const inactive=await plan(text);

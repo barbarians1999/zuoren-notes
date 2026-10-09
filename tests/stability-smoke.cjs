@@ -1,3 +1,4 @@
+const { noteUI, focusNote, moreAction } = require('./noteUi.cjs');
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises'), path = require('node:path');
@@ -41,7 +42,7 @@ test('shared Markdown corpus, real IME, continuous edits, undo, saved revision a
   await fs.writeFile(note, 'cursor\n\n'); await fs.writeFile(other, 'other\n');
   const page = await launch([workspace.fixture]); const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.locator('.file-row').filter({ hasText: 'continuous.md' }).click();
-  const pane = page.locator('[data-pane-id=primary]'), editor = pane.locator('.cm-content'); await editor.waitFor();
+  const pane = noteUI(page, 'primary'), editor = pane.locator('.cm-content'); await editor.waitFor();
   for (const item of corpus) {
     await editor.click(); await page.keyboard.press('Control+a'); await pasteSource(editor, 'cursor\n\n' + item.source + '\n');
     await page.keyboard.press('Control+Home');
@@ -93,7 +94,14 @@ test('shared Markdown corpus, real IME, continuous edits, undo, saved revision a
   await page.locator('.file-row').filter({ hasText: 'other.md' }).click();
   await page.locator('.file-row').filter({ hasText: 'continuous.md' }).click();
   assert.equal(await wholeSource(page, editor), expected);
-  await page.keyboard.press('Control+End'); await page.keyboard.insertText('discard-canary');
+  await application.evaluate(() => {
+    const { createRequire }=process.mainModule.require('node:module');
+    const load=createRequire(process.mainModule.require('electron').app.getAppPath()+'/package.json');
+    const { FileStore }=load('./electron/storage.cjs');
+    const save=FileStore.prototype.saveNote;
+    FileStore.prototype.saveNote=async function(input) { FileStore.prototype.saveNote=save; throw Error('injected close write failure'); };
+  });
+  await editor.click(); await page.keyboard.press('Control+End'); await page.keyboard.insertText('discard-canary');
   await page.getByRole('button', { name: '关闭 continuous.md', exact: true }).click();
   await page.getByRole('button', { name: '放弃修改', exact: true }).click();
   await page.getByRole('button', { name: '关闭 continuous.md', exact: true }).waitFor({ state: 'detached' });

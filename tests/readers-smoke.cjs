@@ -3,6 +3,7 @@ const assert=require('node:assert/strict');const fs=require('node:fs/promises');
 const {spawnSync}=require('node:child_process');
 const {PDFDocument,PDFName,PDFString,StandardFonts,rgb}=require('pdf-lib');const JSZip=require('jszip');const {_electron:electron}=require('playwright');
 const {createSmokeWorkspace,cleanupSmokeWorkspace}=require('./smokeWorkspace.cjs');
+const {waitForFile}=require('./waitForFile.cjs');
 const appRoot=path.resolve(__dirname,'..');let smokeWorkspace,fixtureRoot,userData,application;
 async function makeFixture() {
   smokeWorkspace=await createSmokeWorkspace('readers-smoke');fixtureRoot=smokeWorkspace.fixture;userData=smokeWorkspace.userData;
@@ -80,11 +81,14 @@ test('PDF zoom, annotations and EPUB navigation survive module migration and clo
  await page.getByRole('button',{name:'保存图片摘录',exact:true}).click();
  await page.waitForFunction(()=>document.querySelector('.cm-content')?.textContent?.includes('回到原文'));
  await editor.click();await page.keyboard.press('Control+z');
- await page.waitForTimeout(1300);
  const notePath=path.join(fixtureRoot,'研究笔记.md');
+ await page.waitForFunction(()=>!document.querySelector('.cm-content')?.textContent.includes('回到原文'));
+ await waitForFile(notePath,text=>!text.includes('回到原文'));
  assert.doesNotMatch(await fs.readFile(notePath,'utf8'),/回到原文/,'first undo removes only the excerpt');
  assert.match(await fs.readFile(notePath,'utf8'),/PRE-EXCERPT/,'prior editing history survives the excerpt');
- await page.keyboard.press('Control+z');await page.waitForTimeout(1300);
+ await page.keyboard.press('Control+z');
+ await page.waitForFunction(()=>!document.querySelector('.cm-content')?.textContent.includes('PRE-EXCERPT'));
+ await waitForFile(notePath,text=>!text.includes('PRE-EXCERPT'));
  assert.doesNotMatch(await fs.readFile(notePath,'utf8'),/PRE-EXCERPT/,'second undo reaches prior typing');
  await page.locator('.file-row').filter({hasText:'研究读物.epub'}).click();
  await page.locator('.epub-viewer iframe').first().waitFor();

@@ -55,3 +55,22 @@ test('replace all handles empty replacement and literal dollar sequences', () =>
   assert.deepEqual(replaceAllLiteral('one one one', 'one', '', true), { text: '  ', count: 3 });
   assert.deepEqual(replaceAllLiteral('a+a+a+', 'a+', '[$&]', true), { text: '[$&][$&][$&]', count: 3 });
 });
+
+test('sparse case-fold offsets agree with the original per-code-point mapping', () => {
+  function reference(text, query, sensitive, limit) {
+    let folded = ''; const offsets = [];
+    for (let from = 0; from < text.length;) { const character = String.fromCodePoint(text.codePointAt(from)), to = from + character.length;
+      const mapped = sensitive ? character : character.toLowerCase(); folded += mapped;
+      for (let i = 0; i < mapped.length; i++) offsets.push({ from, to }); from = to;
+    }
+    const needle = sensitive ? query : query.toLowerCase(), result = []; let cursor = 0;
+    while (cursor <= folded.length - needle.length) { const at = folded.indexOf(needle, cursor); if (at < 0) break;
+      result.push({ from: offsets[at].from, to: offsets[at + needle.length - 1].to }); if (result.length >= limit) break; cursor = at + needle.length;
+    }
+    return result;
+  }
+  const texts = ['AİBC İİ end', '前🌙İ🙂𐐀ΣΟΣ后', 'i\u0307 İ I', 'x\ud83dy\ude00z', 'İİİ', 'ABC xyz'];
+  for (const text of texts) for (const query of ['i', 'İ', '\u0307', 'bc', '🌙', '🙂', '\ud83d', '\ude42', 'Σ', 'ΟΣ', '𐐨', 'end'])
+    for (const sensitive of [true, false]) for (const limit of [1, Infinity]) assert.deepEqual(findLiteralMatches(text, query, sensitive, limit), reference(text, query, sensitive, limit), JSON.stringify({ text, query, sensitive, limit }));
+  assert.deepEqual(replaceAllLiteral('İ X İ', 'i', 'Y'), { text: 'Y X Y', count: 2 });
+});

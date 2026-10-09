@@ -6,7 +6,10 @@ const path = require('node:path');
 app.disableHardwareAcceleration();
 app.whenReady().then(async () => {
   const output = path.join(__dirname, '..', 'electron', 'assets');
-  const svg = await fs.readFile(path.join(output, 'notebook-pencil.svg'), 'utf8');
+  // Optional sibling candidate names keep the shipping icon untouched.
+  const source = path.basename(process.argv[2] || 'notebook-pencil.svg');
+  const stem = path.basename(process.argv[3] || 'app');
+  const svg = await fs.readFile(path.join(output, source), 'utf8');
   const window = new BrowserWindow({ width: 1024, height: 1024, show: false,
     transparent: true, backgroundColor: '#00000000',
     webPreferences: { offscreen: true, backgroundThrottling: false, contextIsolation: true, sandbox: true } });
@@ -14,7 +17,7 @@ app.whenReady().then(async () => {
   // Wait for the offscreen compositor, not just the HTML load event.
   await window.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
   const image = await window.webContents.capturePage();
-  await fs.writeFile(path.join(output, 'app.png'), image.resize({ width: 512, height: 512, quality: 'best' }).toPNG());
+  await fs.writeFile(path.join(output, stem + '.png'), image.resize({ width: 512, height: 512, quality: 'best' }).toPNG());
   const sizes = [16, 24, 32, 48, 64, 128, 256];
   const frames = sizes.map(size => image.resize({ width: size, height: size, quality: 'best' }).toPNG());
   const directory = Buffer.alloc(6 + 16 * sizes.length);
@@ -27,6 +30,7 @@ app.whenReady().then(async () => {
     directory.writeUInt32LE(frames[index].length, start + 8); directory.writeUInt32LE(offset, start + 12);
     offset += frames[index].length;
   });
-  await fs.writeFile(path.join(output, 'app.ico'), Buffer.concat([directory, ...frames]));
-  window.destroy(); console.log('ICON_OK: app.png + app.ico (16/24/32/48/64/128/256)'); app.quit();
+  await fs.writeFile(path.join(output, stem + '.ico'), Buffer.concat([directory, ...frames]));
+  await fs.writeFile(path.join(output, stem + '-32.png'), frames[sizes.indexOf(32)]);
+  window.destroy(); console.log(`ICON_OK: ${stem}.png + ${stem}.ico (16/24/32/48/64/128/256)`); app.quit();
 }).catch(error => { console.error(error); app.exit(1); });
