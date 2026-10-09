@@ -6,12 +6,13 @@ import { NotePane } from '../editor/NotePane';
 import { createPortal } from 'react-dom';
 import type { NoteWorkspace, NoteGroupId } from './noteWorkspace';
 
-export function NoteGroupPane({ workspace, group, findCommand, onJump, insertRegister, scrollMemory, rememberScroll, onOpen, onNew, onRight, onSplit, hidden = false, tabsTarget, controlsTarget }: {
+export function NoteGroupPane({ workspace, group, findCommand, onJump, insertRegister, scrollMemory, rememberScroll, onOpen, onNew, onRight, onSplit, hidden = false, tabsTarget, controlsTarget, foreground = true, onFocus }: {
   workspace: NoteWorkspace; group: NoteGroupId; findCommand: FindCommand | null;
   onJump: (anchor: ReaderAnchor, path?: string) => void; insertRegister: MutableRefObject<(block: string) => boolean>;
   scrollMemory: MarkdownScrollMemory[]; rememberScroll: (entry: MarkdownScrollMemory) => void;
   onOpen: () => void; onNew: () => void; onRight: (path: string) => void; onSplit: () => void; hidden?: boolean;
   tabsTarget: HTMLElement | null; controlsTarget: HTMLElement | null;
+  foreground?: boolean; onFocus?: () => void;
 }) {
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [dropping, setDropping] = useState(false);
@@ -47,13 +48,13 @@ export function NoteGroupPane({ workspace, group, findCommand, onJump, insertReg
     } catch { /* unrelated drags do not change the workspace */ }
   };
   return <div ref={host} className={'note-group ' + (workspace.activeGroup === group ? 'active-group ' : '') + (dropping ? 'note-drop-target' : '')} data-note-group={group} style={hidden ? { display: 'none' } : undefined}
-    onPointerDownCapture={() => workspace.activeGroup !== group && workspace.activate(group)} onFocusCapture={() => workspace.activeGroup !== group && workspace.activate(group)}
+    onPointerDownCapture={() => { onFocus?.(); if (workspace.activeGroup !== group) workspace.activate(group); }} onFocusCapture={() => { onFocus?.(); if (workspace.activeGroup !== group) workspace.activate(group); }}
     onDragOver={event => { if (event.dataTransfer.types.includes('text/x-zuoren-note-view')) event.preventDefault(); }}
     onDragEnter={event => { if (event.dataTransfer.types.includes('text/x-zuoren-note-view')) setDropping(true); }}
     onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropping(false); }}
     onDrop={event => { if (event.dataTransfer.types.includes('text/x-zuoren-note-view')) drop(event); }}>
     {tabsTarget && createPortal(<div className="note-tab-cluster" data-tabs-group={group} role="tablist" aria-label={group === 'primary' ? '左栏笔记标签' : '右栏笔记标签'} onDragOver={event => event.preventDefault()} onDrop={event => { event.stopPropagation(); drop(event); }}>
-      {value.tabs.map(item => <div draggable key={item.id} className={'document-tab ' + (value.activeId === item.id ? 'active ' : '') + (workspace.activeGroup === group && value.activeId === item.id ? 'foreground-tab ' : '') + (item.preview ? 'preview-tab' : '')} data-view-id={item.id}
+      {value.tabs.map(item => <div draggable key={item.id} className={'document-tab ' + (value.activeId === item.id ? 'active ' : '') + (foreground && workspace.activeGroup === group && value.activeId === item.id ? 'foreground-tab ' : '') + (item.preview ? 'preview-tab' : '')} data-view-id={item.id}
         onDragStart={event => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/x-zuoren-note-view', JSON.stringify({ group, id: item.id })); }}
         onDrop={event => { event.stopPropagation(); drop(event, item.id); }}
         onContextMenu={event => { event.preventDefault(); setMenu({ id: item.id, x: event.clientX, y: event.clientY }); }}>

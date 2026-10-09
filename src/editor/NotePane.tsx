@@ -1,5 +1,6 @@
 import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ReducedMotionContext, usePanelMotion } from '../uiMotion';
+import { ReducedMotionContext } from '../uiMotion';
+import { OutlinePanel } from '../OutlinePanel';
 import { FileText } from 'lucide-react';
 import type { MarkdownScrollMemory, NoteRead, ReaderAnchor } from '../types';
 import { type NoteMode, type FindCommand } from '../readerContext';
@@ -20,7 +21,6 @@ import { taskToggleChange } from './markdownTasks';
 export function NotePane({ paneId, onActivate, findCommand, note, text, mode, setMode, onSave, onJump, revision, label, caption, scrollMemory, onScrollMemory, excerptRegister, hidden, sharedDocument, tab, unifiedHeader, headerTarget, headerControls }: { paneId: FindCommand['pane']; onActivate: (pane: FindCommand['pane']) => void; findCommand: FindCommand | null; note: NoteRead | null; text: string; mode: NoteMode; setMode: (mode: NoteMode) => void; onSave: () => void; onJump: (anchor: ReaderAnchor, fromNotePath?: string) => void; revision: number; label?: string; caption?: React.ReactNode; scrollMemory: MarkdownScrollMemory[]; onScrollMemory: (entry: MarkdownScrollMemory) => void; excerptRegister?: React.MutableRefObject<(block: string) => boolean>; hidden?: boolean; sharedDocument: NoteDocument | null; tab: NoteViewState | null; unifiedHeader?: boolean; headerTarget?: HTMLElement | null; headerControls?: React.ReactNode }) {
   const [outline, setOutline] = useState(false);
   const reducedMotion = useContext(ReducedMotionContext);
-  const outlineMotion = usePanelMotion(outline, reducedMotion, '100%', 200, () => document.querySelector(`[data-note-controls="${paneId}"] [data-outline-toggle]`) || host.current?.querySelector('[data-outline-toggle]') || null);
   const [headings, setHeadings] = useState<{ text: string; level: number; line?: number }[]>([]);
   const [findOpen, setFindOpen] = useState(false);
   const [replaceOpen, setReplaceOpen] = useState(false);
@@ -320,7 +320,12 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
     </div>}
     <div className="note-body" ref={host}>
       {!note ? <div className="empty-state"><FileText size={28}/><p>打开或新建 Markdown 笔记</p><small>编辑后自动保存</small></div> : <div className="note-content"><div className="note-editor-surface" style={{ display: mode === 'preview' ? 'none' : 'flex' }}><MarkdownSourceEditor notePath={note.path} onView={setSourceView} onSelectionChange={setSourceSelection} sharedDocument={sharedDocument!} tab={tab!}/></div>{mode === 'preview' && <MarkdownPreview notePath={note.path} text={text} onJump={stableJump} onToggleTask={toggleTask}/>}</div>}
-      {outlineMotion.present && <aside ref={outlineMotion.ref} aria-hidden={!outline} className="note-outline" aria-label="Markdown 大纲"><div className="outline-title">大纲</div>{headings.length ? headings.map((item, index) => <button key={index} style={{ paddingLeft: 10 + (item.level - 1) * 10 }} title={item.text} onClick={() => { if (mode === 'edit' && sourceView && item.line !== undefined) { const line = sourceView.state.doc.line(Math.min(item.line + 1, sourceView.state.doc.lines)); sourceView.dispatch({ selection: { anchor: line.from }, effects: CodeMirrorView.scrollIntoView(line.from, { y: 'start' }) }); sourceView.focus(); return; } const target = host.current?.querySelectorAll('.markdown-preview :is(h1,h2,h3,h4,h5,h6)')[index]; target?.scrollIntoView({ block: 'start', behavior: reducedMotion ? 'auto' : 'smooth' }); }}><small>{item.level}</small><span>{item.text}</span></button>) : <p>使用标题组织笔记后，目录会出现在这里。</p>}</aside>}
+      <OutlinePanel open={outline} label="Markdown 大纲" emptyText="使用标题组织笔记后，目录会出现在这里。"
+        returnFocus={() => document.querySelector(`[data-note-controls="${paneId}"] [data-outline-toggle]`) || host.current?.querySelector('[data-outline-toggle]') || null}
+        items={headings.map((item, index) => ({ id: String(index), label: item.text, depth: item.level - 1, indicator: String(item.level) }))}
+        onSelect={entry => { const index = Number(entry.id), item = headings[index]; if (!item) return;
+          if (mode === 'edit' && sourceView && item.line !== undefined) { const line = sourceView.state.doc.line(Math.min(item.line + 1, sourceView.state.doc.lines)); sourceView.dispatch({ selection: { anchor: line.from }, effects: CodeMirrorView.scrollIntoView(line.from, { y: 'start' }) }); sourceView.focus(); return; }
+          host.current?.querySelectorAll('.markdown-preview :is(h1,h2,h3,h4,h5,h6)')[index]?.scrollIntoView({ block: 'start', behavior: reducedMotion ? 'auto' : 'smooth' }); }}/>
     </div>
     {selectionToolbar && mode === 'edit' && sourceView && <div className="selection-toolbar" role="toolbar" aria-label="选中文本格式" style={{ left: selectionToolbar.left, top: selectionToolbar.top }} onPointerDown={event => event.preventDefault()}>
       <button title="加粗（Ctrl+B）" onClick={() => runInlineFormat('bold')}>B</button>

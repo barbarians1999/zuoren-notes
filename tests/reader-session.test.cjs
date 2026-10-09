@@ -17,6 +17,37 @@ function harness(overrides = {}) {
   return { session, adapter, saved };
 }
 
+test('closing a reader keeps it on failed flush and clears it only after a successful retry', async () => {
+  let fail = true;
+  const { session } = harness({ saveEpubMeta: async () => { if (fail) throw new Error('disk busy'); } });
+  await session.open('book.epub', 'epub');
+  const expected = session.currentEpub();
+  assert.equal(await session.updateEpub(meta => ({ ...meta, cfi: 'saved-position' })), false);
+  assert.equal(await session.close(expected), false);
+  assert.equal(session.currentEpub().path, 'book.epub');
+  fail = false;
+  assert.equal(await session.updateEpub(meta => ({ ...meta, cfi: 'saved-position' })), true);
+  assert.equal(await session.close(expected), true);
+  assert.equal(session.currentEpub(), null);
+});
+
+test('a slow close cannot clear a newer open, and repeated close has only one commit', async () => {
+  const gate = deferred();
+  const { session } = harness({ saveEpubMeta: async () => gate.promise });
+  await session.open('first.epub', 'epub');
+  const expected = session.currentEpub();
+  const write = session.updateEpub(meta => ({ ...meta, cfi: 'new-position' }));
+  const close = session.close(expected);
+  const opened = session.open('second.epub', 'epub');
+  gate.resolve(); await write;
+  assert.equal(await close, false);
+  assert.equal((await opened).status, 'opened');
+  assert.equal(session.currentEpub().path, 'second.epub');
+  assert.equal(await session.close(expected), false);
+  const current = session.currentEpub();
+  assert.deepEqual(await Promise.all([session.close(current), session.close(current)]), [false, true]);
+});
+
 test('a failed flush blocks switching and keeps the original reader until retry succeeds', async () => {
   let fail = true;
   const { session } = harness({ savePdfMeta: async () => { if (fail) throw new Error('disk busy'); } });

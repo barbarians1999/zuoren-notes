@@ -6,6 +6,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { _electron: electron } = require('playwright');
 const { createSmokeWorkspace, cleanupSmokeWorkspace } = require('./smokeWorkspace.cjs');
+const { platformFonts } = require('./platformFonts.cjs');
 
 const appRoot = path.resolve(__dirname, '..');
 let smokeWorkspace;
@@ -243,7 +244,11 @@ test('note font setting persists without rebuilding editors and context menus st
     await page.getByRole('combobox', { name: 'Markdown 正文字体' }).selectOption(value);
     assert.match(await fontFamily(preview), pattern);
     if (value === 'fangsong') assert.equal(await page.evaluate(() => document.fonts.check('18px "字体管家仿宋体 (非商业使用)"')), true, 'installed Font Manager FangSong family resolves');
-    if (value === 'hanyi-shufang-55w') assert.equal(await page.evaluate(() => document.fonts.check('18px "汉仪书仿 55W"')), true, 'installed HanYi 55W family resolves');
+    if (value === 'hanyi-shufang-55w') {
+      await page.evaluate(() => document.fonts.ready);
+      const fonts = await platformFonts(page, `document.querySelector('.note-pane[data-pane-id="primary"] .markdown-preview p')`);
+      assert.ok(fonts.some(font => font.postScriptName === 'HYShuFang-55W' && font.glyphCount > 0), 'actual Chinese body glyphs use HanYi 55W');
+    }
     assert.match(await fontFamily(preview.getByRole('heading', { name: '六级' })), /Zhaoye Heading/);
     assert.match(await fontFamily(secondary), pattern);
   }

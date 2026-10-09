@@ -4,9 +4,9 @@
 
 面向本地资料阅读与 Markdown 写作的 Windows 桌面笔记软件。以 Markdown 为核心，也可以在同一工作区阅读 PDF、EPUB，并把摘录整理进笔记。
 
-**[下载 Windows 安装版（0.3.2）](https://github.com/barbarians1999/zuoren-notes/releases/latest)** · [查看全部版本](https://github.com/barbarians1999/zuoren-notes/releases)
+**[下载 Windows 安装版（0.3.3）](https://github.com/barbarians1999/zuoren-notes/releases/latest)** · [查看全部版本](https://github.com/barbarians1999/zuoren-notes/releases)
 
-下方为左人笔记 0.3.2 的实际运行截图，笔记与书籍内容使用虚构的演示样本。
+下方为左人笔记 0.3.3 的实际运行截图，笔记与书籍内容使用演示样本。
 
 ## 功能预览
 

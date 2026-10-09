@@ -1,0 +1,10 @@
+/* Chromium groups HanYi 55W/65W under HYShuFang. Resolve the exact local
+   face by its PostScript/full name instead of selecting the family variant.
+   This references installed fonts only; no commercial font is distributed. */
+@font-face {
+  font-family: "Zuoren HanYi 55W";
+  src: local("HYShuFang-55W"), local("HYShuFang 55W"), local("汉仪书仿 55W");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}

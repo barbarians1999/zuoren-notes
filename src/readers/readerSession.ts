@@ -78,6 +78,20 @@ export class ReaderSession {
     return this.flushWrites();
   }
 
+  async close(expected: ActiveEpub | ActivePdf): Promise<boolean> {
+    const matches = () => this.snapshot.epub ? this.sameEpub(this.snapshot.epub, expected as ActiveEpub)
+      : !!this.snapshot.pdf && this.samePdf(this.snapshot.pdf, expected as ActivePdf);
+    if (!matches()) return false;
+    const generation = ++this.generation;
+    let closed = false;
+    await this.flushWrites(() => {
+      if (generation !== this.generation || !matches()) return;
+      this.publish({ pdf: null, epub: null, page: 1, scale: 1 });
+      closed = true;
+    });
+    return closed;
+  }
+
   private async flushWrites(commit?: () => void): Promise<boolean> {
     // Reader views capture transient position synchronously, then enqueue any
     // resulting metadata change through updatePdf/updateEpub before this waits.

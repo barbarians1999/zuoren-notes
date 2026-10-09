@@ -1,5 +1,5 @@
-import React, { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ReducedMotionContext, usePanelMotion } from '../uiMotion';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { OutlinePanel } from '../OutlinePanel';
 import { BookOpen, ChevronLeft, ChevronRight, Copy, Crop, List, Highlighter, Maximize2, MessageSquare, Minimize2, MousePointer2, Search, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react';
 import type { PdfAnchor, PdfAnnotation, PdfMeta, PdfRect } from '../types';
 import { reader, type ActivePdf, type OcrDialog } from '../readerContext';
@@ -32,8 +32,6 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
   const [pages, setPages] = useState(0), [tool, setTool] = useState<PdfTool>('select');
   const [pageDraft, setPageDraft] = useState(String(page));
   const [toc, setToc] = useState<{ title: string; depth: number; dest: any }[]>([]), [showToc, setShowToc] = useState(false);
-  const reducedMotion = useContext(ReducedMotionContext);
-  const tocMotion = usePanelMotion(showToc, reducedMotion, '-100%', 200, () => pane.current?.querySelector('[data-pdf-outline-toggle]') || null);
   const [searchOpen, setSearchOpen] = useState(false), [searchText, setSearchText] = useState('');
   const [searchCase, setSearchCase] = useState(false), [searching, setSearching] = useState(false);
   const [searchMatches, setSearchMatches] = useState<PdfSearchMatch[]>([]), [searchIndex, setSearchIndex] = useState(-1);
@@ -269,11 +267,14 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
     return () => { clearTimeout(timer); window.removeEventListener('reader-flush', flush); };
   }, [page, pages, pdf?.path]);
   async function goToDestination(dest: any) {
+    const source = document, identity = pdf?.data;
+    if (!source || !identity) return;
     try {
-      const resolved = typeof dest === 'string' ? await document.getDestination(dest) : dest;
+      const resolved = typeof dest === 'string' ? await source.getDestination(dest) : dest;
       if (!resolved) return;
-      const index = typeof resolved[0] === 'number' ? resolved[0] : await document.getPageIndex(resolved[0]); jump(index + 1);
-    } catch (error) { onMessage('目录位置无法读取：' + String(error)); }
+      const index = typeof resolved[0] === 'number' ? resolved[0] : await source.getPageIndex(resolved[0]);
+      if (latest.current.pdf?.data === identity) jump(index + 1);
+    } catch (error) { if (latest.current.pdf?.data === identity) onMessage('目录位置无法读取：' + String(error)); }
   }
   const submitPageDraft = () => {
     const parsed = Number(pageDraft.trim());
@@ -294,7 +295,7 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
     if (event.key === 'End' && pages) { event.preventDefault(); jump(pages); }
   }}>
     <div className="pane-toolbar pdf-navigation" role="group" aria-label="PDF 阅读工具" title={pdf?.name || 'PDF 阅读工具'}>
-      <button data-pdf-outline-toggle className="icon-button" aria-pressed={showToc} aria-label={showToc ? '收起 PDF 目录' : '展开 PDF 目录'} title={pdf ? `${pdf.name}\nPDF 目录` : 'PDF 目录'} onClick={() => setShowToc(value => !value)}><List size={17}/></button>
+      <button data-pdf-outline-toggle className="icon-button" aria-pressed={showToc} aria-label={showToc ? '收起 PDF 大纲' : '展开 PDF 大纲'} title={pdf ? `${pdf.name}\n${showToc ? '收起大纲' : '展开大纲'}` : '展开大纲'} onClick={() => setShowToc(value => !value)}><List size={17}/></button>
       <div className="toolbar-group pdf-page-navigation">
         <button className="icon-button" title="上一页（← / PageUp）" aria-label="上一页" onClick={() => jump(page - 1)}><ChevronLeft size={18}/></button>
         <span className="page-control"><span className="page-word">第</span><input ref={pageInput} aria-label="当前页码" inputMode="numeric" value={pageDraft} onChange={event => setPageDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); submitPageDraft(); } else if (event.key === 'Escape') { event.preventDefault(); setPageDraft(String(page)); (event.target as HTMLInputElement).blur(); } }} onBlur={() => setPageDraft(String(page))}/><span>/ {pages || '…'}<span className="page-word"> 页</span></span></span>
@@ -313,7 +314,6 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
     {searchOpen && <div className="pdf-find-bar" role="search" aria-label="查找当前 PDF"><Search size={15}/><input ref={searchInput} aria-label="PDF 查找文本" placeholder="在这份 PDF 中查找" value={searchText} onChange={event => setSearchText(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { setSearchOpen(false); setSearchText(''); pane.current?.focus(); } else if (event.key === 'Enter' && searchMatches.length) setSearchIndex(index => stepMatchIndex(searchMatches.length, index, event.shiftKey ? -1 : 1)); }}/><span className="pdf-find-progress" aria-live="polite">{searching ? `已检索 ${searchStatus.processed}/${searchStatus.totalPages} 页` : searchStatus.errors ? `${searchStatus.errors} 页无法提取文字` : ''}</span><span className="find-count" aria-live="polite">{searching ? `${searchStatus.totalMatches} 项` : searchStatus.totalMatches ? (searchStatus.truncated ? `${searchIndex + 1} / 5000 · 共 ${searchStatus.totalMatches}` : `${searchIndex + 1} / ${searchStatus.totalMatches}`) : '0 / 0'}</span><button className={searchCase ? 'selected' : ''} aria-label="PDF 搜索区分大小写" aria-pressed={searchCase} title="区分大小写" onClick={() => setSearchCase(value => !value)}>Aa</button><button aria-label="上一个 PDF 匹配" disabled={!searchMatches.length} onClick={() => setSearchIndex(index => stepMatchIndex(searchMatches.length, index, -1))}>↑</button><button aria-label="下一个 PDF 匹配" disabled={!searchMatches.length} onClick={() => setSearchIndex(index => stepMatchIndex(searchMatches.length, index, 1))}>↓</button><button aria-label="关闭 PDF 查找" title="关闭（Esc）" onClick={() => { setSearchOpen(false); setSearchText(''); pane.current?.focus(); }}>×</button></div>}
 
     <div className="pdf-reader-body">
-      {tocMotion.present && <aside ref={tocMotion.ref} aria-hidden={!showToc} className="pdf-outline" aria-label="PDF 目录"><div className="outline-title">目录</div>{toc.length ? toc.map((item,index) => <button key={index} style={{ paddingLeft: 10 + item.depth * 12 }} title={item.title} onClick={() => void goToDestination(item.dest)}>{item.title}</button>) : <><p>这份 PDF 没有内置目录，可按页跳转。</p>{Array.from({ length: pages },(_,index) => <button key={index} onClick={() => jump(index + 1)}>第 {index + 1} 页</button>)}</>}</aside>}
       <div className="pdf-canvas-wrap continuous-pdf" ref={scroll} onScroll={() => {
         if (restoringZoom.current) return;
         const host = scroll.current; if (!host) return;
@@ -323,6 +323,12 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
       }}>
         {!pdf ? <div className="empty-state"><BookOpen size={28}/><p>打开 PDF 或 EPUB 开始阅读</p></div> : !document ? <div className="empty-state">正在载入 PDF…</div> : Array.from({ length: pages }, (_, index) => <PdfPageSlot key={pdf.path + index} document={document} number={index+1} scale={scale} size={size} root={scroll} pinned={textSelection.pins.includes(index + 1)}><PdfPage dark={dark} document={document} pdf={pdf} page={index + 1} scale={scale} onMeta={onMeta} onShowAnnotation={showAnnotation} deleting={deleting} captureExcerpt={captureExcerpt} target={target} onMessage={onMessage} tool={tool} textSelection={textSelection.draft?.pages.find(part => part.page === index + 1) || null} search={currentSearch?.page === index + 1 ? { query: searchText.trim(), occurrence: currentSearch.occurrence, caseSensitive: searchCase } : null}/></PdfPageSlot>)}
       </div>
+      <OutlinePanel open={showToc} label="PDF 大纲" className="pdf-outline" emptyText={pdf ? '正在读取大纲…' : '请先打开 PDF。'}
+        introduction={pages > 0 && !toc.length ? '这份 PDF 没有内置目录，可按页跳转。' : undefined}
+        returnFocus={() => pane.current?.querySelector('[data-pdf-outline-toggle]') || null}
+        items={toc.length ? toc.map((item, index) => ({ id: String(index), label: item.title, depth: item.depth })) :
+          Array.from({ length: pages }, (_, index) => ({ id: String(index), label: `第 ${index + 1} 页`, depth: 0, active: page === index + 1 }))}
+        onSelect={item => { if (toc.length) void goToDestination(toc[Number(item.id)].dest); else jump(Number(item.id) + 1); }}/>
     </div>
     {textSelection.draft && <PdfPopover root={pane} anchor={() => visibleRect('.pdf-text-selection')} className="selection-actions pdf-text-actions">
       <button aria-label="复制 PDF 选中文字" onClick={() => void textSelection.copy()}><Copy size={14}/>复制</button>

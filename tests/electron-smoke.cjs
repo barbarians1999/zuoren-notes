@@ -232,7 +232,7 @@ test('production UI opens original files, autosaves, searches, annotates and ret
     text: getComputedStyle(document.querySelector('.markdown-source-editor .cm-content')).color,
     themeButton: getComputedStyle(document.querySelector('.theme-options button')).backgroundColor,
   }));
-  assert.equal(darkAppearance.text, 'rgb(222, 216, 204)');
+  assert.equal(darkAppearance.text, 'rgb(236, 233, 224)');
   assert.equal(darkAppearance.noteContent, 'rgb(0, 0, 0)');
   await page.screenshot({ path: path.join(outputs, '照页-黑暗模式.png'), fullPage: true });
   assert.equal(await page.getByRole('button', { name: '跟随系统', exact: true }).count(), 1);
@@ -448,8 +448,13 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   await page.mouse.wheel(0, -240);
   await epubFrame.getByText('第一章 开端').waitFor({ timeout: 20000 });
   await page.waitForTimeout(240);
-  await page.getByRole('button', { name: '增大字号' }).click();
-  await page.getByRole('button', { name: '下一节' }).click();
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  const epubSize = page.getByRole('slider', { name: '正文字体大小', exact: true });
+  await epubSize.focus(); await epubSize.press('ArrowRight');
+  const sharedSize = await epubSize.inputValue();
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.querySelector('.epub-pane')?.dataset.reflowing === 'false');
+  await page.getByRole('button', { name: '下一页', exact: true }).click();
   await epubFrame.getByText('第二章 继续阅读').waitFor({ timeout: 20000 });
   stage('epub navigation passed');
   await page.screenshot({ path: path.join(outputs, '照页-EPUB预览.png'), fullPage: true });
@@ -458,11 +463,11 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   assert.equal(sidecars.length, 1);
   const epubMeta = JSON.parse(await fs.readFile(path.join(fixtureRoot, '.reader', sidecars[0]), 'utf8'));
   assert.match(epubMeta.cfi, /^epubcfi\(/);
-  assert.equal(epubMeta.fontSize, 110);
+  assert.equal(epubMeta.fontSize, 100, 'legacy field is retained; the shared setting owns typography');
   await page.locator('.file-row').filter({ hasText: '研究笔记.md' }).click();
   await page.getByText('研究读物.epub', { exact: false }).first().click();
   await page.frameLocator('.epub-viewer iframe').first().getByText('第二章 继续阅读').waitFor({ timeout: 20000 });
-  await page.getByText('110%', { exact: true }).waitFor();
+  assert.equal(await page.frameLocator('.epub-viewer iframe').first().locator('p').first().evaluate(element => getComputedStyle(element).fontSize), sharedSize + 'px');
   await page.getByText('研究资料.pdf', { exact: false }).first().click();
   await page.waitForSelector('canvas');
   await page.waitForFunction(() => (document.querySelector('canvas')?.width || 0) > 500);
@@ -505,7 +510,7 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   await pdfFind.press('Escape');
   await page.locator('.pdf-find-bar').waitFor({ state: 'detached' });
   stage('pdf find passed');
-  await page.getByRole('button', { name: '展开 PDF 目录' }).click();
+  await page.getByRole('button', { name: '展开 PDF 大纲' }).click();
   await page.locator('.pdf-outline').getByRole('button', { name: 'Chapter two' }).click();
   await page.waitForFunction(() => document.querySelector('input[aria-label="当前页码"]').value === '2');
   stage('pdf navigation passed');
@@ -561,7 +566,7 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   await page.getByRole('button', { name: '进入全屏阅读' }).waitFor();
   await page.screenshot({ path: path.join(outputs, '照页-PDF连续阅读.png'), fullPage: true });
   await page.locator('.pdf-outline').getByRole('button', { name: 'Chapter one' }).click();
-  await page.getByRole('button', { name: '收起 PDF 目录' }).click();
+  await page.getByRole('button', { name: '收起 PDF 大纲' }).click();
   const regionButton = page.locator('.pdf-tools button').filter({ hasText: '框选' });
   await regionButton.click();
   const canvas = page.locator('canvas').first();

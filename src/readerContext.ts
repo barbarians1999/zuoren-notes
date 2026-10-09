@@ -1,3 +1,4 @@
+import './noteLocalFonts.css';
 import type { PdfMeta, EpubMeta, PdfAnnotation, WorkspaceDirectoryEntry } from './types';
 export type Layout = 'read' | 'note' | 'split';
 export type { NoteMode } from './types';
@@ -15,7 +16,7 @@ export const NOTE_BODY_FONTS: Record<NoteBodyFont, string> = {
   default: '"Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif',
   fangsong: '"字体管家仿宋体 (非商业使用)", "仿宋_GB2312", "仿宋", "FangSong", "华文仿宋", "STFangsong", serif',
   songti: '"宋体", "SimSun", "Songti SC", "STSong", "华文宋体", serif',
-  'hanyi-shufang-55w': '"汉仪书仿 55W", "字体管家仿宋体 (非商业使用)", "仿宋", "FangSong", serif',
+  'hanyi-shufang-55w': '"Zuoren HanYi 55W", "汉仪书仿 55W", "字体管家仿宋体 (非商业使用)", "仿宋", "FangSong", serif',
 };
 export const EPUB_MIN_SPREAD_WIDTH = 900;
 export type FindCommand = { pane: 'primary' | 'secondary'; mode: 'find' | 'replace'; sequence: number };

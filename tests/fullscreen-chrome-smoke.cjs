@@ -70,7 +70,11 @@ test('fullscreen chrome reveals without resizing readers and preserves settings,
       await page.getByRole('button', { name: '设置', exact: true }).click();
       await page.waitForFunction(() => {
         const el = document.querySelector('.workspace-mode-switch button.active');
-        return el && getComputedStyle(el).backgroundColor === 'rgba(0, 0, 0, 0)';
+        if (!el) return false;
+        const css = getComputedStyle(el), swatch = document.createElement('span');
+        swatch.style.color = 'var(--accent)'; el.append(swatch);
+        const ready = css.backgroundColor === 'rgba(0, 0, 0, 0)' && css.color === getComputedStyle(swatch).color;
+        swatch.remove(); return ready;
       });
       assert.equal(await page.locator('.workspace-mode-switch button.active').evaluate(el => {
         const css = getComputedStyle(el); const swatch = document.createElement('span'); swatch.style.color = 'var(--accent)'; el.append(swatch);

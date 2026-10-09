@@ -10,7 +10,7 @@ import { ConflictDialog, UnsavedDialog, TrashConfirmation } from './workspace/Do
 import { reader, NOTE_BODY_FONTS, type Layout, type ThemePreference, type NoteBodyFont, type ActivePdf, type ActiveEpub, type FileContextMenu, type InlineEntryEdit, type FindCommand } from './readerContext';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowLeft, BookOpen, ChevronRight, Copy, Folder, FolderOpen, FolderPlus, FolderTree, Maximize2, Minus, Monitor, Moon, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings2, Square, Sun, X } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Copy, Folder, FolderOpen, FolderPlus, FolderTree, Maximize2, Minus, Monitor, Moon, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings2, Square, Sun, X } from 'lucide-react';
 import { diagnostics } from './diagnostics.cjs';
 import { LatestRequest } from './asyncRequest.cjs';
 import { SessionWriter } from './sessionWriter.cjs';
@@ -51,6 +51,10 @@ applyTheme(resolveTheme(initialThemePreference, window.matchMedia('(prefers-colo
 function App() {
   const [noteTabsTarget, setNoteTabsTarget] = useState<HTMLDivElement | null>(null);
   const [noteControlsTarget, setNoteControlsTarget] = useState<HTMLDivElement | null>(null);
+  const [readerHeaderTarget, setReaderHeaderTarget] = useState<HTMLDivElement | null>(null);
+  const [activeSurface, setActiveSurface] = useState<'reader' | 'note'>('note');
+  const [readerClosing, setReaderClosing] = useState(false);
+  const readerCloseFlight = useRef(false);
   const [layout, setLayout] = useState<Layout>('split');
   const [sidebar, setSidebar] = useState(true);
   const [reduceMotion, setReduceMotion] = useState(() => { try { return localStorage.getItem('zhaoye-reduce-motion') === 'true'; } catch { return false; } });
@@ -117,6 +121,7 @@ function App() {
   const activePdf = readerSnapshot.pdf, activeEpub = readerSnapshot.epub;
   const page = readerSnapshot.page, scale = readerSnapshot.scale;
   const activeDoc = workspace.currentDocument();
+  const epubVisible = !!activeEpub && layout !== 'note';
 
   const secondNote = workspace.currentDocument('secondary')?.note || null;
   const noteRef = { current: activeDoc?.note || null };
@@ -329,7 +334,7 @@ function App() {
               if (result.status === 'opened' && result.warnings?.length) warn(result.warnings.join('；'));
             } catch { warn(`上次 EPUB 不可用，已跳过：${fromPath(session.activeEpub).name}`); }
           }
-          if (openSequence.current === restoring) setLayout(session.layout);
+          if (openSequence.current === restoring) { setLayout(session.layout); setActiveSurface(session.layout === 'read' ? 'reader' : 'note'); }
         } else if (settings.recentFiles?.length && !savedRoot) setFiles(settings.recentFiles.map(fromPath));
       } catch (error) { setMessage(`恢复上次位置失败：${error instanceof Error ? error.message : String(error)}`); }
       finally { setSessionReady(true); }
@@ -383,7 +388,7 @@ function App() {
           if (!(await readerSession.flush())) { setMessage('阅读进度或标注尚未保存成功，请重试后切换。'); return false; }
           releaseMutationBarrier(file.path); return true;
         });
-        if (tab && request === openSequence.current) setLayout('note');
+        if (tab && request === openSequence.current) { setLayout('note'); setActiveSurface('note'); }
       }
       catch (error) { setMessage(`无法打开：${String(error)}`); }
       return;
@@ -395,9 +400,24 @@ function App() {
       if (result.status === 'save-failed') { setMessage('阅读进度或标注尚未保存成功，请重试后切换。'); return; }
       if (result.status === 'opened' && result.warnings?.length) setMessage(result.warnings.join('；'));
       setLayout(workspace.currentDocument() ? 'split' : 'read');
+      setActiveSurface('reader');
     } catch (error) { setMessage(`无法打开：${String(error)}`); }
   }
   openEntryRef.current = openEntry;
+  async function closeEpub() {
+    const epub = readerSession.currentEpub();
+    if (!epub || readerCloseFlight.current || workspace.committing) return;
+    readerCloseFlight.current = true; setReaderClosing(true);
+    const request = ++openSequence.current;
+    try {
+      if (!(await readerSession.close(epub))) {
+        if (request === openSequence.current) setMessage('阅读进度或标注尚未保存成功，资料仍保留，请重试关闭。');
+        return;
+      }
+      if (request === openSequence.current) { setTarget(null); setLayout('note'); setActiveSurface('note'); }
+    } catch (error) { setMessage(`关闭资料前保存失败，资料仍保留：${String(error)}`); }
+    finally { readerCloseFlight.current = false; setReaderClosing(false); }
+  }
   async function changeLayout(next: Layout) {
     if (next === layout) return;
     const request = ++openSequence.current;
@@ -405,7 +425,7 @@ function App() {
       setMessage('阅读进度或标注尚未保存成功，请重试后切换。');
       return;
     }
-    if (request === openSequence.current) setLayout(next);
+    if (request === openSequence.current) { setLayout(next); setActiveSurface(next === 'read' ? 'reader' : 'note'); }
   }
   async function openWorkspace() {
     const selected = await reader().chooseWorkspace();
@@ -616,7 +636,7 @@ function App() {
           epub = readerSession.currentEpub();
         }
         if (!isCurrentRequest()) return;
-        setTarget(anchor); setLayout(noteRef.current || secondNote ? 'split' : 'read');
+        setTarget(anchor); setLayout(noteRef.current || secondNote ? 'split' : 'read'); setActiveSurface('reader');
         window.setTimeout(() => setTarget(current => current === anchor ? null : current), 8000);
         return;
       }
@@ -652,6 +672,10 @@ function App() {
       if (workspace.committing) return;
       if (event.isComposing || event.keyCode === 229 || !event.ctrlKey || event.altKey || event.metaKey || document.querySelector('[role="dialog"]') || settingsOpen) return;
       if (layout === 'read') return;
+      if (activeSurface === 'reader' && activeEpub && layout === 'split') {
+        if (event.key.toLowerCase() === 'w' && !event.shiftKey) { event.preventDefault(); event.stopPropagation(); void closeEpub(); }
+        return;
+      }
       if (event.key.toLowerCase() === 's' && !event.shiftKey && !event.defaultPrevented && (event.target as Element)?.closest?.('.note-workspace-bar')) {
         const doc = workspace.currentDocument(); if (doc) { event.preventDefault(); void doc.save(); }
       }
@@ -659,7 +683,7 @@ function App() {
       if (event.key.toLowerCase() === 'w' && !event.shiftKey) { const tab = workspace.current(); if (tab) { event.preventDefault(); event.stopPropagation(); void workspace.close(workspace.activeGroup, tab); } }
     };
     window.addEventListener('keydown', keys, true); return () => window.removeEventListener('keydown', keys, true);
-  }, [workspace, layout, settingsOpen]);
+  }, [workspace, layout, settingsOpen, activeSurface, activeEpub]);
 
   const visibleRecent = useMemo(() => query ? files.filter(file => file.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())) : files, [files, query]);
   const visibleDirectory = useMemo(() => {
@@ -698,6 +722,7 @@ function App() {
               <div className="theme-options" role="group" aria-label="外观主题">
                 {([
                   ['constructivist', '浅色', <Sun size={15}/>],
+                  ['constructivist-paper', '纸页红', <Sun size={15}/>],
                   ['constructivist-dark', '深色', <Moon size={15}/>],
                   ['system', '跟随系统', <Monitor size={15}/>],
                 ] as const).map(([value, label, icon]) => <button key={value} className={themePreference === value ? 'active' : ''} aria-pressed={themePreference === value} onClick={() => setThemePreference(value)}>{icon}<span>{label}</span></button>)}
@@ -722,7 +747,6 @@ function App() {
     </header>
     <div className={sidebarMotion.present ? 'body' : 'body sidebar-hidden'}>
       {sidebarMotion.present && <aside ref={sidebarMotion.ref} className="sidebar" aria-hidden={!sidebar}>
-        <div className="sidebar-head"><div><span>资料库</span><small>{files.length ? `${files.length} 个文件` : '本地文件'}</small></div></div>
         <div className="search"><Search size={16}/><input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => event.key === 'Enter' && void runSearch()} placeholder="搜索文件名或笔记内容" aria-label="搜索文件名或笔记内容"/>{query && <button aria-label="清空搜索" title="清空搜索" onClick={() => { setQuery(''); setResults([]); }}><X size={14}/></button>}</div>
         {root && directory && <div className="folder-navigation">
           <button className="folder-back" aria-label="返回上一级文件夹" title="返回上一级" disabled={!directory.parent} onClick={() => directory.parent && void loadDirectory(root, directory.parent)}><ArrowLeft size={16}/></button>
@@ -738,16 +762,19 @@ function App() {
         {!!results.length && <><div className="section-title">搜索结果</div>{results.map(result => <button className="result-row" key={result.path} onContextMenu={event => showContext(event, { ...result, kind: 'file' })} onClick={event => void openEntry(result, { replaceCurrentNote: !event.ctrlKey })} onDoubleClick={() => void openEntry(result)}><b>{result.name}</b><small>{result.snippet || '文件名匹配'}</small></button>)}</>}
       </aside>}
       <main className="main">
-        <div className="note-workspace-bar" aria-label="笔记标签与操作" style={layout === 'read' ? { display: 'none' } : undefined}>
-          <div className="document-tab-strip" ref={setNoteTabsTarget}/>
-          <div className="note-controls-slot" ref={setNoteControlsTarget}/>
+        <div className={'note-workspace-bar' + (epubVisible ? ' with-epub' : '') + (epubVisible && layout === 'split' ? ' reader-note-row' : '')} aria-label="资料标签与操作" style={{ ...(layout === 'read' && !epubVisible ? { display: 'none' } : {}), '--split-at': `${splitAt}%` } as React.CSSProperties}>
+          <div className="reader-header-slot" ref={setReaderHeaderTarget} style={!epubVisible ? { display: 'none' } : undefined}/>
+          <div className="note-header-slot" style={layout === 'read' ? { display: 'none' } : undefined}>
+            <div className="document-tab-strip" ref={setNoteTabsTarget}/>
+            <div className="note-controls-slot" ref={setNoteControlsTarget}/>
+          </div>
         </div>
-        {layout !== 'note' && activeEpub && <div className="reader-document-title"><BookOpen size={14}/>{activeEpub.name}</div>}
         <div className={'panes ' + layout + (layout === 'note' && workspace.groups.secondary.tabs.length ? ' dual-notes' : '')} style={{ '--split-at': `${splitAt}%` } as React.CSSProperties}>
-          {(layout === 'read' || layout === 'split') && (activeEpub ? <EpubPane key={activeEpub.path} epub={activeEpub} theme={resolvedTheme} noteBodyFont={noteBodyFont} onMeta={change => readerSession.updateEpub(change, activeEpub)} onMessage={setMessage} onExcerpt={insertEpubExcerpt} onSelectionAction={saveEpubSelection} excerptTarget={activeDoc ? (workspace.activeGroup === 'secondary' ? '摘录到右栏' : '摘录到当前笔记') : null} target={isEpubAnchor(target) ? target : null}/> : <PdfPane dark={THEMES[resolvedTheme].colorScheme === 'dark'} pdf={activePdf} page={page} setPage={value => readerSession.setPage(value)} scale={scale} setScale={value => readerSession.setScale(value)} fullscreen={windowState.fullscreen} onToggleFullscreen={() => { void reader().windowControl('fullscreen'); }} onMeta={change => activePdf ? readerSession.updatePdf(change, activePdf) : Promise.resolve(false)} captureExcerpt={capturePdfExcerpt} onTextAction={onPdfTextAction} canExcerpt={!!activeDoc && !activeDoc.blocked()} target={target && 'pdfId' in target ? target : null} onMessage={setMessage}/>)}
+          {(layout === 'read' || layout === 'split') && (activeEpub ? <EpubPane key={activeEpub.path} epub={activeEpub} theme={resolvedTheme} noteBodyFont={noteBodyFont} readingSize={readingSize} headerTarget={readerHeaderTarget} active={activeSurface === 'reader'} closing={readerClosing} onActivate={() => setActiveSurface('reader')} onClose={() => void closeEpub()} onMeta={change => readerSession.updateEpub(change, activeEpub)} onMessage={setMessage} onExcerpt={insertEpubExcerpt} onSelectionAction={saveEpubSelection} excerptTarget={activeDoc ? (workspace.activeGroup === 'secondary' ? '摘录到右栏' : '摘录到当前笔记') : null} target={isEpubAnchor(target) ? target : null}/> : <PdfPane dark={THEMES[resolvedTheme].colorScheme === 'dark'} pdf={activePdf} page={page} setPage={value => readerSession.setPage(value)} scale={scale} setScale={value => readerSession.setScale(value)} fullscreen={windowState.fullscreen} onToggleFullscreen={() => { void reader().windowControl('fullscreen'); }} onMeta={change => activePdf ? readerSession.updatePdf(change, activePdf) : Promise.resolve(false)} captureExcerpt={capturePdfExcerpt} onTextAction={onPdfTextAction} canExcerpt={!!activeDoc && !activeDoc.blocked()} target={target && 'pdfId' in target ? target : null} onMessage={setMessage}/>)}
           {layout === 'split' && <div className="splitter" role="separator" aria-label="调整阅读与笔记宽度" aria-orientation="vertical" onPointerDown={event => { const start = event.clientX; const initial = splitAt; const move = (next: PointerEvent) => setSplitAt(Math.min(75, Math.max(25, initial + (next.clientX - start) / window.innerWidth * 100))); const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); }; window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); }}/>} 
           {(['primary', 'secondary'] as const).map(group => <NoteGroupPane key={group} workspace={workspace} group={group}
             tabsTarget={noteTabsTarget} controlsTarget={noteControlsTarget}
+            foreground={!epubVisible || activeSurface === 'note'} onFocus={() => setActiveSurface('note')}
             hidden={layout === 'read' || (layout === 'split' ? workspace.activeGroup !== group : group === 'secondary' && !workspace.groups.secondary.tabs.length)}
             findCommand={findCommand?.pane === group ? findCommand : null} onJump={jumpTo}
             insertRegister={group === 'primary' ? primaryInsertExcerpt : secondInsertExcerpt}

@@ -57,6 +57,55 @@ test('single-row chrome routes to the focused view and stays usable across width
   await page.getByRole('button', { name: '浅色', exact: true }).click();
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await assertQuietPaneChrome(page);
+  assert.equal(await page.locator('.sidebar-head').count(), 0, 'remove redundant library title and duplicate file count');
+  const sidebarLayout = await page.locator('.sidebar').evaluate(sidebar => {
+    const search = sidebar.querySelector('.search'), css = getComputedStyle(sidebar);
+    return { first: sidebar.firstElementChild.className, gap: search.getBoundingClientRect().top - sidebar.getBoundingClientRect().top,
+      inset: parseFloat(css.paddingTop) + parseFloat(css.borderTopWidth) };
+  });
+  assert.equal(sidebarLayout.first, 'search');
+  assert.ok(Math.abs(sidebarLayout.gap - sidebarLayout.inset) < 1, 'search starts at the top sidebar padding, without a leftover header gap: ' + JSON.stringify(sidebarLayout));
+  assert.match(await page.locator('.sidebar .section-title').first().innerText(), /当前文件夹/);
+  await t.test('note mode and search hover brighten glyphs without a background tile', async () => {
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    const controls = page.locator('.note-controls-slot');
+    const buttons = controls.locator('.workspace-mode-switch button, .workspace-icon-action[aria-label="查找"]');
+    assert.equal(await buttons.count(), 3);
+    for (const theme of ['浅色', '深色']) {
+      await page.getByRole('button', { name: '设置', exact: true }).click();
+      await page.getByRole('button', { name: theme, exact: true }).click();
+      await page.getByRole('button', { name: '设置', exact: true }).click();
+      for (const button of await buttons.all()) {
+        await page.mouse.move(1, 1);
+        await button.hover();
+        await button.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        const state = await button.evaluate(async element => {
+          await Promise.all(element.getAnimations().map(animation => animation.finished.catch(() => {})));
+          const css = getComputedStyle(element), probe = document.createElement('span');
+          probe.style.color = element.classList.contains('active') ? 'var(--accent)' : 'var(--hover-text)';
+          element.append(probe);
+          const expectedColor = getComputedStyle(probe).color; probe.remove();
+          return { background: css.backgroundColor, color: css.color, icon: getComputedStyle(element.querySelector('svg')).color,
+            expectedColor, offset: new DOMMatrixReadOnly(css.transform).m42 };
+        });
+        assert.equal(state.background, 'rgba(0, 0, 0, 0)', 'hover must not create a gray tile');
+        assert.equal(state.color, state.expectedColor, 'hover uses the theme accent, preserving active-mode red');
+        assert.equal(state.icon, state.color, 'icon and text brighten together');
+        assert.equal(state.offset, -1, 'enabled motion gives a subtle one-pixel lift');
+      }
+    }
+    await page.getByRole('button', { name: '设置', exact: true }).click();
+    const reduceMotion = page.getByRole('checkbox', { name: /减少动效/ });
+    await reduceMotion.check();
+    await page.getByRole('button', { name: '设置', exact: true }).click();
+    await buttons.last().hover();
+    assert.equal(await buttons.last().evaluate(element => getComputedStyle(element).transform), 'none', 'reduced motion disables hover movement');
+    await page.getByRole('button', { name: '设置', exact: true }).click();
+    await reduceMotion.uncheck();
+    await page.getByRole('button', { name: '浅色', exact: true }).click();
+    await page.getByRole('button', { name: '设置', exact: true }).click();
+    await page.mouse.move(1, 1);
+  });
   await page.screenshot({ path: path.join(out, 'editor-single-constructivist.png') });
   assert.equal(await page.getByRole('button', { name: '更多笔记操作', exact: true }).count(), 0);
   await left.getByRole('button', { name: '展开大纲', exact: true }).click();

@@ -71,6 +71,18 @@ test('excerpt destinations reject another active pane and become available again
   await ws.close('primary', left); assert.equal(target.valid(), false);
 });
 
+test('explicit pane focus cancels an earlier tab-open focus request', async () => {
+  const { ws } = fixture(); const left = await ws.open(a, 'primary', true);
+  const right = await ws.open(b, 'secondary', true);
+  assert.equal(ws.focusRequest, right.id);
+  ws.activate('primary');
+  assert.equal(ws.focusRequest, null);
+  assert.equal(ws.consumeFocus(right.id), false);
+  assert.equal(ws.activeGroup, 'primary');
+  ws.activate('primary', left.id);
+  assert.equal(ws.consumeFocus(left.id), true, 'deliberate tab activation still focuses the editor');
+});
+
 test('view mode changes publish once and focus requests are consumed by their intended view', async () => {
   const { ws } = fixture(); const tab = await ws.open(a, 'primary', true);
   const before = ws.getSnapshot(); ws.setMode('primary', tab.id, 'preview');

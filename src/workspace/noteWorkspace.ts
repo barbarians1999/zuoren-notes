@@ -32,7 +32,10 @@ export class NoteWorkspace {
   activate(group: NoteGroupId, id?: string) {
     if (id && !this.groups[group].tabs.some(tab => tab.id === id)) return;
     this.interaction++;
-    this.activeGroup = group; if (id) { this.invalidate(group); this.groups[group].activeId = id; this.focusId = id; } this.notify();
+    // Focusing another pane supersedes a queued tab-open focus request. A
+    // delayed animation frame must not steal focus back to the previous pane.
+    this.focusId = id || null;
+    this.activeGroup = group; if (id) { this.invalidate(group); this.groups[group].activeId = id; } this.notify();
   }
   pin(tab: NoteViewState) { if (tab.preview) { tab.preview = false; this.notify(); } }
   consumeFocus(id: string) {

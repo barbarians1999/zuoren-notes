@@ -103,10 +103,10 @@ test('short UI motion preserves editor history, panel focus, PDF page and reduce
     const input = page.getByRole('textbox', { name: '当前页码', exact: true }); await input.fill('2'); await input.press('Enter');
     await page.waitForFunction(() => document.querySelector('.page-control input')?.value === '2' && document.querySelector('.pdf-canvas-wrap').scrollTop > 400);
     const top = await page.locator('.pdf-canvas-wrap').evaluate(el => el.scrollTop);
-    await page.getByRole('button', { name: '展开 PDF 目录', exact: true }).click();
+    await page.getByRole('button', { name: '展开 PDF 大纲', exact: true }).click();
     await page.waitForFunction(() => !document.querySelector('.pdf-outline')?.getAnimations().length);
     await screenshot('motion-pdf-outline');
-    await page.getByRole('button', { name: '收起 PDF 目录', exact: true }).click(); await page.locator('.pdf-outline').waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: '收起 PDF 大纲', exact: true }).click(); await page.locator('.pdf-outline').waitFor({ state: 'detached' });
     assert.equal(await input.inputValue(), '2');
     assert.equal(await page.locator('.pdf-canvas-wrap').evaluate(el => el.scrollTop), top);
     await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; w.unmaximize(); w.setSize(1000, 700); });

@@ -174,7 +174,12 @@ test('PDF native dragging, page geometry, safe text actions, copy and menu delet
     assert.equal(newMarks[0].anchor.quote, 'Bravo selection second line 1\nCharlie selection third line 1');
     assert.equal(newMarks[1].anchor.quote, 'Alpha selection first line 2\nBravo selection second line 2');
     assert.equal((await application.evaluate(() => globalThis.__pdfAudit.writes)).slice(before).filter(item => item.annotations.length === count).length, 1, 'cross-page annotations use one write');
-    await waitForFile(note, text => (text.match(/回到原文/g) || []).length === 2);
+    try { await waitForFile(note, text => (text.match(/回到原文/g) || []).length === 2); }
+    catch (error) {
+      console.error('cross-page persistence diagnostic', { saved: await fs.readFile(note, 'utf8'),
+        renderer: await page.evaluate(() => ({ label: document.querySelector('.markdown-save-state')?.textContent, text: document.querySelector('.cm-content')?.textContent, message: document.querySelector('.toast')?.textContent })) });
+      throw error;
+    }
     const editor = page.locator('.cm-content'); await editor.click(); await page.keyboard.press('Control+z');
     await waitForFile(note, text => text === original); assert.equal(await fs.readFile(note, 'utf8'), original);
     // Copy inside the note must not use the PDF snapshot.

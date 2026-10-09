@@ -51,16 +51,25 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
   await t.test('book name is a tooltip; marking tools directly share the page and zoom row', async () => {
     await sameRow();
     assert.equal(await bar.getAttribute('title'), filename);
-    assert.ok((await bar.getByRole('button', { name: '展开 PDF 目录', exact: true }).getAttribute('title')).includes(filename));
+    assert.ok((await bar.getByRole('button', { name: '展开 PDF 大纲', exact: true }).getAttribute('title')).includes(filename));
     for (const name of ['文字高亮', '框选', '批注', '选择']) {
       const button = tools.getByRole('button', { name, exact: true });
       await button.click(); assert.equal(await button.getAttribute('aria-pressed'), 'true');
       assert.equal(await tools.locator('[aria-pressed="true"]').count(), 1);
     }
-    await bar.getByRole('button', { name: '展开 PDF 目录', exact: true }).click();
+    await bar.getByRole('button', { name: '展开 PDF 大纲', exact: true }).click();
     await page.locator('.pdf-outline').waitFor();
-    await bar.getByRole('button', { name: '收起 PDF 目录', exact: true }).click();
+    const panel = page.getByRole('complementary', { name: 'PDF 大纲', exact: true });
+    assert.equal(await panel.locator('.outline-title').innerText(), '大纲');
+    const panelBounds = await panel.boundingBox(), viewportBounds = await page.locator('.pdf-canvas-wrap').boundingBox();
+    assert.ok(panelBounds.x >= viewportBounds.x + viewportBounds.width - 1, 'PDF outline uses the same right-hand edge as EPUB and notes');
+    await panel.getByRole('button', { name: '第 2 页', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('[aria-label="当前页码"]')?.value === '2');
+    assert.equal(await bar.getByRole('textbox', { name: '当前页码', exact: true }).inputValue(), '2', 'books without embedded outlines keep page navigation');
+    await panel.getByRole('button', { name: '第 2 页', exact: true }).focus();
+    await bar.getByRole('button', { name: '收起 PDF 大纲', exact: true }).click();
     await page.locator('.pdf-outline').waitFor({ state: 'hidden' });
+    assert.equal(await bar.locator('[data-pdf-outline-toggle]').evaluate(button => document.activeElement === button), true);
     const number = bar.getByRole('textbox', { name: '当前页码', exact: true });
     await number.fill('2'); await number.press('Enter');
     await page.waitForFunction(() => document.querySelector('[data-pdf-page="2"] canvas')?.width > 0);
@@ -78,7 +87,7 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
     await page.waitForTimeout(250);
     await sameRow();
     assert.equal(await tools.getByRole('button', { name: '文字高亮', exact: true }).locator('span').isVisible(), false);
-    for (const name of ['展开 PDF 目录', '上一页', '下一页', '选择', '文字高亮', '框选', '批注', '在 PDF 中查找', '缩小', '放大', '进入全屏阅读']) {
+    for (const name of ['展开 PDF 大纲', '上一页', '下一页', '选择', '文字高亮', '框选', '批注', '在 PDF 中查找', '缩小', '放大', '进入全屏阅读']) {
       const button = bar.getByRole('button', { name, exact: true });
       await button.scrollIntoViewIfNeeded();
       const rect = await button.boundingBox(), bounds = await bar.boundingBox();
