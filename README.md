@@ -1,18 +1,46 @@
 # 左人笔记
 
-左人笔记是一款面向本地资料阅读与 Markdown 写作的 Windows 桌面软件，使用 Electron、React、TypeScript 和 CodeMirror 构建。
+<img src="electron/assets/app-constructivist.png" width="112" align="right" alt="左人笔记图标" />
 
-## 功能
+面向本地资料阅读与 Markdown 写作的 Windows 桌面笔记软件。以 Markdown 为核心，也可以在同一工作区阅读 PDF、EPUB，并把摘录整理进笔记。
 
-- Markdown 连续编辑与即时预览、撤销和自动保存
-- PDF 阅读、全文查找、选字高亮、批注与摘录
-- EPUB 双页阅读、目录和全书搜索
-- 双栏笔记、标签切换、深浅主题、字体与阅读位置恢复
-- 本地文件管理；原始笔记和书籍保留在用户自己的文件夹中
+**[下载 Windows 安装版（0.3.2）](https://github.com/barbarians1999/zuoren-notes/releases/latest)** · [查看全部版本](https://github.com/barbarians1999/zuoren-notes/releases)
 
-## 开发
+> 下方为功能界面示意图，用于展示主要工作流程；不是应用实际运行截图。
 
-需要 Node.js 与 pnpm。安装依赖后可运行：
+## 功能预览
+
+### Markdown 写作
+
+![Markdown 编辑界面示意](docs/previews/markdown.svg)
+
+提供接近 Obsidian 的 Live Preview 编辑方式：在 Markdown 源文本中直接写作，标题、列表、引用、表格等格式在编辑时即时呈现，并支持撤销与自动保存。
+
+### PDF 阅读与摘录
+
+![PDF 阅读界面示意](docs/previews/pdf.svg)
+
+支持页码跳转、缩放、全文查找、文字选择、高亮、批注和摘录；深色模式下可切换深色阅读效果。摘录可进入当前笔记，方便边读边整理。
+
+### EPUB 阅读
+
+![EPUB 阅读界面示意](docs/previews/epub.svg)
+
+支持目录导航、双页阅读、滚轮或方向键翻页、全书搜索，以及把选段摘录到笔记。
+
+## 主要特点
+
+- **本地文件优先**：笔记和书籍保存在你自己的文件夹中，不要求使用云服务。
+- **写作与阅读连贯**：Markdown、PDF、EPUB 和笔记分栏协作，阅读摘录可回到笔记中继续编辑。
+- **保护编辑内容**：自动保存、撤销、恢复稿和外部文件冲突保护，尽量避免意外丢失修改。
+- **专注阅读**：支持阅读位置恢复、PDF 标注与 EPUB 目录和搜索。
+- **Windows 桌面应用**：提供安装版，并支持从文件或文件夹打开资料。
+
+## 获取与开发
+
+从 [GitHub Releases](https://github.com/barbarians1999/zuoren-notes/releases/latest) 下载最新的 Windows 安装包。
+
+开发环境需要 Node.js 与 pnpm：
 
 ```powershell
 pnpm install
@@ -20,7 +48,7 @@ pnpm build
 pnpm start
 ```
 
-运行与本地构建输出：
+常用验证与打包命令：
 
 ```powershell
 pnpm test
@@ -28,4 +56,4 @@ pnpm test:readers
 pnpm package:installer
 ```
 
-项目目前不附带开源许可证；如需再分发源码或构建产物，请先确认第三方字体及依赖的许可条件。
+项目目前未附带开源许可证；如需再分发源码或构建产物，请先确认第三方字体及依赖的许可条件。

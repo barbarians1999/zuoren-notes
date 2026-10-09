@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="650" viewBox="0 0 1200 650" role="img" aria-labelledby="title desc">
+  <title id="title">左人笔记 PDF 阅读界面示意</title>
+  <desc id="desc">构成主义风格的 PDF 阅读界面，展示目录、页码、缩放、搜索与文字高亮。</desc>
+  <rect width="1200" height="650" rx="18" fill="#eee9da"/>
+  <rect width="1200" height="60" rx="18" fill="#111"/><rect y="40" width="1200" height="20" fill="#111"/>
+  <text x="26" y="39" fill="#f5f0df" font-family="sans-serif" font-size="21" font-weight="700">左人笔记</text>
+  <rect x="149" y="12" width="82" height="36" rx="4" fill="#c9232d"/><text x="167" y="36" fill="#fff8e7" font-family="sans-serif" font-size="16" font-weight="700">阅读</text>
+  <text x="254" y="36" fill="#d9d3c5" font-family="sans-serif" font-size="16">笔记</text><text x="324" y="36" fill="#d9d3c5" font-family="sans-serif" font-size="16">对照</text>
+  <text x="920" y="36" fill="#d9d3c5" font-family="sans-serif" font-size="15">PDF 阅读 · 文字高亮 · 摘录</text>
+  <rect y="60" width="250" height="590" fill="#e4dece"/>
+  <text x="24" y="104" fill="#111" font-family="sans-serif" font-size="18" font-weight="700">目录与标注</text>
+  <rect x="14" y="124" width="222" height="38" rx="5" fill="#fbf8ed"/><text x="30" y="149" fill="#736b5c" font-family="sans-serif" font-size="14">搜索本书内容</text>
+  <text x="27" y="202" fill="#c9232d" font-family="sans-serif" font-size="15" font-weight="700">第 3 章　劳动与生活</text>
+  <text x="42" y="244" fill="#514b40" font-family="sans-serif" font-size="14">3.1　劳动过程</text>
+  <text x="42" y="280" fill="#514b40" font-family="sans-serif" font-size="14">3.2　社会关系</text>
+  <rect x="14" y="300" width="222" height="42" rx="5" fill="#c9232d"/><text x="30" y="327" fill="#fff8e7" font-family="sans-serif" font-size="14" font-weight="700">标注　阅读摘录</text>
+  <text x="24" y="385" fill="#756d5e" font-family="sans-serif" font-size="13">当前笔记</text><text x="24" y="410" fill="#111" font-family="sans-serif" font-size="14">阅读摘录.md</text>
+  <rect x="250" y="60" width="950" height="52" fill="#f7f3e8"/>
+  <text x="278" y="93" fill="#514b40" font-family="sans-serif" font-size="15">‹　　第</text><rect x="350" y="71" width="62" height="31" rx="4" fill="#fff" stroke="#c8bfad"/><text x="370" y="93" fill="#111" font-family="sans-serif" font-size="15">52</text><text x="422" y="93" fill="#514b40" font-family="sans-serif" font-size="15">/ 141 页　　›</text>
+  <text x="849" y="93" fill="#514b40" font-family="sans-serif" font-size="15">−　100%　＋　⌕　⛶</text>
+  <rect x="250" y="112" width="950" height="48" fill="#fbf8ed"/>
+  <rect x="274" y="120" width="80" height="32" rx="4" fill="#111"/><text x="294" y="142" fill="#fff8e7" font-family="sans-serif" font-size="14">选择</text>
+  <text x="380" y="142" fill="#514b40" font-family="sans-serif" font-size="14">✎ 文字高亮</text><text x="514" y="142" fill="#514b40" font-family="sans-serif" font-size="14">▢ 框选</text><text x="617" y="142" fill="#514b40" font-family="sans-serif" font-size="14">▱ 批注</text>
+  <rect x="250" y="160" width="950" height="490" fill="#d4d0c5"/>
+  <rect x="530" y="178" width="402" height="449" rx="2" fill="#fffdf5"/>
+  <text x="582" y="224" fill="#111" font-family="serif" font-size="17" font-weight="700">第三章　劳动与社会关系</text>
+  <g fill="#37332c" font-family="serif" font-size="13">
+    <text x="582" y="267">劳动不仅是物质资料的生产过程，</text><text x="582" y="291">也是人们在一定社会关系中展开的</text><text x="582" y="315">共同活动。理解劳动，需要同时看</text><text x="582" y="339">见具体行动及其背后的社会条件。</text>
+    <text x="582" y="390">阅读者可以在页面中选择文字，</text><text x="582" y="414">将重要段落保存为高亮或批注，</text><text x="582" y="438">并把摘录整理到当前 Markdown 笔记。</text>
+    <text x="582" y="489">标注与笔记各自保存；摘录带有</text><text x="582" y="513">来源位置，便于之后返回原文查阅。</text>
+  </g>
+  <rect x="581" y="379" width="300" height="20" fill="#f4d45e" opacity=".72"/>
+  <rect x="581" y="403" width="280" height="20" fill="#f4d45e" opacity=".72"/>
+  <rect x="560" y="559" width="342" height="48" rx="6" fill="#111"/>
+  <text x="580" y="589" fill="#fff8e7" font-family="sans-serif" font-size="14">复制　　高亮　　摘录到笔记</text>
+</svg>
