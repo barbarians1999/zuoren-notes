@@ -249,7 +249,7 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
     await editor.press('Control+z'); await waitForFile(note, text => !text.includes('UNDO-PRESERVED'));
     assert.equal(await fs.readFile(note, 'utf8'), originalNote);
     await page.locator('.file-row').filter({ hasText: 'book.epub' }).click();
-    await page.waitForFunction(() => !document.querySelector('.epub-loading'));
+    await page.waitForFunction(() => !document.querySelector('.epub-loading') && !!document.querySelector('.epub-viewer iframe') && document.querySelector('.epub-pane')?.dataset.currentChapter === '第二章');
     assert.equal(await paragraphSize(), '22px');
     assert.equal(await page.locator('.epub-pane').getAttribute('data-current-chapter'), '第二章', 'reopen restores the saved chapter');
     await waitForAnchor(savedAnchor, 'reopen restores the exact saved text, not just its chapter');

@@ -86,7 +86,9 @@ test('fullscreen chrome reveals without resizing readers and preserves settings,
     await page.locator('.cm-content').click();
     await page.keyboard.press('F11');
     await page.waitForFunction(() => document.querySelector('.app').dataset.fullscreen === 'true' && document.querySelector('.app').dataset.chromeVisible === 'false');
-    assert.equal(await page.locator('.note-workspace-bar').evaluate(el => Math.round(el.getBoundingClientRect().top)), parseFloat(chromeGeometry.expectedTopbarHeight), 'fullscreen note row starts directly below the shared topbar height');
+    // The hidden row is translated during exit. Its layout inset, rather
+    // than an arbitrary in-flight visual position, must use the shared token.
+    assert.equal(await page.locator('.note-workspace-bar').evaluate(el => parseFloat(getComputedStyle(el).top)), parseFloat(chromeGeometry.expectedTopbarHeight), 'fullscreen note row starts directly below the shared topbar height');
     await screenshot('note-fullscreen-hidden');
     const editorBounds = await page.locator('.cm-editor').boundingBox();
     await show();
