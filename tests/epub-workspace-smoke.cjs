@@ -80,13 +80,18 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
       const bounds = viewer.getBoundingClientRect();
       const steps = cfi.split('!')[1].replace(/\).*/, '').split('/').filter(Boolean);
       return [...viewer.querySelectorAll('iframe')].some(frame => {
-        let node = frame.contentDocument.documentElement;
+        const doc = frame.contentDocument;
+        let node = doc?.documentElement;
         for (const step of steps) {
+          // A layout change may briefly expose an empty or different-spine
+          // iframe. It is not proof that the saved text is visible yet.
+          if (!node) return false;
           const index = parseInt(step, 10);
           node = index % 2 ? [...node.childNodes].filter(n => n.nodeType === 3)[(index - 1) / 2] : node.children[index / 2 - 1];
         }
         const offset = Number(steps.at(-1).split(':')[1] || 0);
-        const range = frame.contentDocument.createRange(); range.setStart(node, offset); range.setEnd(node, offset + 1);
+        if (!node || node.nodeType !== 3 || offset < 0 || offset >= node.textContent.length) return false;
+        const range = doc.createRange(); range.setStart(node, offset); range.setEnd(node, offset + 1);
         const local = range.getBoundingClientRect(), outer = frame.getBoundingClientRect();
         return outer.left + local.left < bounds.right && outer.left + local.right > bounds.left &&
           outer.top + local.top < bounds.bottom && outer.top + local.bottom > bounds.top;

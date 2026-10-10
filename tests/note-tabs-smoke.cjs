@@ -96,9 +96,11 @@ test('per-pane tabs keep history, shared saves, focus, drag, blanks and restart 
     await page.keyboard.press('ArrowLeft'); await page.waitForTimeout(300);
     await openRight('a.md'); await right().getByRole('button',{name:'切换到预览',exact:true}).click(); await right().locator('.markdown-preview:not(.preview-loading)').waitFor();
     const out = process.env.ZUOREN_SCREENSHOT_OUTPUT || workspace.outputs; await fs.mkdir(out,{recursive:true});
-    await page.screenshot({path:path.join(out,'tabs-wide.png')});
+    await page.bringToFront();
+    await page.screenshot({path:path.join(out,'tabs-wide.png'), timeout:30000});
     await application.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].setSize(860,680)); await page.waitForTimeout(200);
-    await page.screenshot({path:path.join(out,'tabs-narrow.png')});
+    await page.bringToFront();
+    await page.screenshot({path:path.join(out,'tabs-narrow.png'), timeout:30000});
     const bar = page.locator('.note-workspace-bar');
     const add = await page.getByRole('button', {name:'新建空白标签',exact:true}).boundingBox(), bounds = await bar.boundingBox();
     assert.ok(add && bounds && add.x>=bounds.x && add.x+add.width<=bounds.x+bounds.width, 'new-tab action remains inside the unified bar');
