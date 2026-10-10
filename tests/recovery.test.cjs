@@ -10,7 +10,7 @@ const recoveryId = '019c6e27-e55b-43d1-87d8-4e01f1f75043';
 const uuid = () => recoveryId;
 
 async function fixture() {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'zhaoye-recovery-'));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'zhaoye-recovery-')));
   const notePath = path.join(root, '原笔记.md');
   await fs.writeFile(notePath, '# 原文\n', 'utf8');
   const store = new FileStore();

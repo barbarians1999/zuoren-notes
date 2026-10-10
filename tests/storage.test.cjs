@@ -29,7 +29,7 @@ test('reader identity cache reuses stable files and rejects stale PDF/EPUB metad
 });
 
 async function fixture() {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'zhaoye-reader-'));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'zhaoye-reader-')));
   await fs.mkdir(path.join(root, '子文件夹'));
   await fs.writeFile(path.join(root, '中文笔记.md'), Buffer.from('\ufeff标题\r\n第二行\r\n', 'utf8'));
   await fs.writeFile(path.join(root, '子文件夹', '下一级笔记.md'), '下一级内容', 'utf8');
