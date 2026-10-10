@@ -81,6 +81,13 @@ test('native packaged app retains Markdown saves/undo, readers, Finder opening a
       await page.locator('.cm-content').press('Meta+ArrowDown');
       await page.keyboard.insertText('\nNative quit pending save.');
       const exited=new Promise(resolve=>application.process().once('exit',resolve));
+      await application.evaluate(({app,BrowserWindow,ipcMain})=>{
+        globalThis.__nativeQuitEvents=[];
+        app.on('before-quit',()=>globalThis.__nativeQuitEvents.push('before-quit'));
+        app.on('will-quit',()=>globalThis.__nativeQuitEvents.push('will-quit'));
+        BrowserWindow.getAllWindows()[0].on('close',()=>globalThis.__nativeQuitEvents.push('window-close'));
+        ipcMain.on('confirm-close',()=>globalThis.__nativeQuitEvents.push('confirm-close'));
+      });
       // CDP keyboard input does not invoke macOS native menu accelerators.
       // Exercise the actual Quit menu role (the native Cmd+Q entry point).
       await application.evaluate(({Menu,BrowserWindow})=>{
@@ -90,7 +97,13 @@ test('native packaged app retains Markdown saves/undo, readers, Finder opening a
         const window=BrowserWindow.getFocusedWindow();
         quit.click({triggeredByAccelerator:true},window,window?.webContents);
       });
-      await Promise.race([exited,new Promise((_,reject)=>setTimeout(()=>reject(new Error('Native Quit did not pass the close/save gate')),15000))]);
+      try {
+        await Promise.race([exited,new Promise((_,reject)=>setTimeout(()=>reject(new Error('Native Quit did not pass the close/save gate')),15000))]);
+      } catch(error) {
+        console.error('[native-quit]',await application.evaluate(({BrowserWindow})=>({events:globalThis.__nativeQuitEvents,windows:BrowserWindow.getAllWindows().map(w=>({destroyed:w.isDestroyed(),visible:w.isVisible()}))})).catch(String));
+        console.error('[renderer-quit]',await page.evaluate(()=>({body:document.body.innerText.slice(-2400),events:window.readerDiagnostics?.snapshot().slice(-20)})).catch(String));
+        throw error;
+      }
       application=null;
       assert.ok((await fs.readFile(second,'utf8')).includes('Native quit pending save.'));
     } else { await application.close(); application=null; }
