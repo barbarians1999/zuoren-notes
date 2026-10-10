@@ -54,18 +54,25 @@ test('startup maximizes even with a saved small restore size and window controls
       await page.waitForFunction(() => !document.querySelector('.settings-popover'));
     };
     const assertWindowFeedback = async () => {
-      for (const button of await page.locator('.window-controls > button').all()) {
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send('DOM.enable'); await cdp.send('CSS.enable');
+      const document = await cdp.send('DOM.getDocument');
+      for (const [index, button] of (await page.locator('.window-controls > button').all()).entries()) {
         await app.evaluate(({ BrowserWindow }) => {
           const window = BrowserWindow.getAllWindows()[0]; window.show(); window.focus();
         });
         await page.mouse.move(300, 250);
         const before = await button.boundingBox();
         await button.hover();
+        // This assertion checks CSS, not OS pointer ownership. Hold the pseudo
+        // state while sampling so focus changes on a shared desktop cannot
+        // invalidate the snapshot. Window clicks below still use real input.
+        const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: document.root.nodeId, selector: `.window-controls > button:nth-child(${index + 1})` });
+        await cdp.send('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: ['hover'] });
         // Hover can return before Chromium starts the color transition. Poll
         // the final visual state rather than sampling a transitional frame.
         const elementHandle = await button.elementHandle();
         const snapshot = await page.waitForFunction(element => {
-          if (!element.matches(':hover')) return false;
           const app = element.closest('.app'), probe = document.createElement('span');
           probe.style.color = app.dataset.theme === 'constructivist' ? 'var(--hover-text)' : 'var(--topbar-hover)';
           element.append(probe); const expected = getComputedStyle(probe).color; probe.remove();
@@ -97,6 +104,7 @@ test('startup maximizes even with a saved small restore size and window controls
         await page.keyboard.press('Tab');
         assert.equal(await button.evaluate(element => element === document.activeElement), true);
         assert.equal(await button.evaluate(element => getComputedStyle(element).outlineStyle), 'solid');
+        await cdp.send('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: [] });
       }
       const motion = await page.locator('.app').getAttribute('data-motion');
       await page.locator('.app').evaluate(element => { element.dataset.motion = 'reduced'; });
@@ -104,6 +112,7 @@ test('startup maximizes even with a saved small restore size and window controls
       assert.equal(await page.locator('.window-close > svg').evaluate(element => new DOMMatrixReadOnly(getComputedStyle(element).transform).m42), 0);
       await page.locator('.app').evaluate((element, value) => { element.dataset.motion = value; }, motion);
       await page.mouse.move(300, 250);
+      await cdp.detach();
     };
     for (const name of ['浅色', '纸页红', '深色']) {
       await palette(name);
