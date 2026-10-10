@@ -182,7 +182,12 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
     await page.locator('.epub-search-panel').waitFor(); await outline.waitFor({ state: 'hidden' });
     await page.getByRole('button', { name: '展开 EPUB 大纲', exact: true }).click();
     await page.locator('.epub-search-panel').waitFor({ state: 'detached' });
+    await outline.evaluate(element => {
+      for (const animation of element.getAnimations()) { animation.pause(); animation.currentTime = 0; }
+    });
     await outline.getByRole('button', { name: '第二章', exact: true }).focus();
+    await assertOutlineLayout();
+    await outline.evaluate(element => { for (const animation of element.getAnimations()) animation.finish(); });
     await page.keyboard.press('Escape'); await outline.waitFor({ state: 'hidden' });
     assert.equal(await page.getByRole('button', { name: '展开 EPUB 大纲', exact: true }).evaluate(button => button === document.activeElement), true, 'closing a focused outline returns focus to its toggle');
     await assertOutlineLayout();

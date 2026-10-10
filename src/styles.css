@@ -645,9 +645,11 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   text-align: center;
 }
 
-.epub-content-row { position: relative; display: flex; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+.epub-content-row { position: relative; display: flex; flex: 1; min-height: 0; min-width: 0; overflow: clip; }
 /* Navigation overlays the paginated viewport: opening/closing it must not
-   change the dimensions observed by epub.js or trigger another pagination. */
+   change the dimensions observed by epub.js or trigger another pagination.
+   Clip (not hidden) also prevents focus during panel motion from scrolling
+   the viewport sideways to bring a translated outline item into view. */
 .note-outline.epub-outline { position: absolute; z-index: 6; inset: 0 0 0 auto; width: min(186px, calc(100% - 16px)); }
 .note-outline button[aria-current="location"] { color: var(--accent); background: transparent; }
 
