@@ -22,7 +22,8 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
   const filename = 'A-long-PDF-title-with-no-dedicated-heading-row.pdf';
   const pdf = await PDFDocument.create(), font = await pdf.embedFont(StandardFonts.Helvetica);
   for (let n = 1; n <= 4; n++) pdf.addPage([595, 842]).drawText(`Toolbar audit page ${n}`, { font, size: 22, x: 72, y: 750 });
-  await fs.writeFile(path.join(workspace.fixture, filename), await pdf.save());
+  const originalPdf = Buffer.from(await pdf.save());
+  await fs.writeFile(path.join(workspace.fixture, filename), originalPdf);
   await fs.writeFile(path.join(workspace.fixture, 'note.md'), '# Note\n\nKeep this note intact.\n');
   const executablePath = process.env.ZHAOYE_SMOKE_EXECUTABLE || path.join(appRoot, 'node_modules/electron/dist/electron.exe');
   application = await _electron.launch({ executablePath, args: process.env.ZHAOYE_SMOKE_EXECUTABLE ? [workspace.fixture] : [appRoot, workspace.fixture], env: { ...process.env, ZHAOYE_TEST_USER_DATA: workspace.userData } });
@@ -80,6 +81,57 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
     await page.getByRole('button', { name: '关闭 PDF 查找', exact: true }).click();
     await sameRow(); await page.screenshot({ path: path.join(output, 'pdf-toolbar-wide.png') });
   });
+  await t.test('up/down scroll the focused PDF, repeat, clamp at boundaries and keep page navigation', async () => {
+    const viewport = page.locator('.pdf-canvas-wrap'), pane = page.locator('.pdf-pane');
+    const top = () => viewport.evaluate(element => element.scrollTop);
+    await viewport.evaluate(element => { element.scrollTop = 100; });
+    await page.waitForFunction(() => document.querySelector('[aria-label="当前页码"]')?.value === '1');
+    await pane.evaluate(element => element.focus({ preventScroll: true }));
+    await page.keyboard.press('ArrowDown'); assert.equal(await top(), 164);
+    await page.keyboard.press('ArrowUp'); assert.equal(await top(), 100);
+    await page.keyboard.down('ArrowDown'); await page.keyboard.down('ArrowDown'); await page.keyboard.up('ArrowDown');
+    assert.equal(await top(), 228, 'held-key repeats move once per event without extra browser scrolling');
+    await page.keyboard.press('Control+ArrowDown'); assert.equal(await top(), 228, 'modified arrows are not intercepted');
+    const ignored = await pane.evaluate(element => {
+      const before = element.querySelector('.pdf-canvas-wrap').scrollTop;
+      const composing = new KeyboardEvent('keydown', { key: 'ArrowDown', isComposing: true, bubbles: true, cancelable: true });
+      element.dispatchEvent(composing);
+      const handled = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true });
+      handled.preventDefault(); element.dispatchEvent(handled);
+      return { before, after: element.querySelector('.pdf-canvas-wrap').scrollTop, composingPrevented: composing.defaultPrevented };
+    });
+    assert.equal(ignored.after, ignored.before); assert.equal(ignored.composingPrevented, false);
+    await viewport.evaluate(element => { element.scrollTop = 0; });
+    await page.keyboard.press('ArrowUp'); assert.equal(await top(), 0);
+    await viewport.evaluate(element => { element.scrollTop = element.scrollHeight; });
+    const bottom = await top(); await page.keyboard.press('ArrowDown'); assert.equal(await top(), bottom);
+    await page.keyboard.press('Home');
+    await page.waitForFunction(() => document.querySelector('[aria-label="当前页码"]')?.value === '1');
+    const firstPageTop = await top();
+    for (let i = 0; i < 20; i++) await page.keyboard.press('ArrowDown');
+    await page.waitForFunction(() => document.querySelector('[aria-label="当前页码"]')?.value === '2');
+    assert.equal(await top(), firstPageTop + 1280, 'crossing a page updates its number without snapping to the page top');
+    await page.keyboard.press('ArrowRight');
+    await page.waitForFunction(() => document.querySelector('[aria-label="当前页码"]')?.value === '3');
+    await page.keyboard.press('ArrowLeft');
+    await page.waitForFunction(() => document.querySelector('[aria-label="当前页码"]')?.value === '2');
+    const number = bar.getByRole('textbox', { name: '当前页码', exact: true });
+    await number.focus(); const beforeInput = await top();
+    await number.press('ArrowDown'); await number.press('ArrowUp'); assert.equal(await top(), beforeInput, 'page input keeps its native arrow behavior');
+    await bar.getByRole('button', { name: '在 PDF 中查找', exact: true }).click();
+    const search = page.getByRole('textbox', { name: 'PDF 查找文本', exact: true });
+    const beforeSearch = await top(); await search.press('ArrowDown'); await search.press('ArrowUp');
+    assert.equal(await top(), beforeSearch, 'search input does not scroll the PDF');
+    await page.getByRole('button', { name: '关闭 PDF 查找', exact: true }).click();
+    await bar.getByRole('button', { name: '展开 PDF 大纲', exact: true }).click();
+    const outline = page.locator('.pdf-outline'); await outline.waitFor();
+    await outline.evaluate(async element => { await Promise.all(element.getAnimations().map(animation => animation.finished)); });
+    await outline.getByRole('button', { name: '第 2 页', exact: true }).focus();
+    const beforeOutline = await top(); await page.keyboard.press('ArrowDown');
+    assert.equal(await top(), beforeOutline, 'outline focus does not invoke reading-position shortcuts');
+    await bar.getByRole('button', { name: '收起 PDF 大纲', exact: true }).click();
+    await outline.waitFor({ state: 'hidden' });
+  });
   await t.test('split and narrow panes retain one row with reachable labeled icons', async () => {
     await page.locator('.file-row').filter({ hasText: 'note.md' }).dblclick();
     await layout('对照').click();
@@ -98,6 +150,9 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
     await bar.evaluate(el => { el.scrollLeft = 0; });
     await page.screenshot({ path: path.join(output, 'pdf-toolbar-split-narrow.png') });
     assert.equal(await page.locator('.cm-content').count(), 1);
+    const beforeEditing = await page.locator('.pdf-canvas-wrap').evaluate(element => element.scrollTop);
+    await page.locator('.cm-content').focus(); await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowUp');
+    assert.equal(await page.locator('.pdf-canvas-wrap').evaluate(element => element.scrollTop), beforeEditing, 'note editing never moves the PDF');
   });
   await t.test('dark reading and fullscreen preserve the merged tools', async () => {
     await layout('阅读').click();
@@ -142,5 +197,6 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
     assert.equal(await bar.locator('.zoom-control button:last-child').getAttribute('aria-label'), '进入全屏阅读');
   });
   assert.equal(await fs.readFile(path.join(workspace.fixture, 'note.md'), 'utf8'), '# Note\n\nKeep this note intact.\n');
+  assert.deepEqual(await fs.readFile(path.join(workspace.fixture, filename)), originalPdf);
   assert.deepEqual(errors, []);
 });

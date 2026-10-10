@@ -14,6 +14,7 @@ const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, millise
 const uiSmokeFiles = [
   'tests/window-startup-smoke.cjs', 'tests/path-reuse-smoke.cjs', 'tests/note-tabs-smoke.cjs',
   'tests/fullscreen-chrome-smoke.cjs', 'tests/epub-workspace-smoke.cjs', 'tests/epub-search-smoke.cjs',
+  'tests/pdf-toolbar-smoke.cjs',
 ];
 let logs;
 
@@ -93,7 +94,7 @@ async function main() {
       installerPayload: { ...integrity.packagedFilesComparedToCurrentBuild, embeddedAppAsarMatchesTestedProgram: integrity.installerEmbeddedAppAsarMatchesTestedProgram, executableAndInstallerIconsMatchConfiguredSource: true },
       installer: path.basename(installer), installerBytes: integrity.installerBytes, installerSha256: integrity.installerSha256,
       appAsarSha256: integrity.testedAppAsarSha256, executableSha256: await hash(executable),
-      scope: args.profile === 'ui' ? 'Directed UI, fullscreen, EPUB workspace/search, platform package, shared tab lifecycle and path-reuse checks; NOT full release regression' : 'Existing source and packaged regression suites' };
+      scope: args.profile === 'ui' ? 'Directed UI, PDF keyboard/toolbar, fullscreen, EPUB workspace/search, platform package, shared tab lifecycle and path-reuse checks; NOT full release regression' : 'Existing source and packaged regression suites' };
     await json(reportFile, report);
     await fs.copyFile(path.join(integrityDirectory, 'installer-integrity.json'), path.join(logs, 'installer-integrity.json'));
     await fs.copyFile(reportFile, path.join(logs, 'VALIDATION.json'));

@@ -286,9 +286,21 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
     setPageDraft(String(Math.max(1, Math.min(pages || parsed, parsed))));
   };
   return <section className={'pane pdf-pane' + (textSelection.draft ? ' pdf-text-selected' : '')} ref={pane} tabIndex={-1} onPointerDownCapture={event => { if (!(event.target instanceof Element) || !event.target.closest('button, input, textarea')) pane.current?.focus({ preventScroll: true }); }} onKeyDown={event => {
-    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+    if (event.defaultPrevented || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    if (event.target instanceof HTMLElement && (event.target.isContentEditable || event.target.closest('input, textarea, select'))) return;
     if (event.key === 'Escape') { textSelection.clear(); setAnnotationMenu(null); event.preventDefault(); event.stopPropagation(); return; }
     if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      const host = scroll.current;
+      // Do not steal the outline/menu's arrow navigation. Clicking the page
+      // focuses the pane without moving its viewport; descendants also work.
+      if (!document || !host || !(event.target instanceof Node) || (event.target !== pane.current && !host.contains(event.target))) return;
+      event.preventDefault(); event.stopPropagation();
+      // Explicit scrolling wins over a pending zoom position restoration.
+      zoomToken.current += 1; zoomAnchor.current = null; restoringZoom.current = false;
+      host.scrollTop += event.key === 'ArrowDown' ? 64 : -64;
+      return;
+    }
     if (event.key === 'PageDown' || event.key === 'ArrowRight') { event.preventDefault(); jump(page + 1); }
     if (event.key === 'PageUp' || event.key === 'ArrowLeft') { event.preventDefault(); jump(page - 1); }
     if (event.key === 'Home') { event.preventDefault(); jump(1); }
