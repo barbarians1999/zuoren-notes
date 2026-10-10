@@ -58,7 +58,7 @@ async function main() {
   await fs.writeFile(path.join(staging,'package.json'),JSON.stringify({name:manifest.name,productName:manifest.productName,version:manifest.version,description:manifest.description,main:manifest.main,dependencies:{'tesseract.js':manifest.dependencies['tesseract.js']}},null,2));
   const icon = await createIcon(staging);
   const { build, Platform, Arch } = require('electron-builder');
-  await build({projectDir:staging,targets:Platform.MAC.createTarget(['dmg'],architecture==='arm64'?Arch.arm64:Arch.x64),config:{
+  await build({projectDir:staging,publish:'never',targets:Platform.MAC.createTarget(['dmg'],architecture==='arm64'?Arch.arm64:Arch.x64),config:{
     appId:manifest.build.appId,productName:manifest.productName,asar:true,npmRebuild:false,electronVersion:electron.manifest.version,
     files:[...manifest.build.files,'node_modules/**/*'],directories:{output},fileAssociations:manifest.build.fileAssociations,
     mac:{icon,category:'public.app-category.productivity',identity:null,hardenedRuntime:false,gatekeeperAssess:false,artifactName:'ZuorenNotes-${version}-macOS-${arch}.${ext}'},

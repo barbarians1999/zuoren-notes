@@ -44,10 +44,11 @@ test('native packaged app retains Markdown saves/undo, readers, Finder opening a
     const packageFiles=['electron/main.cjs','electron/preload.cjs','electron/session.cjs','src/sessionState.cjs','src/pathIdentity.cjs','dist/index.html','electron/assets/app-constructivist.png'];
     const expected=Object.fromEntries(await Promise.all(packageFiles.map(async file=>[file,hash(await fs.readFile(path.join(root,file)))])));
     const integrity=await application.evaluate(({app},files)=>{
-      const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'); const base=app.getAppPath();
+      const load=process.mainModule.require.bind(process.mainModule);
+      const fs=load('node:fs'),path=load('node:path'),crypto=load('node:crypto'); const base=app.getAppPath();
       const hashes=Object.fromEntries(files.map(file=>[file,crypto.createHash('sha256').update(fs.readFileSync(path.join(base,file))).digest('hex')]));
       const ocrFiles=fs.readdirSync(path.join(base,'dist/ocr'));
-      const ocrModule=require.resolve('tesseract.js',{paths:[base]});
+      const ocrModule=load('node:module').createRequire(path.join(base,'package.json')).resolve('tesseract.js');
       return {hashes,ocrFiles,ocrModule};
     },packageFiles);
     assert.deepEqual(integrity.hashes,expected);
