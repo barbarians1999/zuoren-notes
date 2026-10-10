@@ -58,6 +58,18 @@ test('startup maximizes even with a saved small restore size and window controls
         await page.mouse.move(300, 250);
         const before = await button.boundingBox();
         await button.hover();
+        // Hover can return before Chromium starts the color transition. Poll
+        // the final visual state rather than sampling a transitional frame.
+        await page.waitForFunction(() => {
+          const element = document.querySelector('.window-controls > button:hover');
+          if (!element) return false;
+          const app = element.closest('.app'), probe = document.createElement('span');
+          probe.style.color = app.dataset.theme === 'constructivist' ? 'var(--hover-text)' : 'var(--topbar-hover)';
+          element.append(probe); const expected = getComputedStyle(probe).color; probe.remove();
+          const css = getComputedStyle(element), icon = getComputedStyle(element.querySelector('svg'));
+          return css.color === expected && icon.color === expected
+            && new DOMMatrixReadOnly(icon.transform).m42 === (app.dataset.motion === 'full' ? -1 : 0);
+        });
         const feedback = await button.evaluate(async element => {
           await Promise.all(element.getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {})));
           const app = element.closest('.app'), probe = document.createElement('span');
