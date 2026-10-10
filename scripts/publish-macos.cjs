@@ -2,6 +2,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
+const { releaseForTag } = require('./release-support.cjs');
 const repository=process.env.GITHUB_REPOSITORY;
 const tag=process.env.RELEASE_TAG;
 const token=process.env.GH_TOKEN;
@@ -36,7 +37,8 @@ async function main() {
   const checksumText=downloads.filter(item=>item.name.endsWith('.dmg')).map(item=>`${item.sha256}  ${item.name}`).join('\n')+'\n';
   await fs.writeFile(checksumFile,checksumText);
   downloads.push({file:checksumFile,name:checksumName,sha256:sha256(Buffer.from(checksumText))});
-  const release=await api(`releases/tags/${tag}`);
+  const release=await releaseForTag(api,tag);
+  if (!release) throw new Error('Create the Windows release draft first');
   const windows=release.assets.filter(asset=>!asset.name.includes('macOS')).map(asset=>({id:asset.id,name:asset.name,size:asset.size,digest:asset.digest}));
   for(const item of downloads) {
     const existing=release.assets.find(asset=>asset.name===item.name);
@@ -52,7 +54,7 @@ async function main() {
   const begin=original.indexOf(start),finish=original.indexOf(end);
   const body=begin>=0&&finish>=begin ? original.slice(0,begin)+note+original.slice(finish+end.length) : original+'\n\n'+note;
   await api(`releases/${release.id}`,'PATCH',{body});
-  const final=await api(`releases/tags/${tag}`);
+  const final=await api(`releases/${release.id}`);
   for(const previous of windows) {
     const asset=final.assets.find(item=>item.id===previous.id);
     if(!asset || asset.name!==previous.name || asset.size!==previous.size || asset.digest!==previous.digest) throw new Error('Windows asset changed unexpectedly');

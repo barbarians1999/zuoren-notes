@@ -49,4 +49,16 @@ function passed(text) {
   return count;
 }
 
-module.exports = { options, changes, checkMac, passed };
+// The tag endpoint omits draft releases, even for an authenticated owner.
+async function releaseForTag(api, tag) {
+  for (let page = 1; page <= 100; page++) {
+    const releases = await api(`releases?per_page=100&page=${page}`);
+    const matches = releases.filter(release => release.tag_name === tag);
+    if (matches.length > 1) throw Error('Multiple releases use ' + tag + '; inspect drafts before continuing');
+    if (matches.length) return matches[0];
+    if (releases.length < 100) return null;
+  }
+  throw Error('Release lookup exceeded pagination limit');
+}
+
+module.exports = { options, changes, checkMac, passed, releaseForTag };

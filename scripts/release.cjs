@@ -5,7 +5,7 @@ const crypto = require('node:crypto');
 const { spawn, execFileSync } = require('node:child_process');
 const { createReadStream, createWriteStream } = require('node:fs');
 const { releaseDirectory } = require('./release-paths.cjs');
-const { options, changes, checkMac, passed } = require('./release-support.cjs');
+const { options, changes, checkMac, passed, releaseForTag } = require('./release-support.cjs');
 const root = path.resolve(__dirname, '..');
 const git = process.env.ZUOREN_RELEASE_GIT || 'git';
 const gitRead = args => execFileSync(git, args, { cwd: root, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }).trim();
@@ -122,7 +122,7 @@ async function main() {
   const existingTag = await api('git/ref/tags/' + tag, { optional404: true });
   if (existingTag && existingTag.object.sha !== sourceCommit) throw Error('Release tag differs from tested source');
   if (!existingTag) await api('git/refs', { method: 'POST', body: { ref: 'refs/tags/' + tag, sha: sourceCommit } });
-  let cloud = await api('releases/tags/' + tag, { optional404: true });
+  let cloud = await releaseForTag(api, tag);
   if (!cloud) cloud = await api('releases', { method: 'POST', body: { tag_name: tag, target_commitish: sourceCommit,
     name: tag, draft: true, body: changes(await fs.readFile(path.join(root, 'CHANGELOG.md'), 'utf8'), version)
       + `\n\nWindows: \`${installerName}\`\nSHA256: \`${report.installerSha256}\`\n\nVerification profile: \`${args.profile}\`. Source: \`${sourceCommit}\`.\n` } });
@@ -137,10 +137,15 @@ async function main() {
       return;
     }
     console.log('[release] upload ' + name);
-    const response = await fetch(`https://uploads.github.com/repos/${repository}/releases/${cloud.id}/assets?name=${encodeURIComponent(name)}`, {
-      method: 'POST', headers: { ...headers, 'Content-Type': 'application/octet-stream', 'Content-Length': String(size) },
-      body: createReadStream(file), duplex: 'half', signal: AbortSignal.timeout(120000),
-    });
+    const stream = createReadStream(file);
+    const progress = setInterval(() => console.log('[release] uploading ' + name + ': ' + Math.floor(stream.bytesRead / size * 100) + '% read; awaiting server confirmation'), 30000);
+    let response;
+    try {
+      response = await fetch(`https://uploads.github.com/repos/${repository}/releases/${cloud.id}/assets?name=${encodeURIComponent(name)}`, {
+        method: 'POST', headers: { ...headers, 'Content-Type': 'application/octet-stream', 'Content-Length': String(size) },
+        body: stream, duplex: 'half', signal: AbortSignal.timeout(10 * 60000),
+      });
+    } finally { clearInterval(progress); stream.destroy(); }
     if (!response.ok) throw Error('GitHub upload failed: ' + response.status);
     const asset = await response.json();
     if (asset.digest !== digest || asset.size !== size) throw Error('Uploaded asset does not match local file');

@@ -1,6 +1,19 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { options, changes, checkMac, passed } = require('../scripts/release-support.cjs');
+const { options, changes, checkMac, passed, releaseForTag } = require('../scripts/release-support.cjs');
+
+test('publication resume and Mac publishing find drafts without using the published-only tag endpoint', async () => {
+  const draft = { id: 5, tag_name: 'v0.3.4', draft: true };
+  const requests = [];
+  const api = async endpoint => {
+    requests.push(endpoint);
+    return endpoint.endsWith('page=1') ? Array.from({ length: 100 }, () => ({ tag_name: 'v0.1.0' })) : [draft];
+  };
+  assert.equal(await releaseForTag(api, 'v0.3.4'), draft);
+  assert.deepEqual(requests, ['releases?per_page=100&page=1', 'releases?per_page=100&page=2']);
+  assert.equal(await releaseForTag(async () => [], 'v0.3.4'), null);
+  await assert.rejects(releaseForTag(async () => [draft, draft], 'v0.3.4'), /Multiple releases/);
+});
 
 test('release gate requires completed tests, without failures, cancellations, skips or todos', () => {
   const summary = '# tests 4\n# pass 4\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n';
