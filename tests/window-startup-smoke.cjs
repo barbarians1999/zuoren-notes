@@ -53,8 +53,42 @@ test('startup maximizes even with a saved small restore size and window controls
       await page.getByRole('button', { name: '设置', exact: true }).click();
       await page.waitForFunction(() => !document.querySelector('.settings-popover'));
     };
-    for (const name of ['浅色', '深色']) {
+    const assertWindowFeedback = async () => {
+      for (const button of await page.locator('.window-controls > button').all()) {
+        await page.mouse.move(300, 250);
+        const before = await button.boundingBox();
+        await button.hover();
+        const feedback = await button.evaluate(async element => {
+          await Promise.all(element.getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {})));
+          const app = element.closest('.app'), probe = document.createElement('span');
+          probe.style.color = app.dataset.theme === 'constructivist' ? 'var(--hover-text)' : 'var(--topbar-hover)';
+          element.append(probe); const expected = getComputedStyle(probe).color; probe.remove();
+          const css = getComputedStyle(element), icon = getComputedStyle(element.querySelector('svg'));
+          return { background: css.backgroundColor, color: css.color, iconColor: icon.color, expected,
+            offset: new DOMMatrixReadOnly(icon.transform).m42, motion: app.dataset.motion };
+        });
+        assert.equal(feedback.background, 'rgba(0, 0, 0, 0)', 'all window actions use glyph-only feedback');
+        assert.equal(feedback.color, feedback.expected);
+        assert.equal(feedback.iconColor, feedback.color);
+        assert.equal(feedback.offset, feedback.motion === 'full' ? -1 : 0, 'only enabled motion lifts the glyph');
+        assert.deepEqual(await button.boundingBox(), before, 'hover must not move the click area');
+        await button.focus();
+        // :focus-visible is keyboard feedback, not a programmatic mouse focus.
+        await page.keyboard.press('Shift+Tab');
+        await page.keyboard.press('Tab');
+        assert.equal(await button.evaluate(element => element === document.activeElement), true);
+        assert.equal(await button.evaluate(element => getComputedStyle(element).outlineStyle), 'solid');
+      }
+      const motion = await page.locator('.app').getAttribute('data-motion');
+      await page.locator('.app').evaluate(element => { element.dataset.motion = 'reduced'; });
+      await page.getByRole('button', { name: '关闭窗口', exact: true }).hover();
+      assert.equal(await page.locator('.window-close > svg').evaluate(element => new DOMMatrixReadOnly(getComputedStyle(element).transform).m42), 0);
+      await page.locator('.app').evaluate((element, value) => { element.dataset.motion = value; }, motion);
+      await page.mouse.move(300, 250);
+    };
+    for (const name of ['浅色', '纸页红', '深色']) {
       await palette(name);
+      await assertWindowFeedback();
       await assertContinuousBorder('topbar-wide-' + name);
       await assertContinuousBorder('topbar-wide-hover-' + name, true);
     }
@@ -62,7 +96,7 @@ test('startup maximizes even with a saved small restore size and window controls
     await page.getByRole('button', { name: '最大化窗口', exact: true }).waitFor();
     const restore = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBounds());
     assert.ok(Math.abs(restore.width - 1000) <= 2 && Math.abs(restore.height - 680) <= 2, 'saved dimensions are restore bounds, not startup bounds');
-    for (const name of ['浅色', '深色']) {
+    for (const name of ['浅色', '纸页红', '深色']) {
       await palette(name);
       await assertContinuousBorder('topbar-narrow-' + name);
       await assertContinuousBorder('topbar-narrow-hover-' + name, true);

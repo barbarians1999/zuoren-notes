@@ -1,10 +1,10 @@
 # macOS 构建与验证
 
-本次为 0.3.3 补充 Mac 平台包，不替换已经发布的 Windows 安装包。同一 Electron 代码库需要针对不同系统和 CPU 分别打包；构建成功不等于所有平台功能已经得到完整验证。
+从 0.3.3 起提供 Mac 平台测试包。同一 Electron 代码库需要针对不同系统和 CPU 分别打包；构建成功不等于所有平台功能已经得到完整验证。统一发布入口会先上传经过检查的 Windows 包，再运行原生 Mac 构建；三个包都核对成功后才公开新版本。
 
 ## 构建方式
 
-在 GitHub Actions 手动运行 **Build and publish macOS packages**，输入已有发布标签（目前为 `v0.3.3`）。标签的版本必须与工作流所选分支的 `package.json` 一致。
+在 GitHub Actions 手动运行 **Build and publish macOS packages**，输入已有发布标签。标签的版本必须与工作流所选分支或标签的 `package.json` 一致。
 
 - `macos-15`：原生 Apple Silicon / arm64 构建。
 - `macos-15-intel`：原生 Intel / x64 构建。

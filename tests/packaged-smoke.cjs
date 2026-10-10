@@ -9,7 +9,7 @@ const files = ['source-editor-smoke', 'markdown-interaction-smoke', 'document-li
 console.log('Testing packaged executable: ' + executable);
 // Legacy tests use ZHAOYE_EXE, newer ones use ZHAOYE_SMOKE_EXECUTABLE.
 // Set both to the exact same binary, never silently fall back to source Electron.
-const child = spawn(process.execPath, ['--test', '--test-concurrency=1', ...files.map(file => path.join(__dirname, file + '.cjs'))], {
+const child = spawn(process.execPath, ['--test', ...(process.env.ZUOREN_RELEASE_TAP === '1' ? ['--test-reporter=tap'] : []), '--test-concurrency=1', ...files.map(file => path.join(__dirname, file + '.cjs'))], {
   cwd: root, stdio: 'inherit', env: { ...process.env, ZHAOYE_EXE: executable, ZHAOYE_SMOKE_EXECUTABLE: executable },
 });
 child.once('error', error => { console.error(error); process.exitCode = 1; });

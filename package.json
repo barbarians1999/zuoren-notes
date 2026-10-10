@@ -1,7 +1,7 @@
 {
   "name": "zuoren-notes-reader",
   "productName": "左人笔记",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "type": "module",
   "description": "本地 PDF、EPUB 与 Markdown 研究阅读和笔记软件",
   "private": true,
@@ -15,6 +15,7 @@
     "package": "node scripts/package.cjs",
     "package:installer": "pnpm verify && node scripts/installer.cjs",
     "package:mac": "pnpm build && node scripts/package-macos.cjs",
+    "release": "node scripts/release.cjs",
     "test:editor": "node --test --test-concurrency=1 tests/source-editor-smoke.cjs tests/markdown-interaction-smoke.cjs tests/document-lifecycle-smoke.cjs tests/clipboard-smoke.cjs tests/linebreak-smoke.cjs tests/stability-smoke.cjs tests/editor-polish-smoke.cjs tests/reading-actions-smoke.cjs tests/note-tabs-smoke.cjs tests/note-toolbar-smoke.cjs",
     "test:readers": "node --test --test-concurrency=1 tests/readers-smoke.cjs tests/reader-reliability-smoke.cjs tests/epub-search-smoke.cjs tests/epub-workspace-smoke.cjs tests/pdf-toolbar-smoke.cjs tests/pdf-selection-smoke.cjs tests/pdf-appearance-smoke.cjs",
     "test:packaged": "node tests/packaged-smoke.cjs",

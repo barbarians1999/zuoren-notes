@@ -4,13 +4,13 @@
 
 面向本地资料阅读与 Markdown 写作的 Electron 桌面笔记软件，提供 Windows 安装版和 macOS 测试版。以 Markdown 为核心，也可以在同一工作区阅读 PDF、EPUB，并把摘录整理进笔记。
 
-**[下载安装包（0.3.3）](https://github.com/barbarians1999/zuoren-notes/releases/tag/v0.3.3)** · [查看全部版本](https://github.com/barbarians1999/zuoren-notes/releases)
+**[下载最新版](https://github.com/barbarians1999/zuoren-notes/releases/latest)** · [查看全部版本](https://github.com/barbarians1999/zuoren-notes/releases)
 
-- [Windows · x64 安装版](https://github.com/barbarians1999/zuoren-notes/releases/download/v0.3.3/ZuorenNotes-Setup-0.3.3.exe)
-- [macOS · Apple 芯片（arm64）测试版](https://github.com/barbarians1999/zuoren-notes/releases/download/v0.3.3/ZuorenNotes-0.3.3-macOS-arm64.dmg)
-- [macOS · Intel（x64）测试版](https://github.com/barbarians1999/zuoren-notes/releases/download/v0.3.3/ZuorenNotes-0.3.3-macOS-x64.dmg)
+- Windows · x64：在发布页选择 `ZuorenNotes-Setup-版本.exe`。
+- macOS · Apple 芯片：选择名称包含 `macOS-arm64.dmg` 的测试版。
+- macOS · Intel：选择名称包含 `macOS-x64.dmg` 的测试版。
 
-Mac 版分别在对应架构的 macOS 环境构建，通过单元测试与定向包内检查；尚未完成完整 Mac 发布回归。仅有 ad-hoc 完整性签名，**未提供 Apple Developer ID 签名或公证**，首次打开可能被系统拦截。请仅从可信来源下载，在系统设置的“隐私与安全性”中核对后允许打开。[验证范围与构建说明](docs/macos-build.md) · [Mac SHA256 校验清单](https://github.com/barbarians1999/zuoren-notes/releases/download/v0.3.3/macOS-SHA256SUMS-0.3.3.txt)
+Mac 版分别在对应架构的 macOS 环境构建，通过单元测试与定向包内检查；尚未完成完整 Mac 发布回归。仅有 ad-hoc 完整性签名，**未提供 Apple Developer ID 签名或公证**，首次打开可能被系统拦截。请仅从可信来源下载，在系统设置的“隐私与安全性”中核对后允许打开。[验证范围与构建说明](docs/macos-build.md)。发布页同时提供 Windows 与 Mac 的 SHA256 校验清单。
 
 下方为左人笔记 0.3.3 的实际运行截图，笔记与书籍内容使用演示样本。
 
@@ -67,5 +67,7 @@ pnpm package:installer
 ```
 
 Mac 打包需在原生 Mac 上运行 `pnpm package:mac`，或手动触发仓库的 **Build and publish macOS packages** 工作流；不要在 Windows 上运行 Mac 打包命令。Electron 可复用主要业务代码，但系统路径、原生菜单、字体和文件关联仍需逐平台适配和验证。
+
+统一发布入口及失败后续传方法见 [发布流程](docs/releasing.md)。
 
 项目目前未附带开源许可证；如需再分发源码或构建产物，请先确认第三方字体及依赖的许可条件。

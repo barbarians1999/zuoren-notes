@@ -44,7 +44,7 @@ async function copyRuntime(name, from, destination, ancestors = new Set()) {
 async function runBuilder() {
   const cli = require.resolve('electron-builder/out/cli/cli.js');
   await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [cli, '--projectDir', staging, '--win', 'nsis', '--x64'], {
+    const child = spawn(process.execPath, [cli, '--projectDir', staging, '--win', 'nsis', '--x64', '--publish', 'never'], {
       cwd: root,
       env: { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: 'false' },
       stdio: 'inherit',

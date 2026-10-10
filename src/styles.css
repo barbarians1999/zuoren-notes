@@ -1305,10 +1305,13 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   border-radius: 0;
   color: var(--text-muted);
 }
-.window-controls button:hover { background: var(--hover) !important; color: var(--text); }
-.window-controls button:active { transform: none !important; background: var(--accent-soft) !important; }
-.window-controls .window-close:hover { background: #b84a4a !important; color: #fff; }
-.window-controls .window-close:active { background: #a13f3f !important; color: #fff; }
+.window-controls button:hover { background: transparent !important; color: var(--hover-text); }
+.window-controls button:active { transform: none !important; background: transparent !important; }
+.window-controls .window-close:is(:hover, :active) { color: var(--accent); }
+/* Move only the glyph so the hit area and continuous topbar border stay put. */
+.window-controls button > svg { transition: transform 120ms ease; }
+.app[data-motion="full"] .window-controls button:hover > svg { transform: translateY(-1px); }
+.app[data-motion="full"] .window-controls button:active > svg { transform: translateY(1px); }
 .document-tabs { height: 39px; flex: none; display: flex; align-items: center; gap: 3px; padding: 0 8px; border-bottom: 1px solid var(--line); background: var(--surface-muted); overflow-x: auto; }
 .document-tab { display: flex; align-items: center; min-width: 110px; max-width: 220px; height: 33px; border: 1px solid transparent; border-radius: 5px 5px 0 0; flex-shrink: 0; }
 .document-tab.active { background: var(--surface); border-color: var(--line); border-bottom-color: var(--surface); }
@@ -1539,8 +1542,9 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 ) { color: var(--topbar-text); }
 .app:is([data-theme="constructivist-paper"], [data-theme="constructivist-dark"]) > .topbar :is(
   .sidebar-toggle, .layout-tabs button:not(.active), .top-actions > .quiet-action,
-  .settings-menu > .quiet-action, .window-controls > button:not(.window-close)
+  .settings-menu > .quiet-action, .window-controls > button
 ):hover { background: transparent !important; color: var(--topbar-hover); }
+.app:is([data-theme="constructivist-paper"], [data-theme="constructivist-dark"]) > .topbar .window-controls .window-close:active { color: var(--topbar-hover); }
 .app[data-theme="constructivist-paper"] > .topbar :is(
   .sidebar-toggle, .layout-tabs button, .top-actions > button,
   .settings-menu > .quiet-action, .window-controls > button

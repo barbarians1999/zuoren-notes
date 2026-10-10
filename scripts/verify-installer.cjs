@@ -29,7 +29,8 @@ async function main() {
   const archive = path.join(release, 'win-unpacked', 'resources', 'app.asar');
   const tested = hash(await fs.readFile(archive)), embedded = hash(await fs.readFile(path.join(extracted, 'app.asar')));
   if (tested !== embedded) throw Error('Installer payload differs from the tested application.');
-  const checked = [...await files(path.join(root, 'dist')), ...await files(path.join(root, 'electron')), path.join(root, 'src', 'sessionState.cjs')];
+  const checked = [...await files(path.join(root, 'dist')), ...await files(path.join(root, 'electron')),
+    path.join(root, 'src', 'sessionState.cjs'), path.join(root, 'src', 'pathIdentity.cjs')];
   for (const file of checked) {
     const entry = path.relative(root, file);
     if (hash(await fs.readFile(file)) !== hash(asar.extractFile(archive, entry))) throw Error('Packaged content mismatch: ' + entry);

@@ -6,7 +6,6 @@ on:
       release_tag:
         description: Existing GitHub release tag (must match package.json)
         required: true
-        default: v0.3.3
 
 permissions:
   contents: read
@@ -65,7 +64,7 @@ jobs:
           export ZHAOYE_THEME_SCREENSHOTS="$PWD/macos-screenshots"
           codesign --verify --deep --strict "$APP"
           file "$ZHAOYE_SMOKE_EXECUTABLE"
-          node --test --test-reporter=tap tests/platform-package-smoke.cjs 2>&1 | tee macos-smoke.log
+          node --test --test-reporter=tap --test-concurrency=1 tests/platform-package-smoke.cjs tests/window-startup-smoke.cjs 2>&1 | tee macos-smoke.log
           node scripts/verify-macos.cjs "$MAC_ARCH"
       - name: Upload verified DMG and verification record
         uses: actions/upload-artifact@v4

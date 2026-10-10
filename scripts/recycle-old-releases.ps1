@@ -86,13 +86,29 @@ if ($validation.version -ne $package.version -or $validation.sourceUi.failed -ne
     $validation.build -ne 'passed' -or $integrity.version -ne $package.version -or -not $integrity.installerEmbeddedAppAsarMatchesTestedProgram -or
     $integrity.packagedFilesComparedToCurrentBuild.missing -ne 0 -or $integrity.packagedFilesComparedToCurrentBuild.mismatched -ne 0) { throw 'Latest release is not verified.' }
 if ((Get-FileHash -LiteralPath $integrity.installer -Algorithm SHA256).Hash -ne $integrity.installerSha256) { throw 'Latest installer checksum changed.' }
+$published = Get-Content -LiteralPath (Join-Path $latestDirectory 'PUBLISHED.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($published.version -ne $package.version -or $published.sourceCommit -ne $validation.sourceCommit -or @($published.macReports).Count -ne 2) { throw 'Three-platform publication is not confirmed.' }
 
 # Respect the user's recycle-only requirement even if Explorer settings change.
 foreach ($drive in @($candidates.ToArray() | ForEach-Object { [IO.Path]::GetPathRoot($_.Path).TrimEnd('\') } | Select-Object -Unique)) {
     $volume = Get-CimInstance Win32_Volume -Filter ("DriveLetter='" + $drive + "'")
     if (-not ($volume.DeviceID -match '\{[0-9a-f-]+\}')) { throw 'Cannot identify recycle-bin volume.' }
     $settings = Get-ItemProperty -LiteralPath ('HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\BitBucket\Volume\' + $Matches[0])
-    if ($settings.NukeOnDelete -ne 0 -or $plan.TotalBytes -ge ([long]$settings.MaxCapacity * 1MB)) { throw 'Recycle bin is disabled or its quota is insufficient.' }
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $binRoot = Join-Path ($drive + '\$Recycle.Bin') $sid
+    $usedBytes = [long]0
+    if (Test-Path -LiteralPath $binRoot) {
+        $pending = New-Object 'System.Collections.Generic.Stack[string]'
+        $pending.Push($binRoot)
+        while ($pending.Count) {
+            foreach ($item in Get-ChildItem -LiteralPath ($pending.Pop()) -Force) {
+                if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+                if ($item.PSIsContainer) { $pending.Push($item.FullName) } else { $usedBytes += $item.Length }
+            }
+        }
+    }
+    $needed = [long](($candidates.ToArray() | Where-Object { [IO.Path]::GetPathRoot($_.Path).TrimEnd('\') -eq $drive } | Measure-Object Bytes -Sum).Sum)
+    if ($settings.NukeOnDelete -ne 0 -or $usedBytes + $needed + 1GB -ge ([long]$settings.MaxCapacity * 1MB)) { throw 'Recycle bin is disabled or lacks safe headroom; no settings were changed.' }
 }
 
 $running = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath } | Select-Object -ExpandProperty ExecutablePath)
