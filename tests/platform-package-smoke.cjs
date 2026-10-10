@@ -78,13 +78,25 @@ test('native packaged app retains Markdown saves/undo, readers, Finder opening a
       const session=JSON.parse(text).session; return session?.version===3 && session.noteDocuments.some(doc=>doc.path===second);
     });
     if(process.platform==='darwin') {
+      await page.locator('.cm-content').press('Meta+ArrowDown');
+      await page.keyboard.insertText('\nNative quit pending save.');
       const exited=new Promise(resolve=>application.process().once('exit',resolve));
-      await page.keyboard.press('Meta+q');
-      await Promise.race([exited,new Promise((_,reject)=>setTimeout(()=>reject(new Error('Cmd+Q did not pass the close/save gate')),15000))]);
+      // CDP keyboard input does not invoke macOS native menu accelerators.
+      // Exercise the actual Quit menu role (the native Cmd+Q entry point).
+      await application.evaluate(({Menu,BrowserWindow})=>{
+        const find=items=>{for(const item of items){if(item.role==='quit')return item;const found=item.submenu&&find(item.submenu.items);if(found)return found;}};
+        const quit=find(Menu.getApplicationMenu().items);
+        if(!quit)throw new Error('Native Quit menu missing');
+        const window=BrowserWindow.getFocusedWindow();
+        quit.click({triggeredByAccelerator:true},window,window?.webContents);
+      });
+      await Promise.race([exited,new Promise((_,reject)=>setTimeout(()=>reject(new Error('Native Quit did not pass the close/save gate')),15000))]);
       application=null;
+      assert.ok((await fs.readFile(second,'utf8')).includes('Native quit pending save.'));
     } else { await application.close(); application=null; }
     page=await launch(true);
     await page.waitForFunction(()=>document.querySelector('.cm-content')?.textContent.includes('Opened through the native file event.'));
+    if(process.platform==='darwin')assert.ok((await page.locator('.cm-content').innerText()).includes('Native quit pending save.'));
     assert.ok((await fs.readFile(note,'utf8')).includes('Native package edit.'));
     assert.deepEqual(errors,[]);
     if(process.env.ZHAOYE_THEME_SCREENSHOTS) {await fs.mkdir(process.env.ZHAOYE_THEME_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.ZHAOYE_THEME_SCREENSHOTS,'native-package.png')});}
