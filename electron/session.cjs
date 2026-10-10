@@ -1,10 +1,10 @@
-const path = require('node:path');
+const { isAbsoluteFilePath, filePathKey } = require('../src/pathIdentity.cjs');
 const { MAX_SCROLL_MEMORY_ENTRIES, MAX_SCROLL_TOP, validScrollEntry } = require('../src/sessionState.cjs');
 
 const recoveryIdPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const exactKeys = (value, keys) => isRecord(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
-const absolutePath = value => typeof value === 'string' && value.length > 0 && path.isAbsolute(value);
+const absolutePath = isAbsoluteFilePath;
 const nullablePath = value => value === null || absolutePath(value);
 
 function validateNote(value) {
@@ -12,7 +12,7 @@ function validateNote(value) {
     && ['edit', 'source', 'preview'].includes(value.mode) && recoveryIdPattern.test(value.recoveryId));
 }
 
-const pathKey = value => path.win32.normalize(value).toLowerCase();
+const pathKey = filePathKey;
 function validateGroups(value) {
   if (!exactKeys(value.noteGroups, ['primary', 'secondary']) || !['primary', 'secondary'].includes(value.activeNoteGroup)
     || !Array.isArray(value.noteDocuments) || value.noteDocuments.length > 100) return false;

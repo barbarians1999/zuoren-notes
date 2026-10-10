@@ -56,6 +56,7 @@ async function main() {
   await fs.cp(path.join(root, 'dist'), path.join(staging, 'dist'), { recursive: true });
   await fs.mkdir(path.join(staging, 'src'), { recursive: true });
   await fs.copyFile(path.join(root, 'src', 'sessionState.cjs'), path.join(staging, 'src', 'sessionState.cjs'));
+  await fs.copyFile(path.join(root, 'src', 'pathIdentity.cjs'), path.join(staging, 'src', 'pathIdentity.cjs'));
   await fs.writeFile(path.join(staging, 'package.json'), JSON.stringify({
     name: manifest.name, productName: manifest.productName, version: manifest.version,
     description: manifest.description, main: manifest.main,

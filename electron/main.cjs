@@ -21,7 +21,17 @@ const jobs = new Map();
 let mainWindow;
 let withWindowDialog;
 let allowClose = false;
+let quitRequested = false;
+const pendingMacFiles = [];
 let launchItems = { files: [] };
+
+// Finder sends open-file rather than command-line arguments on macOS.
+// Register before ready so a cold launch does not lose the selected file.
+app.on('open-file', (event, file) => {
+  event.preventDefault();
+  if (!mainWindow || mainWindow.isDestroyed()) pendingMacFiles.push(file);
+  else void collectLaunchItems([file]).then(deliverLaunchItems).catch(console.error);
+});
 
 function settingsFile() { return path.join(app.getPath('userData'), 'settings.json'); }
 const emptySettings = () => ({ recentFiles: [], roots: [], session: null });
@@ -99,7 +109,7 @@ async function collectLaunchItems(argv, workingDirectory = process.cwd()) {
   return items;
 }
 async function authorizeLaunchArgs() {
-  launchItems = await collectLaunchItems(process.argv.slice(1));
+  launchItems = await collectLaunchItems([...process.argv.slice(1), ...pendingMacFiles.splice(0)]);
 }
 function deliverLaunchItems(items) {
   if (!items.root && !items.files.length) return;
@@ -336,8 +346,10 @@ function installHandlers() {
 }
 
 function createWindow(settings = {}) {
+  allowClose = false;
+  quitRequested = false;
   mainWindow = new BrowserWindow({
-    icon: path.join(__dirname, 'assets', 'app-constructivist.ico'),
+    icon: path.join(__dirname, 'assets', process.platform === 'win32' ? 'app-constructivist.ico' : 'app-constructivist.png'),
     width: settings.window?.width || 1440, height: settings.window?.height || 920,
     show: false,
     minWidth: 960, minHeight: 640,
@@ -383,7 +395,18 @@ function createWindow(settings = {}) {
   else mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
 }
 
-ipcMain.on('confirm-close', event => { if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) return; allowClose = true; mainWindow.close(); });
+ipcMain.on('confirm-close', event => {
+  if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) return;
+  allowClose = true;
+  mainWindow.close();
+  if (quitRequested) app.quit();
+});
+app.on('before-quit', event => {
+  if (process.platform !== 'darwin' || !mainWindow || mainWindow.isDestroyed() || allowClose) return;
+  event.preventDefault();
+  quitRequested = true;
+  mainWindow.close(); // The existing renderer close/save gate owns confirmation.
+});
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) app.quit();
 else {
@@ -392,7 +415,9 @@ else {
     if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); }
   });
   app.whenReady().then(async () => {
-    Menu.setApplicationMenu(null);
+    Menu.setApplicationMenu(process.platform === 'darwin' ? Menu.buildFromTemplate([
+      { role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' },
+    ]) : null);
     const settings = await restoreGrants().catch(() => emptySettings());
     await authorizeLaunchArgs();
     protocol.handle('reader-asset', async request => {
@@ -404,6 +429,7 @@ else {
     });
     installHandlers();
     createWindow(settings);
+    if (pendingMacFiles.length) void collectLaunchItems(pendingMacFiles.splice(0)).then(deliverLaunchItems).catch(console.error);
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(settings); });
   });
 }

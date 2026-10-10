@@ -1,11 +1,12 @@
 import { EditorSelection } from '@codemirror/state';
 import type { NoteSessionGroup, ReaderApi, ReaderSession, ReaderSessionV3 } from '../types';
-import { normalizeWindowsPath, remapDescendantPath, sameOrDescendantPath } from '../fileOperations.cjs';
+import { remapDescendantPath, sameOrDescendantPath } from '../fileOperations.cjs';
+import { filePathKey } from '../pathIdentity.cjs';
 import { sameNoteContent } from '../noteContent.cjs';
 import { NoteDocument, type NoteViewState } from './noteDocument';
 export type NoteGroupId = 'primary' | 'secondary';
 type Group = { tabs: NoteViewState[]; activeId: string | null };
-export const documentKey = (path: string) => normalizeWindowsPath(path).toLocaleLowerCase('en-US');
+export const documentKey = filePathKey;
 export class NoteWorkspace {
   groups: Record<NoteGroupId, Group> = { primary: { tabs: [], activeId: null }, secondary: { tabs: [], activeId: null } };
   activeGroup: NoteGroupId = 'primary';

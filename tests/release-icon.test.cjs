@@ -8,7 +8,7 @@ test('shipping icon references use the constructivist master and include every W
   const manifest = require('../package.json'), icon = 'electron/assets/app-constructivist.ico';
   assert.equal(manifest.build.win.icon, icon);
   assert.equal(manifest.build.nsis.installerIcon, icon); assert.equal(manifest.build.nsis.uninstallerIcon, icon);
-  assert.match(fs.readFileSync(path.join(root, 'electron/main.cjs'), 'utf8'), /icon: path\.join\(__dirname, 'assets', 'app-constructivist\.ico'\)/);
+  assert.match(fs.readFileSync(path.join(root, 'electron/main.cjs'), 'utf8'), /process\.platform === 'win32' \? 'app-constructivist\.ico' : 'app-constructivist\.png'/);
   assert.match(fs.readFileSync(path.join(root, 'scripts/package.cjs'), 'utf8'), /icon: path\.resolve\(root, manifest\.build\.win\.icon\)/);
   const bytes = fs.readFileSync(path.join(root, icon));
   assert.equal(bytes.readUInt16LE(0), 0); assert.equal(bytes.readUInt16LE(2), 1); assert.equal(bytes.readUInt16LE(4), 7);

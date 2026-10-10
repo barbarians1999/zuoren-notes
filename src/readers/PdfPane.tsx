@@ -204,7 +204,7 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
   }, [page, scale]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.isComposing || event.keyCode === 229 || !event.ctrlKey || event.metaKey || event.altKey || event.key.toLowerCase() !== 'f') return;
+      if (event.isComposing || event.keyCode === 229 || !(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== 'f') return;
       const origin = event.target instanceof Node ? event.target : window.document.activeElement;
       if (!origin || !pane.current?.contains(origin)) return;
       event.preventDefault(); event.stopPropagation(); setSearchOpen(true);

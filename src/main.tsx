@@ -4,7 +4,7 @@ import { EpubPane } from './readers/EpubPane';
 import { ReaderSession } from './readers/readerSession';
 import { createExcerptFlow, type ExcerptFlowFailure, type ExcerptFlowResult } from './readers/excerptFlow';
 import type { PdfExcerptContext } from './readers/pdfRegionAction';
-import { NoteWorkspace, type NoteGroupId } from './workspace/noteWorkspace';
+import { NoteWorkspace, documentKey, type NoteGroupId } from './workspace/noteWorkspace';
 import { NoteGroupPane } from './workspace/NoteGroupPane';
 import { ConflictDialog, UnsavedDialog, TrashConfirmation } from './workspace/DocumentDialogs';
 import { reader, NOTE_BODY_FONTS, type Layout, type ThemePreference, type NoteBodyFont, type ActivePdf, type ActiveEpub, type FileContextMenu, type InlineEntryEdit, type FindCommand } from './readerContext';
@@ -288,7 +288,7 @@ function App() {
         if (settings.warning) warn(settings.warning);
         const session = !launch.root && !launch.files.length ? settings.session : null;
         const launchRecovery = launch.files[0]?.type === 'md' && settings.session?.version === 3
-          ? settings.session.noteDocuments.find(item => item.path.toLowerCase() === launch.files[0].path.toLowerCase())
+          ? settings.session.noteDocuments.find(item => documentKey(item.path) === documentKey(launch.files[0].path))
           : [settings.session?.primaryNote, settings.session?.secondaryNote].find(item => item?.path === launch.files[0]?.path);
         const savedRoot = session?.root || settings.roots?.[0] || '';
         if (launch.root) {

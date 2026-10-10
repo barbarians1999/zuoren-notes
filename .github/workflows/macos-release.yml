@@ -1,0 +1,111 @@
+name: Build and publish macOS packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing GitHub release tag (must match package.json)
+        required: true
+        default: v0.3.3
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-release-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Native macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      MAC_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
+      - name: Validate release version
+        run: node -e 'if (process.env.RELEASE_TAG !== "v" + require("./package.json").version) throw new Error("Release version mismatch")'
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build and unit tests
+        run: |
+          set -o pipefail
+          pnpm build 2>&1 | tee macos-build.log
+          node --test --test-reporter=tap tests/*.test.cjs 2>&1 | tee macos-unit.log
+      - name: Package native DMG
+        run: |
+          set -o pipefail
+          node scripts/package-macos.cjs "$MAC_ARCH" 2>&1 | tee macos-package.log
+      - name: Verify packaged app and run native smoke
+        run: |
+          set -o pipefail
+          APP="releases/macos/$MAC_ARCH/mac"
+          if [ "$MAC_ARCH" = arm64 ]; then APP="$APP-arm64"; fi
+          APP="$APP/左人笔记.app"
+          BINARY=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")
+          export ZHAOYE_SMOKE_EXECUTABLE="$PWD/$APP/Contents/MacOS/$BINARY"
+          export ZHAOYE_THEME_SCREENSHOTS="$PWD/macos-screenshots"
+          codesign --verify --deep --strict "$APP"
+          file "$ZHAOYE_SMOKE_EXECUTABLE"
+          node --test --test-reporter=tap tests/platform-package-smoke.cjs 2>&1 | tee macos-smoke.log
+          node scripts/verify-macos.cjs "$MAC_ARCH"
+      - name: Upload verified DMG and verification record
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: |
+            releases/macos/${{ matrix.arch }}/*.dmg
+            releases/macos/${{ matrix.arch }}/*-VALIDATION.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+      - name: Retain diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}-logs
+          path: |
+            macos-*.log
+            macos-screenshots/*.png
+          retention-days: 7
+
+  publish:
+    name: Add verified Mac downloads to existing release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: macos-*
+          path: release-assets
+      - name: Publish Mac-only assets without overwriting Windows downloads
+        run: node scripts/publish-macos.cjs release-assets

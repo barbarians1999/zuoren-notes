@@ -1,3 +1,5 @@
+const { normalizeFilePath, filePathKey } = require('./pathIdentity.cjs');
+
 function normalizeWindowsPath(value) {
   if (typeof value !== 'string') return '';
   const normalized = value.replaceAll('/', '\\').replace(/\\{2,}/g, '\\');
@@ -6,18 +8,21 @@ function normalizeWindowsPath(value) {
 }
 
 function sameOrDescendantPath(candidate, parent) {
-  const normalizedCandidate = normalizeWindowsPath(candidate).toLocaleLowerCase('en-US');
-  const normalizedParent = normalizeWindowsPath(parent).toLocaleLowerCase('en-US');
+  const normalizedCandidate = filePathKey(candidate);
+  const normalizedParent = filePathKey(parent);
   if (!normalizedCandidate || !normalizedParent) return false;
-  return normalizedCandidate === normalizedParent || normalizedCandidate.startsWith(`${normalizedParent}\\`);
+  const separator = normalizedParent.startsWith('/') ? '/' : '\\';
+  return normalizedCandidate === normalizedParent || normalizedCandidate.startsWith(normalizedParent.endsWith(separator) ? normalizedParent : `${normalizedParent}${separator}`);
 }
 
 function remapDescendantPath(candidate, previousRoot, nextRoot) {
-  const normalizedCandidate = normalizeWindowsPath(candidate);
-  const normalizedPrevious = normalizeWindowsPath(previousRoot);
-  const normalizedNext = normalizeWindowsPath(nextRoot);
+  const normalizedCandidate = normalizeFilePath(candidate);
+  const normalizedPrevious = normalizeFilePath(previousRoot);
+  const normalizedNext = normalizeFilePath(nextRoot);
   if (!sameOrDescendantPath(normalizedCandidate, normalizedPrevious)) return candidate;
-  return normalizedNext + normalizedCandidate.slice(normalizedPrevious.length);
+  const separator = normalizedNext.startsWith('/') ? '/' : '\\';
+  const relative = normalizedCandidate.slice(normalizedPrevious.length).replace(/^[\\/]+/, '');
+  return normalizedNext + (relative ? (normalizedNext.endsWith(separator) ? '' : separator) + relative : '');
 }
 
 class MutationBarrier {
@@ -31,14 +36,14 @@ class MutationBarrier {
   }
 
   block(path, now = Date.now()) {
-    const normalized = normalizeWindowsPath(path);
+    const normalized = filePathKey(path);
     if (!normalized) return;
     this.prune(now);
-    this.entries.set(normalized.toLocaleLowerCase('en-US'), now + this.ttlMs);
+    this.entries.set(normalized, now + this.ttlMs);
   }
 
   release(path, now = Date.now()) {
-    const normalized = normalizeWindowsPath(path);
+    const normalized = filePathKey(path);
     if (!normalized) return;
     this.prune(now);
     for (const blocked of this.entries.keys()) {
@@ -47,7 +52,7 @@ class MutationBarrier {
   }
 
   has(path, now = Date.now()) {
-    const normalized = normalizeWindowsPath(path);
+    const normalized = filePathKey(path);
     if (!normalized) return false;
     this.prune(now);
     return [...this.entries.keys()].some(blocked => sameOrDescendantPath(normalized, blocked));
