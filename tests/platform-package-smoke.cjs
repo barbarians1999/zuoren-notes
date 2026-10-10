@@ -89,11 +89,12 @@ test('native packaged app retains Markdown saves/undo, readers, Finder opening a
         ipcMain.on('confirm-close',()=>globalThis.__nativeQuitEvents.push('confirm-close'));
       });
       // CDP keyboard input does not invoke macOS native menu accelerators.
-      // Exercise the actual Quit menu role (the native Cmd+Q entry point).
+      // Exercise the application's native Quit callback (the Cmd+Q entry point).
       await application.evaluate(({Menu,BrowserWindow})=>{
-        const find=items=>{for(const item of items){if(item.role==='quit')return item;const found=item.submenu&&find(item.submenu.items);if(found)return found;}};
+        const find=items=>{for(const item of items){if(item.id==='quit-application')return item;const found=item.submenu&&find(item.submenu.items);if(found)return found;}};
         const quit=find(Menu.getApplicationMenu().items);
         if(!quit)throw new Error('Native Quit menu missing');
+        if(quit.accelerator!=='Command+Q')throw new Error('Native Quit accelerator missing');
         const window=BrowserWindow.getFocusedWindow();
         quit.click({triggeredByAccelerator:true},window,window?.webContents);
       });

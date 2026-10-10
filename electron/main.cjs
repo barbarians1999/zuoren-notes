@@ -416,7 +416,13 @@ else {
   });
   app.whenReady().then(async () => {
     Menu.setApplicationMenu(process.platform === 'darwin' ? Menu.buildFromTemplate([
-      { role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' },
+      { role: 'appMenu', submenu: [
+        { role: 'about' }, { type: 'separator' }, { role: 'services' },
+        { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' },
+        { type: 'separator' },
+        // Explicitly route native Quit and Cmd+Q through before-quit's save gate.
+        { id: 'quit-application', label: `退出 ${app.getName()}`, accelerator: 'Command+Q', click: () => app.quit() },
+      ] }, { role: 'editMenu' }, { role: 'windowMenu' },
     ]) : null);
     const settings = await restoreGrants().catch(() => emptySettings());
     await authorizeLaunchArgs();
