@@ -11,6 +11,10 @@ const git = process.env.ZUOREN_RELEASE_GIT || 'git';
 const gitRead = args => execFileSync(git, args, { cwd: root, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }).trim();
 const hash = async file => crypto.createHash('sha256').update(await fs.readFile(file)).digest('hex');
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+const uiSmokeFiles = [
+  'tests/window-startup-smoke.cjs', 'tests/path-reuse-smoke.cjs', 'tests/note-tabs-smoke.cjs',
+  'tests/fullscreen-chrome-smoke.cjs', 'tests/epub-workspace-smoke.cjs', 'tests/epub-search-smoke.cjs',
+];
 let logs;
 
 async function run(name, executable, args, environment = {}) {
@@ -65,7 +69,7 @@ async function main() {
     let sourceTests = 0;
     if (args.profile === 'ui') {
       sourceTests = passed(await node('source-ui', ['--test', '--test-reporter=tap', '--test-concurrency=1',
-        'tests/window-startup-smoke.cjs', 'tests/path-reuse-smoke.cjs', 'tests/note-tabs-smoke.cjs']));
+        ...uiSmokeFiles]));
     } else {
       for (const key of ['test:editor', 'test:readers', 'test:workspace']) {
         const words = manifest.scripts[key].split(/\s+/);
@@ -77,7 +81,7 @@ async function main() {
     const environment = { ZHAOYE_EXE: executable, ZHAOYE_SMOKE_EXECUTABLE: executable };
     const packagedTests = args.profile === 'ui'
       ? passed(await node('packaged-ui', ['--test', '--test-reporter=tap', '--test-concurrency=1',
-        'tests/platform-package-smoke.cjs', 'tests/window-startup-smoke.cjs', 'tests/path-reuse-smoke.cjs', 'tests/note-tabs-smoke.cjs'], environment))
+        'tests/platform-package-smoke.cjs', ...uiSmokeFiles], environment))
       : passed(await node('packaged-full', ['tests/packaged-smoke.cjs'], { ...environment, ZUOREN_RELEASE_TAP: '1' }));
     await node('installer-integrity', ['scripts/verify-installer.cjs', integrityDirectory]);
     await run('icons', powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(root, 'scripts/verify-release-icons.ps1'), '-OutputDirectory', path.join(outputs, 'icon-check')]);
@@ -89,7 +93,7 @@ async function main() {
       installerPayload: { ...integrity.packagedFilesComparedToCurrentBuild, embeddedAppAsarMatchesTestedProgram: integrity.installerEmbeddedAppAsarMatchesTestedProgram, executableAndInstallerIconsMatchConfiguredSource: true },
       installer: path.basename(installer), installerBytes: integrity.installerBytes, installerSha256: integrity.installerSha256,
       appAsarSha256: integrity.testedAppAsarSha256, executableSha256: await hash(executable),
-      scope: args.profile === 'ui' ? 'Directed UI, platform package, shared tab lifecycle and path-reuse checks; NOT full release regression' : 'Existing source and packaged regression suites' };
+      scope: args.profile === 'ui' ? 'Directed UI, fullscreen, EPUB workspace/search, platform package, shared tab lifecycle and path-reuse checks; NOT full release regression' : 'Existing source and packaged regression suites' };
     await json(reportFile, report);
     await fs.copyFile(path.join(integrityDirectory, 'installer-integrity.json'), path.join(logs, 'installer-integrity.json'));
     await fs.copyFile(reportFile, path.join(logs, 'VALIDATION.json'));

@@ -94,7 +94,7 @@ test('PDF zoom, annotations and EPUB navigation survive module migration and clo
  await page.locator('.epub-viewer iframe').first().waitFor();
  await page.getByRole('button',{name:'展开 EPUB 大纲'}).click();
  await page.getByRole('complementary',{name:'EPUB 大纲'}).getByRole('button',{name:'第二章 继续阅读',exact:true}).click();
- await page.waitForFunction(()=>document.querySelector('.epub-chapter')?.textContent?.includes('第二章'));
+ await page.waitForFunction(()=>document.querySelector('.epub-pane')?.dataset.currentChapter?.includes('第二章'));
  await page.getByRole('button',{name:'设置',exact:true}).click();
  await page.getByRole('button',{name:'增大正文字体',exact:true}).click();
  await page.getByRole('button',{name:'设置',exact:true}).click();

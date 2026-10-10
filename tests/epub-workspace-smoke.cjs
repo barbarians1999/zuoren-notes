@@ -32,7 +32,9 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
     await fs.mkdir(path.dirname(metaPath));
     await fs.writeFile(metaPath, JSON.stringify({ version: 2, id, cfi: '', progress: 0, fontSize: 150, annotations: [] }));
     const root = path.resolve(__dirname, '..');
-    app = await _electron.launch({ executablePath: path.join(root, 'node_modules/electron/dist/electron.exe'), args: [root, workspace.fixture], env: { ...process.env, ZHAOYE_TEST_USER_DATA: workspace.userData } });
+    const packaged = process.env.ZHAOYE_SMOKE_EXECUTABLE || process.env.ZHAOYE_EXE;
+    app = await _electron.launch({ executablePath: packaged || path.join(root, 'node_modules/electron/dist/electron.exe'), args: packaged ? [workspace.fixture] : [root, workspace.fixture], env: { ...process.env, ZHAOYE_TEST_USER_DATA: workspace.userData } });
+    if (packaged) assert.equal(await app.evaluate(({ app }) => app.getVersion()), require('../package.json').version);
     const page = await app.firstWindow(); page.setDefaultTimeout(12000);
     const capture = async name => {
       if (!process.env.ZHAOYE_THEME_SCREENSHOTS) return;
@@ -67,6 +69,7 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
     assert.equal(await tabName.evaluate(element => element.scrollWidth > element.clientWidth && getComputedStyle(element).textOverflow === 'ellipsis'), true, 'long filenames truncate within the tab');
     await tabName.evaluate(element => { element.textContent = 'book.epub'; });
     assert.equal(await readerTab.getAttribute('aria-selected'), 'true');
+    assert.equal(await page.locator('.epub-foot, .epub-pane progress').count(), 0, 'the bottom progress row is removed');
     assert.equal(await page.locator('.reader-document-title, .epub-font-control, .epub-navigation select, .epub-navigation .epub-chapter, .epub-navigation .keyboard-hints').count(), 0);
     const bounds = await bar.boundingBox(), epubBounds = await page.locator('.epub-pane').boundingBox();
     const tabBounds = await readerTab.boundingBox(), noteBounds = await page.getByRole('tab', { name: 'note.md', exact: true }).boundingBox();
@@ -118,18 +121,71 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
     assert.equal(headingFonts.allSerif, true, 'all heading levels and nested title text use the bundled Source Han Serif');
     assert.equal(headingFonts.loaded, true, 'the heading font is actually loaded, not merely listed in CSS');
     assert.ok(!headingFonts.bodyFont.includes('Zhaoye Heading'), 'heading typography does not replace the selected body font');
+    const observeOutlineLayout = async () => {
+      await page.locator('.epub-viewer').evaluate(viewer => {
+        window.__outlineResizeObserver?.disconnect(); window.__outlineMutationObserver?.disconnect();
+        const rect = viewer.getBoundingClientRect();
+        window.__outlineViewport = { width: rect.width, height: rect.height, x: rect.x, y: rect.y };
+        window.__outlineFrames = [...viewer.querySelectorAll('iframe')].map(frame => ({ frame, document: frame.contentDocument }));
+        window.__outlineResizes = 0; window.__outlineMutations = 0;
+        window.__outlineObservedSize = null;
+        window.__outlineResizeObserver = new ResizeObserver(entries => {
+          const { width, height } = entries[0].contentRect;
+          // The initial notification is not a resize. Compare content-box
+          // measurements to each other, not to rounded border-box geometry.
+          const previous = window.__outlineObservedSize;
+          if (previous && (previous.width !== width || previous.height !== height)) window.__outlineResizes++;
+          window.__outlineObservedSize = { width, height };
+        });
+        window.__outlineMutationObserver = new MutationObserver(records => { window.__outlineMutations += records.length; });
+        window.__outlineResizeObserver.observe(viewer);
+        window.__outlineMutationObserver.observe(viewer, { childList: true, subtree: true });
+      });
+      await page.waitForFunction(() => !!window.__outlineObservedSize);
+    };
+    const assertOutlineLayout = async () => {
+      const state = await page.locator('.epub-viewer').evaluate(viewer => {
+        const rect = viewer.getBoundingClientRect();
+        return {
+          geometry: { width: rect.width, height: rect.height, x: rect.x, y: rect.y },
+          original: window.__outlineViewport, resizes: window.__outlineResizes, mutations: window.__outlineMutations,
+          sameFrames: window.__outlineFrames.length === viewer.querySelectorAll('iframe').length && window.__outlineFrames.every(({ frame, document }) => viewer.contains(frame) && frame.contentDocument === document),
+        };
+      });
+      assert.deepEqual(state.geometry, state.original, 'outline motion never changes the reading viewport');
+      assert.equal(state.resizes, 0, 'outline does not trigger viewport resize');
+      assert.equal(state.mutations, 0, 'outline does not replace or repaginate book views');
+      assert.equal(state.sameFrames, true, 'the same book documents remain mounted');
+    };
+    await observeOutlineLayout();
     await page.getByRole('button', { name: '展开 EPUB 大纲', exact: true }).click();
     const outline = page.getByRole('complementary', { name: 'EPUB 大纲', exact: true });
+    await outline.waitFor();
+    await outline.evaluate(async element => { await Promise.all(element.getAnimations().map(animation => animation.finished)); });
+    await assertOutlineLayout();
+    await page.getByRole('button', { name: '收起 EPUB 大纲', exact: true }).click();
+    await outline.waitFor({ state: 'hidden' }); await assertOutlineLayout();
+    await page.getByRole('button', { name: '展开 EPUB 大纲', exact: true }).click();
     await outline.getByRole('button', { name: '第二章中段', exact: true }).click();
-    await page.waitForFunction(() => document.querySelector('.epub-chapter')?.textContent === '第二章');
+    await page.waitForFunction(() => document.querySelector('.epub-pane')?.dataset.currentChapter === '第二章');
     await waitForFile(metaPath, text => JSON.parse(text).cfi.includes('/6/4'));
     const beforeSize = JSON.parse(await fs.readFile(metaPath, 'utf8')).cfi;
+    await waitForAnchor(beforeSize, 'the mid-chapter text anchor is visible before closing the outline');
+    await observeOutlineLayout();
     await page.getByRole('button', { name: '收起 EPUB 大纲', exact: true }).click();
     await outline.waitFor({ state: 'hidden' });
-    await page.waitForFunction(() => document.querySelector('.epub-viewer').getBoundingClientRect().width > 570);
-    // Await the new page geometry, not merely the outline's removal. Keep the
-    // original semantic point even when the wider page begins earlier.
-    await page.waitForFunction(() => document.querySelector('.epub-viewer iframe')?.contentDocument?.querySelector('#middle')?.getBoundingClientRect().width > 500);
+    await assertOutlineLayout();
+    assert.equal(JSON.parse(await fs.readFile(metaPath, 'utf8')).cfi, beforeSize, 'closing the overlay does not relocate the book');
+    // Search and outline share the overlay area rather than covering each other.
+    await page.getByRole('button', { name: '展开 EPUB 大纲', exact: true }).click();
+    await page.getByRole('button', { name: '在 EPUB 中查找', exact: true }).click();
+    await page.locator('.epub-search-panel').waitFor(); await outline.waitFor({ state: 'hidden' });
+    await page.getByRole('button', { name: '展开 EPUB 大纲', exact: true }).click();
+    await page.locator('.epub-search-panel').waitFor({ state: 'detached' });
+    await outline.getByRole('button', { name: '第二章', exact: true }).focus();
+    await page.keyboard.press('Escape'); await outline.waitFor({ state: 'hidden' });
+    assert.equal(await page.getByRole('button', { name: '展开 EPUB 大纲', exact: true }).evaluate(button => button === document.activeElement), true, 'closing a focused outline returns focus to its toggle');
+    await assertOutlineLayout();
     await waitForAnchor(beforeSize, 'the mid-chapter text anchor is visible before resizing');
     await page.getByRole('button', { name: '设置', exact: true }).click();
     const slider = page.getByRole('slider', { name: '正文字体大小', exact: true });
@@ -139,7 +195,7 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
     await page.waitForFunction(() => document.querySelector('.epub-pane')?.dataset.reflowing === 'false');
     assert.equal(await paragraphSize(), '22px');
     assert.equal(await editor.evaluate(element => getComputedStyle(element).fontSize), '22px');
-    assert.equal(await page.locator('.epub-chapter').innerText(), '第二章');
+    assert.equal(await page.locator('.epub-pane').getAttribute('data-current-chapter'), '第二章');
     const afterSize = JSON.parse(await fs.readFile(metaPath, 'utf8'));
     assert.equal(afterSize.fontSize, 150, 'old metadata remains compatible without overwriting its legacy field');
     assert.equal(afterSize.cfi.split('!')[0], beforeSize.split('!')[0], 'size changes stay in the original spine section');
@@ -148,9 +204,11 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
     await app.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; window.unmaximize(); window.setBounds({ width: 960, height: 640 }); });
     await page.getByRole('button', { name: '展开 EPUB 大纲', exact: true }).click();
     await outline.waitFor();
+    await outline.evaluate(async element => { await Promise.all(element.getAnimations().map(animation => animation.finished)); });
     const narrowPanel = await outline.boundingBox(), narrowPane = await page.locator('.epub-pane').boundingBox();
     await assertCompactReaderTab();
-    assert.ok(narrowPanel.width <= narrowPane.width * .4 + 1, 'outline leaves reading space in a narrow split');
+    assert.ok(narrowPanel.x >= narrowPane.x && narrowPanel.x + narrowPanel.width <= narrowPane.x + narrowPane.width + 1, 'outline stays inside its narrow reader column');
+    assert.ok(narrowPanel.width >= Math.min(180, narrowPane.width - 16), 'overlay keeps a usable outline width without shrinking the book');
     for (const control of await page.locator('.epub-header-actions button').all()) {
       const rect = await control.boundingBox();
       assert.ok(rect.x >= narrowPane.x && rect.x + rect.width <= narrowPane.x + narrowPane.width, 'reader actions remain accessible in their own column');
@@ -183,7 +241,7 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
     await page.locator('.file-row').filter({ hasText: 'book.epub' }).click();
     await page.waitForFunction(() => !document.querySelector('.epub-loading'));
     assert.equal(await paragraphSize(), '22px');
-    assert.equal(await page.locator('.epub-chapter').innerText(), '第二章', 'reopen restores the saved chapter');
+    assert.equal(await page.locator('.epub-pane').getAttribute('data-current-chapter'), '第二章', 'reopen restores the saved chapter');
     await waitForAnchor(savedAnchor, 'reopen restores the exact saved text, not just its chapter');
     await page.locator('.layout-tabs').getByRole('button', { name: '阅读', exact: true }).click();
     assert.equal(await readerTab.getAttribute('aria-selected'), 'true');

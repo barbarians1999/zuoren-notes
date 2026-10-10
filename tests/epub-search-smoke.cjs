@@ -49,7 +49,7 @@ test('EPUB whole-book search crosses inline nodes, navigates safely and isolates
   await t.test('literal search, case sensitivity, cross-node Chinese and correct chapter navigation', async () => {
     await search('needle', 2);
     await panel.locator('.epub-search-results > button').nth(1).click();
-    await page.waitForFunction(() => document.querySelector('.epub-chapter')?.textContent === 'Chapter 2');
+    await page.waitForFunction(() => document.querySelector('.epub-pane')?.dataset.currentChapter === 'Chapter 2');
     await page.locator('.zuoren-epub-search-hit').waitFor();
     await panel.getByRole('button', { name: 'EPUB 搜索区分大小写', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('.epub-search-status')?.textContent === '1 项结果');
@@ -64,7 +64,7 @@ test('EPUB whole-book search crosses inline nodes, navigates safely and isolates
     await input.fill('frequent'); await input.fill('needle'); await input.fill('absent-phrase');
     await panel.getByText('没有找到匹配内容', { exact: true }).waitFor();
     await search('needle', 2); await input.press('Enter');
-    await page.waitForFunction(() => document.querySelector('.epub-chapter')?.textContent === 'Chapter 1');
+    await page.waitForFunction(() => document.querySelector('.epub-pane')?.dataset.currentChapter === 'Chapter 1');
     await input.press('Escape'); await panel.waitFor({ state: 'detached' });
     assert.equal(await page.locator('.zuoren-epub-search-hit').count(), 0);
     await page.locator('.zhaoye-epub-highlight').waitFor();

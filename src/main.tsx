@@ -10,7 +10,7 @@ import { ConflictDialog, UnsavedDialog, TrashConfirmation } from './workspace/Do
 import { reader, NOTE_BODY_FONTS, type Layout, type ThemePreference, type NoteBodyFont, type ActivePdf, type ActiveEpub, type FileContextMenu, type InlineEntryEdit, type FindCommand } from './readerContext';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowLeft, ChevronRight, Copy, Folder, FolderOpen, FolderPlus, FolderTree, Maximize2, Minus, Monitor, Moon, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings2, Square, Sun, X } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Copy, Folder, FolderOpen, FolderPlus, FolderTree, Maximize2, Minimize2, Minus, Monitor, Moon, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings2, Square, Sun, X } from 'lucide-react';
 import { diagnostics } from './diagnostics.cjs';
 import { LatestRequest } from './asyncRequest.cjs';
 import { SessionWriter } from './sessionWriter.cjs';
@@ -730,7 +730,7 @@ function App() {
               <label className="motion-preference"><input type="checkbox" checked={motionReduced} disabled={systemReduced} onChange={event => setReduceMotion(event.target.checked)}/><span>减少动效</span>{systemReduced && <small>系统已启用</small>}</label>
             </div>
             <div className="settings-section">
-              <button className="settings-row" title="F11 切换全屏；全屏时移到顶边显示工具栏，F6 聚焦工具栏" onClick={() => { setSettingsOpen(false); void reader().windowControl('fullscreen'); }}><Maximize2 size={16}/><span>全屏阅读</span><small>{windowState.fullscreen ? '退出' : '进入'} · F11</small></button>
+              <button className="settings-row" title="F11 切换全屏；全屏时移到顶边显示工具栏，F6 聚焦工具栏" onClick={() => { setSettingsOpen(false); void reader().windowControl('fullscreen'); }}>{windowState.fullscreen ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}<span>全屏阅读</span><small>{windowState.fullscreen ? '退出' : '进入'} · F11</small></button>
             </div>
           </div>}
         </div>
@@ -741,7 +741,7 @@ function App() {
       </div>
       <div className="window-controls" aria-label="窗口控制">
         <button aria-label="最小化窗口" title="最小化" onClick={() => void reader().windowControl('minimize')}><Minus size={16}/></button>
-        {windowState.fullscreen ? <button aria-label="退出全屏" title="退出全屏（F11）" onClick={() => void reader().windowControl('fullscreen')}><Maximize2 size={15}/></button> : <button aria-label={windowState.maximized ? '还原窗口' : '最大化窗口'} title={windowState.maximized ? '还原' : '最大化'} onClick={() => void reader().windowControl('maximize').then(setWindowState)}>{windowState.maximized ? <Copy size={13}/> : <Square size={13}/>}</button>}
+        {windowState.fullscreen ? <button aria-label="退出全屏" title="退出全屏（F11）" onClick={() => void reader().windowControl('fullscreen')}><Minimize2 size={15}/></button> : <button aria-label={windowState.maximized ? '还原窗口' : '最大化窗口'} title={windowState.maximized ? '还原' : '最大化'} onClick={() => void reader().windowControl('maximize').then(setWindowState)}>{windowState.maximized ? <Copy size={13}/> : <Square size={13}/>}</button>}
         <button className="window-close" aria-label="关闭窗口" title="关闭" onClick={() => void reader().windowControl('close')}><X size={17}/></button>
       </div>
     </header>

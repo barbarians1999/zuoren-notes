@@ -274,7 +274,7 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
     window.__themeFrame = [...document.querySelectorAll('.epub-viewer iframe')].find(frame => frame.contentDocument?.body?.textContent?.includes('第二章 阅读与主题'));
     window.__themeBookDocument = window.__themeFrame.contentDocument;
   });
-  const beforeEpub = await page.evaluate(() => ({ chapter: document.querySelector('.epub-chapter').textContent,
+  const beforeEpub = await page.evaluate(() => ({ chapter: document.querySelector('.epub-pane').dataset.currentChapter,
     font: window.__themeFrame.contentWindow.getComputedStyle(window.__themeBookDocument.body).fontFamily, text: window.__themeBookDocument.body.textContent }));
   for (const name of custom) {
     await chooseTheme(page, name); await page.keyboard.press('Escape');
@@ -284,7 +284,7 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
     }, rgb(THEMES[name].colors.surface));
     const book = await page.evaluate(() => {
       const doc = window.__themeFrame.contentDocument, css = element => window.__themeFrame.contentWindow.getComputedStyle(element);
-      return { chapter: document.querySelector('.epub-chapter').textContent, font: css(doc.body).fontFamily, text: doc.body.textContent,
+      return { chapter: document.querySelector('.epub-pane').dataset.currentChapter, font: css(doc.body).fontFamily, text: doc.body.textContent,
         sameDocument: doc === window.__themeBookDocument, background: css(doc.body).backgroundColor, color: css(doc.querySelector('p')).color,
         span: css(doc.querySelector('p span')).color, heading: css(doc.querySelector('h1')).color, link: css(doc.querySelector('a')).color,
         styleCount: doc.querySelectorAll('#zuoren-notes-epub-theme').length };

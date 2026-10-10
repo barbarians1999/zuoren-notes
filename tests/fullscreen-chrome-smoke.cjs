@@ -91,6 +91,8 @@ test('fullscreen chrome reveals without resizing readers and preserves settings,
     const editorBounds = await page.locator('.cm-editor').boundingBox();
     await show();
     assert.deepEqual(await page.locator('.cm-editor').boundingBox(), editorBounds);
+    assert.equal(await page.getByRole('button', { name: '退出全屏', exact: true }).locator('svg.lucide-minimize-2').count(), 1, 'fullscreen exit uses inward arrows');
+    assert.equal(await page.getByRole('button', { name: '退出全屏', exact: true }).locator('svg.lucide-maximize-2').count(), 0);
     const exit = await page.evaluate(() => {
       const root = document.querySelector('.app'), top = document.querySelector('.topbar');
       // Finish entry before measuring exit; test geometry, not just CSS names.
@@ -110,6 +112,7 @@ test('fullscreen chrome reveals without resizing readers and preserves settings,
     assert.ok(exit.fraction > .4 && exit.fraction < .6, 'toolbar remains in view halfway through exit instead of disappearing offscreen immediately');
     await page.getByRole('button', { name: '设置', exact: true }).click();
     await page.locator('.settings-popover').waitFor();
+    assert.equal(await page.locator('.settings-row').filter({ hasText: '全屏阅读' }).locator('svg.lucide-minimize-2').count(), 1, 'settings shows the same fullscreen exit icon');
     await screenshot('note-fullscreen-settings');
     await page.mouse.move(500, 450); await page.waitForTimeout(800);
     assert.equal(await page.locator('.app').getAttribute('data-chrome-visible'), 'true', 'open settings pins controls');
@@ -119,6 +122,10 @@ test('fullscreen chrome reveals without resizing readers and preserves settings,
     await page.waitForTimeout(800); assert.equal(await page.locator('.app').getAttribute('data-chrome-visible'), 'true', 'keyboard focus stays visible');
     await page.getByRole('button', { name: '退出全屏', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('.app').dataset.fullscreen === 'false');
+    assert.equal(await page.getByRole('button', { name: '退出全屏', exact: true }).count(), 0, 'restored windows no longer show fullscreen exit');
+    await page.getByRole('button', { name: '设置', exact: true }).click();
+    assert.equal(await page.locator('.settings-row').filter({ hasText: '全屏阅读' }).locator('svg.lucide-maximize-2').count(), 1, 'windowed settings shows outward arrows for entry');
+    await page.keyboard.press('Escape');
     assert.equal(await page.locator('.cm-content').evaluate(el => el === window.__fullscreenEditor), true);
     await page.locator('.cm-content').click(); await page.keyboard.press('Control+z');
     assert.ok(!(await page.locator('.cm-content').innerText()).includes('UNDO-MARKER'), 'fullscreen does not lose undo');

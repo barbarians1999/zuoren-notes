@@ -123,7 +123,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
   const metaRef = useRef(epub.meta);
   const readingPosition = useRef({ cfi: epub.meta.cfi, progress: epub.meta.progress, fontSize: epub.meta.fontSize });
   const generationRef = useRef(0);
-  const interactions = useRef({ onActivate, onClose, closing }); interactions.current = { onActivate, onClose, closing };
+  const interactions = useRef({ onActivate, onClose, closing, dismissOutline: (): boolean => false });
   const navigateRef = useRef<(direction: 'next' | 'prev') => void>(() => {});
   const appliedTarget = useRef<EpubAnchor | null>(null);
   // Layout changes retain one semantic text point, not the rounded start of
@@ -133,6 +133,10 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
   const reflowToken = useRef(0);
   const [reflowing, setReflowing] = useState(false);
   const [outline, setOutline] = useState(false);
+  interactions.current = { onActivate, onClose, closing, dismissOutline: () => {
+    if (!outline) return false;
+    setOutline(false); return true;
+  } };
   const savingRef = useRef(false);
   const selectionActionGeneration = useRef(0);
   const [selectionFlow, setSelectionFlow] = useState<ExcerptFlowResult | null>(null);
@@ -142,6 +146,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
   const searchHighlight = useRef<string | null>(null), searchJumpToken = useRef(0);
   const showSearchRef = useRef(() => {});
   showSearchRef.current = () => {
+    setOutline(false);
     setSearchOpen(true);
     requestAnimationFrame(() => host.current?.parentElement?.querySelector<HTMLInputElement>('[aria-label="EPUB 搜索文本"]')?.focus());
   };
@@ -165,7 +170,6 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
   const [toc, setToc] = useState<FlatNavItem[]>([]);
   const [currentHref, setCurrentHref] = useState('');
   const [chapter, setChapter] = useState('');
-  const [progress, setProgress] = useState(epub.meta.progress || 0);
   const [loading, setLoading] = useState(true);
   const [selection, setSelection] = useState<Pick<EpubAnnotation, 'cfiRange' | 'quote' | 'chapterHref' | 'chapterLabel'> | null>(null);
   const [comment, setComment] = useState('');
@@ -204,7 +208,6 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
     element.tabIndex = -1;
     setLoading(true); setToc([]); setCurrentHref(''); setChapter('');
     setSelection(null); setComment('');
-    setProgress(epub.meta.progress || 0);
     metaRef.current = epub.meta;
     element.replaceChildren();
 
@@ -224,6 +227,9 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
     };
     navigateRef.current = navigatePage;
     const handlePageKeyDown = (event: KeyboardEvent) => {
+      if (!event.defaultPrevented && !event.isComposing && event.key === 'Escape' && interactions.current.dismissOutline()) {
+        event.preventDefault(); event.stopPropagation(); return;
+      }
       if (!event.defaultPrevented && !event.isComposing && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'w') {
         event.preventDefault(); event.stopPropagation(); interactions.current.onClose(); return;
       }
@@ -338,7 +344,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
           const chapterEstimate = (sectionIndex + pageFraction) / Math.max(1, spine.length);
           const measured = locationsReady && location.start.cfi ? book.locations.percentageFromCfi(location.start.cfi) : chapterEstimate;
           const nextProgress = Number.isFinite(measured) ? Math.min(1, Math.max(0, measured)) : 0;
-          setCurrentHref(item?.href || href); setChapter(item?.label || '正文'); setProgress(nextProgress);
+          setCurrentHref(item?.href || href); setChapter(item?.label || '正文');
           const position = { cfi: positionAnchor.current || visibleTextAnchor(rendition, element, location.start.cfi || ''), progress: nextProgress };
           readingPosition.current = { ...readingPosition.current, ...position };
           void metaWriter.current(current => ({ ...current, ...position }));
@@ -587,7 +593,10 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
     clearSearchHighlight(); setSearchOpen(false); host.current?.focus({ preventScroll: true });
   }
 
-  return <section className="pane epub-pane" inert={closing} data-reflowing={reflowing} onPointerDownCapture={onActivate} onFocusCapture={onActivate} onKeyDownCapture={event => {
+  return <section className="pane epub-pane" inert={closing} data-reflowing={reflowing} data-current-chapter={chapter} onPointerDownCapture={onActivate} onFocusCapture={onActivate} onKeyDownCapture={event => {
+    if (!event.defaultPrevented && !event.nativeEvent.isComposing && event.key === 'Escape' && outline) {
+      event.preventDefault(); event.stopPropagation(); setOutline(false); return;
+    }
     if (!event.defaultPrevented && !event.nativeEvent.isComposing && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'w') {
       event.preventDefault(); event.stopPropagation(); onClose(); return;
     }
@@ -606,7 +615,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
         <button className="workspace-icon-action" title="上一页（←／滚轮向上）" aria-label="上一页" disabled={loading || reflowing || closing} onClick={() => navigateRef.current('prev')}><ChevronLeft size={17}/></button>
         <button className="workspace-icon-action" title="下一页（→／滚轮向下）" aria-label="下一页" disabled={loading || reflowing || closing} onClick={() => navigateRef.current('next')}><ChevronRight size={17}/></button>
         <button className="workspace-icon-action" aria-label="在 EPUB 中查找" title="全书搜索（Ctrl+F）" disabled={closing} onClick={() => showSearchRef.current()}><Search size={15}/></button>
-        <button data-outline-toggle className={'workspace-icon-action ' + (outline ? 'active' : '')} aria-label={outline ? '收起 EPUB 大纲' : '展开 EPUB 大纲'} title={outline ? '收起大纲' : '展开大纲'} aria-pressed={outline} disabled={closing} onClick={() => setOutline(value => !value)}><List size={17}/></button>
+        <button data-outline-toggle className={'workspace-icon-action ' + (outline ? 'active' : '')} aria-label={outline ? '收起 EPUB 大纲' : '展开 EPUB 大纲'} title={`${outline ? '收起大纲' : '展开大纲'}${chapter ? ` · ${chapter}` : ''}`} aria-pressed={outline} aria-expanded={outline} disabled={closing} onClick={() => { if (!outline && searchOpen) closeSearch(); setOutline(value => !value); }}><List size={17}/></button>
       </div>
     </div>, headerTarget)}
     <div className="epub-content-row"><div className="epub-reader-shell"><div ref={host} className="epub-viewer"/>{loading && <div className="loading epub-loading">正在载入电子书…</div>}
@@ -616,7 +625,6 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
       returnFocus={() => headerTarget?.querySelector('[data-outline-toggle]') || null}
       items={toc.map((item, index) => ({ id: String(index), label: item.label, depth: item.depth, active: item.href === currentHref }))}
       onSelect={item => { const entry = toc[Number(item.id)]; if (entry) display(entry.href); }}/></div>
-    <div className="epub-foot"><span className="epub-chapter">{chapter || '电子书'}</span><progress aria-label="阅读进度" max="1" value={progress}/><span>{Math.round(progress * 100)}%</span></div>
     <aside className="epub-annotation-panel"><button className="epub-annotation-toggle" aria-expanded={annotationsOpen} onClick={() => setAnnotationsOpen(value => !value)}>标注（{epub.meta.annotations.length}）{annotationsOpen ? '　收起' : '　展开'}</button>
       {annotationsOpen && <div className="epub-annotation-list">{epub.meta.annotations.map(annotation => <div className={'epub-annotation-item ' + (flashId === annotation.id ? 'current' : '')} key={annotation.id}>
         {editingAnnotation === annotation.id ? <div className="epub-annotation-edit"><textarea autoFocus aria-label="编辑批注" maxLength={10000} value={editingComment} onChange={event => setEditingComment(event.target.value)} placeholder="可选批注"/><div className="epub-annotation-actions"><button className="primary" disabled={savingAnnotation} onClick={() => void saveAnnotationComment(annotation)}>保存</button><button disabled={savingAnnotation} onClick={() => { setEditingAnnotation(null); setEditingComment(''); }}>取消</button></div></div> : <>
