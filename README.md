@@ -2,9 +2,15 @@
 
 <img src="electron/assets/app-constructivist.png" width="112" align="right" alt="左人笔记图标" />
 
-面向本地资料阅读与 Markdown 写作的 Windows 桌面笔记软件。以 Markdown 为核心，也可以在同一工作区阅读 PDF、EPUB，并把摘录整理进笔记。
+面向本地资料阅读与 Markdown 写作的 Electron 桌面笔记软件，提供 Windows 安装版和 macOS 测试版。以 Markdown 为核心，也可以在同一工作区阅读 PDF、EPUB，并把摘录整理进笔记。
 
-**[下载 Windows 安装版（0.3.3）](https://github.com/barbarians1999/zuoren-notes/releases/latest)** · [查看全部版本](https://github.com/barbarians1999/zuoren-notes/releases)
+**[下载安装包（0.3.3）](https://github.com/barbarians1999/zuoren-notes/releases/tag/v0.3.3)** · [查看全部版本](https://github.com/barbarians1999/zuoren-notes/releases)
+
+- [Windows · x64 安装版](https://github.com/barbarians1999/zuoren-notes/releases/download/v0.3.3/ZuorenNotes-Setup-0.3.3.exe)
+- [macOS · Apple 芯片（arm64）测试版](https://github.com/barbarians1999/zuoren-notes/releases/download/v0.3.3/ZuorenNotes-0.3.3-macOS-arm64.dmg)
+- [macOS · Intel（x64）测试版](https://github.com/barbarians1999/zuoren-notes/releases/download/v0.3.3/ZuorenNotes-0.3.3-macOS-x64.dmg)
+
+Mac 版分别在对应架构的 macOS 环境构建，通过单元测试与定向包内检查；尚未完成完整 Mac 发布回归。仅有 ad-hoc 完整性签名，**未提供 Apple Developer ID 签名或公证**，首次打开可能被系统拦截。请仅从可信来源下载，在系统设置的“隐私与安全性”中核对后允许打开。[验证范围与构建说明](docs/macos-build.md) · [Mac SHA256 校验清单](https://github.com/barbarians1999/zuoren-notes/releases/download/v0.3.3/macOS-SHA256SUMS-0.3.3.txt)
 
 下方为左人笔记 0.3.3 的实际运行截图，笔记与书籍内容使用演示样本。
 
@@ -34,7 +40,7 @@
 - **写作与阅读连贯**：Markdown、PDF、EPUB 和笔记分栏协作，阅读摘录可回到笔记中继续编辑。
 - **保护编辑内容**：自动保存、撤销、恢复稿和外部文件冲突保护，尽量避免意外丢失修改。
 - **专注阅读**：支持阅读位置恢复、PDF 标注与 EPUB 目录和搜索。
-- **Windows 桌面应用**：提供安装版，并支持从文件或文件夹打开资料。
+- **桌面应用**：提供 Windows 安装版与 macOS 测试版，并支持从文件或文件夹打开资料；Linux 尚未构建或验证。
 
 ## 字体说明
 
@@ -42,7 +48,7 @@
 
 ## 获取与开发
 
-从 [GitHub Releases](https://github.com/barbarians1999/zuoren-notes/releases/latest) 下载最新的 Windows 安装包。
+从 [GitHub Releases](https://github.com/barbarians1999/zuoren-notes/releases/latest) 下载对应系统和芯片的安装包。Mac 打开 DMG 后，将应用拖入“应用程序”文件夹；Windows 与 Mac 安装包不能互换。
 
 开发环境需要 Node.js 与 pnpm：
 
@@ -59,5 +65,7 @@ pnpm test
 pnpm test:readers
 pnpm package:installer
 ```
+
+Mac 打包需在原生 Mac 上运行 `pnpm package:mac`，或手动触发仓库的 **Build and publish macOS packages** 工作流；不要在 Windows 上运行 Mac 打包命令。Electron 可复用主要业务代码，但系统路径、原生菜单、字体和文件关联仍需逐平台适配和验证。
 
 项目目前未附带开源许可证；如需再分发源码或构建产物，请先确认第三方字体及依赖的许可条件。
