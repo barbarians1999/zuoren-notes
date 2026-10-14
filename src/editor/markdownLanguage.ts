@@ -7,6 +7,7 @@ export function markdownSyntax() {
   return markdown({
     base: markdownLanguage,
     extensions: {
+      remove: ['Subscript', 'Superscript', 'Emoji'],
       defineNodes: ['Highlight', 'HighlightMark'],
       parseInline: [{
         name: 'Highlight',

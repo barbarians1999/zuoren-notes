@@ -12,7 +12,7 @@ function options(args) {
       result[flag.slice(2)] = value;
     } else throw Error('Unknown release argument: ' + flag);
   }
-  if (!['ui', 'full'].includes(result.profile)) throw Error('Profile must be ui or full');
+  if (!['ui', 'full', 'markdown'].includes(result.profile)) throw Error('Profile must be ui, full, or markdown');
   if (result.version && !/^\d+\.\d+\.\d+$/.test(result.version)) throw Error('Invalid version');
   if (result.cleanup && !result.publish) throw Error('Cleanup requires verified publication');
   return result;

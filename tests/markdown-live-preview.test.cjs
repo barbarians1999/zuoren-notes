@@ -113,3 +113,35 @@ test('moving the caret within the same active line reuses decorations; crossing 
  state = state.update({ selection: { anchor: state.doc.length - 2 } }).state;
  assert.notEqual(state.field(livePreview), before);
 });
+
+test('unresolved bracket text stays literal while defined reference links and autolinks preview', async () => {
+ for (const source of ['[ordinary]', '[missing][id]', '[id][]', '[[note]]', '- [?] task']) {
+  const { result } = await plan('cursor\n\n' + source);
+  assert.equal(result.some(x => x.spec.class === 'cm-md-link'), false, source);
+  assert.equal(result.some(x => x.source === '[' || x.source === ']'), false, 'unresolved brackets remain visible: ' + source);
+ }
+ for (const source of ['[text](https://example.com)', '[text]()', '[text][ID]\n\n[id]: /local.md', '[ID][]\n\n[id]: /local.md', '[ID]\n\n[id]: /local.md', '<https://example.com>', '<user@example.com>']) {
+  const { result } = await plan('cursor\n\n' + source);
+  assert.equal(result.some(x => x.spec.class === 'cm-md-link'), true, source);
+ }
+});
+
+test('Tab nested Markdown keeps formatting; ordinary indented text remains code like Obsidian', async () => {
+ const nested = 'cursor\n\n- parent\n\t- **bold** *italic* ~~strike~~ ==highlight==\n\t- [ ] task';
+ const { result } = await plan(nested);
+ for (const cls of ['strong', 'emphasis', 'strikethrough', 'highlight', 'indent-tab']) assert.ok(result.some(x => x.spec.class === 'cm-md-' + cls), cls);
+ assert.ok(result.some(x => x.spec.widget?.constructor.name === 'TaskWidget'));
+ assert.equal(result.some(x => x.spec.class?.includes('code-block')), false);
+ for (const indent of ['\t', '    ']) {
+  const { result } = await plan('cursor\n\n' + indent + '**literal**');
+  assert.ok(result.some(x => x.spec.class === 'cm-md-code-block'));
+  assert.equal(result.some(x => x.spec.class === 'cm-md-strong'), false);
+ }
+});
+
+test('indent guides cover whitespace only and exclude quote/list markers', async () => {
+ const { result } = await plan('cursor\n\n> - parent\n> \t- child');
+ const guides = result.filter(x => /^cm-md-indent-(tab|space)$/.test(x.spec.class || ''));
+ assert.ok(guides.length);
+ for (const guide of guides) assert.match(guide.source, /^[\t ]+$/);
+});

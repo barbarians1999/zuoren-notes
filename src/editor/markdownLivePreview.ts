@@ -2,6 +2,7 @@ import { StateField, type EditorState } from '@codemirror/state';
 import { ensureSyntaxTree, syntaxTree } from '@codemirror/language';
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view';
 import { renderMarkdown } from './markdownRendering';
+import { isResolvedMarkdownLink } from './markdownLinks';
 
 class MarkerWidget extends WidgetType {
   constructor(readonly label: string) { super(); }
@@ -200,9 +201,10 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
       if (marker) {
         const line = state.doc.lineAt(marker.from);
         for (let cursor = line.from; cursor < marker.from;) {
+          if (!/[\t ]/.test(state.sliceDoc(cursor, cursor + 1))) { cursor++; continue; }
           const tab = state.sliceDoc(cursor, cursor + 1) === '\t';
           let end = cursor + 1;
-          while (end < marker.from && (state.sliceDoc(end, end + 1) === '\t') === tab) end++;
+          while (end < marker.from && /[\t ]/.test(state.sliceDoc(end, end + 1)) && (state.sliceDoc(end, end + 1) === '\t') === tab) end++;
           mark(cursor, end, tab ? 'cm-md-indent-tab' : 'cm-md-indent-space');
           cursor = end;
         }
@@ -217,7 +219,11 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
       }
     }
     if (name === 'QuoteMark' && !active(from, to)) hide(from, to);
-    if (name === 'Link') {
+    if (name === 'Autolink') {
+      mark(from, to, 'cm-md-link');
+      if (!active(from, to)) for (const delimiter of node.getChildren('LinkMark')) hide(delimiter.from, delimiter.to);
+    }
+    if (name === 'Link' && isResolvedMarkdownLink(state, tree, node)) {
       mark(from, to, 'cm-md-link');
       if (!active(from, to)) {
         const marks = node.getChildren('LinkMark');

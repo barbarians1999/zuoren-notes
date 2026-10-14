@@ -37,3 +37,15 @@ pnpm release --profile ui --publish --cleanup --resume
 发布日志在交付目录 `logs/releases/版本`，每一步都有记录；包内报告与 SHA256 清单同时随 Release 提供。清理仅处理已核实的本机旧安装包、测试输出及打包暂存，历史日志保留；用途不明、用户资料、源码、依赖、恢复和救援目录不动。不会删除 GitHub 的历史 Release。
 
 在本机 Codex 环境，按 `AGENTS.md` 使用加载得到的 bundled Node；可通过 `ZUOREN_RELEASE_GIT` 指定 bundled Git 的绝对路径。
+
+## D 盘安装包同步
+
+统一 `pnpm release` 入口在本地验证完成后（使用 `--publish` 时则等云端发布成功），自动同步最新版安装包到 `D:\exe`。先复制、核对 SHA256，再回收同目录中版本号更低的左人笔记 Setup；不处理其他软件、新于当前版本的包或运行中的安装器，不自动安装。
+
+D 盘当前是可移动磁盘，因此旧包先复制到固定磁盘并核对、移入 Windows 回收站，确认回收内容哈希一致后，才删除 D 盘的旧副本。可在回收站恢复该副本并放回 D 盘。回收容量不足、文件占用或任何校验失败时保留旧文件，不永久删除唯一副本。同步清单、原路径、回收路径及 SHA256 留在 `logs/releases/版本/d-exe-sync-时间.json`。
+
+低层 `scripts/installer.cjs` 只构建，不代表验收完成，不触发同步。采用定向检查手工打包时，先完成并归档同格式 `VALIDATION.json`（包括包内检查、正文和图标校验），再执行以下命令；不带 `-Apply` 仅预览：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-installer.ps1 -Apply
+```

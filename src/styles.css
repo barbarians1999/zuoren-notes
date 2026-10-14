@@ -1067,6 +1067,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   min-height: 0;
   margin: 0;
   overflow: auto;
+  overflow-wrap: anywhere;
   padding: 48px clamp(34px, 7vw, 76px) 140px;
   outline: 0;
   color: var(--text);

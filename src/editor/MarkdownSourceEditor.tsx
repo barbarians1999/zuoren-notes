@@ -8,7 +8,7 @@ import { markdownSyntax } from './markdownLanguage';
 import { livePreview } from './markdownLivePreview';
 import { markdownClipboard } from './markdownClipboard';
 import { markdownTextSelection } from './markdownSelection';
-import { exitEmptyBlockquote, formatSourceSelection } from './markdownCommands';
+import { continueMarkdown, exitEmptyBlockquote, exitEmptyIndent, formatSourceSelection } from './markdownCommands';
 import { undoNoteView, redoNoteView, type NoteDocument, type NoteViewState } from '../workspace/noteDocument';
 
 // Keep the existing editing setup, but store undo data only in the document.
@@ -33,7 +33,7 @@ export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, shar
     if (!root.current) return;
     const extensions: Extension[] = [
         markdownClipboard, documentViewSetup, markdownSyntax(), proseHighlighting, livePreview, markdownTextSelection, indentUnit.of('\t'), EditorState.tabSize.of(4),
-        Prec.highest(keymap.of([{ key: 'Enter', run: exitEmptyBlockquote }, { key: 'Mod-z', run: undoNoteView }, { key: 'Mod-Shift-z', run: redoNoteView }, { key: 'Mod-y', run: redoNoteView }])),
+        Prec.highest(keymap.of([{ key: 'Enter', run: exitEmptyIndent }, { key: 'Enter', run: exitEmptyBlockquote }, { key: 'Enter', run: continueMarkdown }, { key: 'Mod-z', run: undoNoteView }, { key: 'Mod-Shift-z', run: redoNoteView }, { key: 'Mod-y', run: redoNoteView }])),
         keymap.of([indentWithTab]),
         Prec.highest(keymap.of([{ key: 'Mod-b', run: view => formatSourceSelection(view, 'bold') }, { key: 'Mod-i', run: view => formatSourceSelection(view, 'italic') }, { key: 'Mod-Shift-x', run: view => formatSourceSelection(view, 'strike') }])),
         EditorView.lineWrapping,

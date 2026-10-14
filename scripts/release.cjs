@@ -103,7 +103,10 @@ async function main() {
   const installerName = `ZuorenNotes-Setup-${version}.exe`, checksum = path.join(release, 'SHA256SUMS.txt');
   await fs.writeFile(checksum, `${report.installerSha256}  ${installerName}\n${report.appAsarSha256}  win-unpacked/resources/app.asar\n${report.executableSha256}  win-unpacked/ZuorenNotes.exe\n`);
   await fs.copyFile(checksum, path.join(logs, 'SHA256SUMS.txt'));
-  if (!args.publish) { console.log('[release] verified local package: ' + installer); return; }
+  if (!args.publish) {
+    await run('d-exe-sync', powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(root, 'scripts/sync-installer.ps1'), '-Apply']);
+    console.log('[release] verified local package: ' + installer); return;
+  }
 
   const remote = gitRead(['remote', 'get-url', 'origin']);
   const repository = remote.match(/^https:\/\/github\.com\/([\w.-]+\/[\w.-]+?)(?:\.git)?$/)?.[1];
@@ -216,6 +219,7 @@ async function main() {
     assets: cloud.assets.map(asset => ({ name: asset.name, size: asset.size, digest: asset.digest })), macReports });
   await fs.copyFile(path.join(logs, 'PUBLISHED.json'), path.join(release, 'PUBLISHED.json'));
   console.log('[release] verified publication: ' + cloud.html_url);
+  await run('d-exe-sync', powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(root, 'scripts/sync-installer.ps1'), '-Apply']);
   if (args.cleanup) {
     await run('cleanup', powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(root, 'scripts/recycle-old-releases.ps1'), '-Apply']);
     console.log('[release] obsolete local artifacts recycled; see ' + logs);

@@ -1,8 +1,35 @@
 import { EditorView } from '@codemirror/view';
-import { markdownLanguage } from '@codemirror/lang-markdown';
+import { insertNewlineContinueMarkupCommand, markdownLanguage } from '@codemirror/lang-markdown';
 import { ensureSyntaxTree, syntaxTree } from '@codemirror/language';
+import { isResolvedMarkdownLink } from './markdownLinks';
 export type MarkdownInlineFormat = 'bold' | 'italic' | 'code' | 'highlight' | 'strike' | 'link';
 export type MarkdownBlockFormat = 'heading' | 'quote' | 'bullet' | 'ordered' | 'task' | 'table';
+
+// Empty list items exit one level immediately instead of becoming a loose list.
+export const continueMarkdown = insertNewlineContinueMarkupCommand({ nonTightLists: false });
+
+export function exitEmptyIndent(view: EditorView) {
+  const { state } = view, selection = state.selection.main;
+  if (state.selection.ranges.length !== 1 || !selection.empty) return false;
+  const line = state.doc.lineAt(selection.head);
+  if (selection.head !== line.to || !/^[\t ]+$/.test(line.text) ||
+    !markdownLanguage.isActiveAt(state, selection.head, -1)) return false;
+  // A leading Tab is parsed as indented code even for ordinary prose. On an
+  // empty line, Enter exits that indentation instead of copying it indefinitely.
+  // Fenced code and nested Markdown containers retain their own Enter behavior.
+  const tree = ensureSyntaxTree(state, line.to, 100);
+  if (!tree) return false;
+  for (let node: ReturnType<typeof tree.resolveInner> | null = tree.resolveInner(selection.head, -1); node; node = node.parent) {
+    if (['FencedCode', 'ListItem', 'Blockquote', 'HTMLBlock'].includes(node.name)) return false;
+  }
+  view.dispatch({
+    changes: { from: line.from, to: line.to, insert: state.lineBreak },
+    selection: { anchor: line.from + 1 },
+    scrollIntoView: true,
+    userEvent: 'input'
+  });
+  return true;
+}
 
 export function exitEmptyBlockquote(view: EditorView) {
   const { state } = view, selection = state.selection.main;
@@ -11,11 +38,14 @@ export function exitEmptyBlockquote(view: EditorView) {
   if (selection.head !== line.to) return false;
   const match = /^(\s*)(?:>\s*)+$/.exec(line.text);
   if (!match || !markdownLanguage.isActiveAt(state, selection.head, -1)) return false;
-  let node: ReturnType<typeof syntaxTree>['topNode'] | null = syntaxTree(state).resolveInner(selection.head, -1);
+  const tree = ensureSyntaxTree(state, line.to, 100);
+  if (!tree) return false;
+  let node: ReturnType<typeof tree.resolveInner> | null = tree.resolveInner(selection.head, -1);
   for (; node; node = node.parent) {
     if (node.name === 'FencedCode' || node.name === 'CodeBlock') return false;
     if (node.name === 'Blockquote') {
-      const from = line.from + match[1].length;
+      // Keep outer quote levels and their whitespace; exit only the innermost.
+      const from = line.from + line.text.lastIndexOf('>');
       view.dispatch({
         changes: { from, to: line.to, insert: '' },
         selection: { anchor: from },
@@ -44,7 +74,7 @@ export function formatSourceSelection(view: EditorView, format: MarkdownInlineFo
   }
   const matching: ReturnType<typeof tree.resolveInner>[] = [];
   tree.iterate({ from, to, enter(node) {
-    if (node.name === nodeName && node.from <= from && node.to >= to &&
+    if (node.name === nodeName && (format !== 'link' || isResolvedMarkdownLink(state, tree, node.node)) && node.from <= from && node.to >= to &&
       (!range.empty || from > node.from && from < node.to)) matching.push(node.node);
   } });
   const active = matching.at(-1);

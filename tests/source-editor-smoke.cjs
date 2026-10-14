@@ -131,6 +131,14 @@ test('Markdown editing keeps continuous source text like Obsidian', { timeout: 9
   const preview = page.locator('.markdown-preview');
   await preview.waitFor();
   await preview.getByRole('heading', { name: '六级' }).waitFor();
+  await preview.evaluate(element => { const longText = document.createElement('p'); longText.textContent = 'X'.repeat(1400); element.append(longText); });
+  const horizontalOverflow = await preview.evaluate(element => {
+    const paragraph = element.lastElementChild;
+    const style = getComputedStyle(paragraph);
+    return { scrollWidth: element.scrollWidth, clientWidth: element.clientWidth, paragraphWidth: paragraph.clientWidth, paragraphScrollWidth: paragraph.scrollWidth, overflowWrap: style.overflowWrap, whiteSpace: style.whiteSpace };
+  });
+  assert.ok(horizontalOverflow.scrollWidth <= horizontalOverflow.clientWidth + 1, `unbroken Markdown text wraps instead of creating a horizontal scrollbar: ${JSON.stringify(horizontalOverflow)}`);
+  await preview.locator('p').last().evaluate(element => element.remove());
   assert.equal(await preview.locator('strong').getByText('粗体').count(), 1);
   assert.equal(await preview.locator('mark').getByText('高亮').count(), 1);
   assert.equal(await preview.locator('del').getByText('删除线').count(), 1);
@@ -191,4 +199,22 @@ test('Markdown editing keeps continuous source text like Obsidian', { timeout: 9
   await selectionToolbar.waitFor({ state: 'visible' });
   await page.keyboard.press('ArrowRight');
   await selectionToolbar.waitFor({ state: 'hidden' });
+
+  await page.keyboard.press('Control+End');
+  await page.keyboard.insertText('\n\n');
+  await page.keyboard.press('Tab');
+  await page.keyboard.insertText('Tab double Enter regression');
+  await page.keyboard.press('Enter');
+  assert.equal(await editor.locator('.cm-line').last().textContent(), '\t', 'first Enter continues the Tab indent');
+  await page.keyboard.press('Enter');
+  assert.equal(await editor.locator('.cm-line').last().locator('.cm-tab').count(), 0, 'second Enter leaves no invisible Tab');
+  await page.keyboard.insertText('Back at column zero');
+  await page.waitForTimeout(1800);
+  const exitedIndent = await fs.readFile(notePath, 'utf8');
+  assert.ok(exitedIndent.endsWith('\tTab double Enter regression\n\nBack at column zero'), 'double Enter removes the actual whitespace, not just its Live Preview guide');
+  await page.getByRole('button', { name: '切换到预览' }).click();
+  await page.locator('.markdown-preview').waitFor();
+  await page.getByRole('button', { name: '切换到源码编辑' }).click();
+  await editor.waitFor();
+  assert.equal(await editor.locator('.cm-line').filter({ hasText: 'Back at column zero' }).textContent(), 'Back at column zero', 'the unindented line survives a mode round trip');
 });
