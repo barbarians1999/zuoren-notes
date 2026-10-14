@@ -19,7 +19,12 @@ if ($proof.version -ne $manifest.version -or $proof.build -ne 'passed' -or
 $installerName = $manifest.build.win.artifactName.Replace('${version}', $manifest.version).Replace('${ext}', 'exe')
 if ($installerName -ne [IO.Path]::GetFileName($installerName) -or $proof.installer -ne $installerName) { throw 'Unexpected installer name.' }
 $source = Join-Path $release $installerName
-function Hash([string]$File) { return (Get-FileHash -LiteralPath $File -Algorithm SHA256).Hash.ToLowerInvariant() }
+function Hash([string]$File) {
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    $stream = [IO.File]::OpenRead($File)
+    try { return ([BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace('-', '').ToLowerInvariant() }
+    finally { $stream.Dispose(); $algorithm.Dispose() }
+}
 if ((Hash $source) -ne $proof.installerSha256 -or (Get-Item -LiteralPath $source).Length -ne $proof.installerBytes -or
     (Hash (Join-Path $release 'win-unpacked\resources\app.asar')) -ne $proof.appAsarSha256 -or
     (Hash (Join-Path $release 'win-unpacked\ZuorenNotes.exe')) -ne $proof.executableSha256) { throw 'Verified package changed.' }
