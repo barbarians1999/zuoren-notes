@@ -35,19 +35,33 @@ test('reading tasks use source transactions, isolated undo and guarded saves', {
   await tasks.first().waitFor();
   assert.equal(await tasks.count(), 4);
   assert.equal(await preview.locator('input:not([data-task-nonce])').isDisabled(), true, 'authored HTML is not a writable task');
+  const previewKey = async key => {
+    await application.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.focus(); win.webContents.focus(); });
+    await preview.focus();
+    assert.equal(await preview.evaluate(element => document.hasFocus() && document.activeElement === element), true, 'native focus and shortcut target are this preview');
+    await page.keyboard.press(key);
+  };
 
   await t.test('click saves the exact task, preserves CRLF/BOM and supports preview undo/redo', async () => {
     await tasks.nth(0).click();
     await waitForFile(first, text => text.includes('- [x] first'));
     const saved = await fs.readFile(first, 'utf8');
     assert.equal(saved, '\ufeff' + source.replace('- [ ] first', '- [x] first'));
-    await preview.press('Control+z');
-    await waitForFile(first, text => text === '\ufeff' + source);
-    await preview.press('Control+y');
+    await previewKey('Control+z');
+    try { await waitForFile(first, text => text === '\ufeff' + source); }
+    catch (error) {
+      const directory = process.env.ZUOREN_UI_DIAGNOSTICS || workspace.outputs; await fs.mkdir(directory, { recursive: true });
+      await fs.writeFile(path.join(directory, 'reading-undo-failure.json'), JSON.stringify({
+        expected: '\ufeff' + source, disk: await fs.readFile(first, 'utf8'),
+        state: await page.evaluate(() => ({ focused: document.hasFocus(), active: document.activeElement?.outerHTML, trace: window.readerDiagnostics?.snapshot(), editor: document.querySelector('.cm-content')?.textContent, save: document.querySelector('.markdown-save-state')?.textContent })),
+      }, null, 2));
+      await page.screenshot({ path: path.join(directory, 'reading-undo-failure.png') }); throw error;
+    }
+    await previewKey('Control+y');
     await waitForFile(first, text => text.includes('- [x] first'));
     await tasks.nth(2).click();
     await waitForFile(first, text => text.includes('  - [x] nested'));
-    await preview.press('Control+z');
+    await previewKey('Control+z');
     await waitForFile(first, text => text.includes('  - [ ] nested') && text.includes('- [x] first'));
     assert.equal((await fs.readFile(first, 'utf8')).includes('data-zuoren-task'), false);
     if (process.env.ZUOREN_SCREENSHOT_OUTPUT) await page.screenshot({ path: path.join(process.env.ZUOREN_SCREENSHOT_OUTPUT, 'reading-tasks.png') });
@@ -64,7 +78,7 @@ test('reading tasks use source transactions, isolated undo and guarded saves', {
     assert.ok((await fs.readFile(first, 'utf8')).includes('- [x] second'));
     await pane.getByRole('button', { name: '立即保存', exact: true }).click();
     await waitForFile(first, text => text.includes('- [ ] second'));
-    await preview.press('Control+z');
+    await previewKey('Control+z');
     await waitForFile(first, text => text.includes('- [x] second'));
   });
   await t.test('switching documents cannot reuse another task position or undo history', async () => {
@@ -75,7 +89,7 @@ test('reading tasks use source transactions, isolated undo and guarded saves', {
     await preview.locator('input[data-task-nonce]').click();
     await waitForFile(second, text => text === '- [x] other file\n');
     assert.ok((await fs.readFile(first, 'utf8')).includes('- [x] second'));
-    await preview.press('Control+z'); await waitForFile(second, text => text === '- [ ] other file\n');
+    await previewKey('Control+z'); await waitForFile(second, text => text === '- [ ] other file\n');
   });
   await t.test('external conflicts do not get overwritten by task edits', async () => {
     await fs.writeFile(second, '- [ ] disk version\n');
