@@ -1,7 +1,7 @@
 const {test,after}=require('node:test');
 const assert=require('node:assert/strict');const fs=require('node:fs/promises');const path=require('node:path');
 const {spawnSync}=require('node:child_process');
-const {PDFDocument,PDFName,PDFString,StandardFonts,rgb}=require('pdf-lib');const JSZip=require('jszip');const {_electron:electron}=require('playwright');
+const {PDFDocument,PDFName,PDFString,StandardFonts,rgb}=require('pdf-lib');const JSZip=require('jszip');const {_electron:electron}=require('./electronHarness.cjs');
 const {createSmokeWorkspace,cleanupSmokeWorkspace}=require('./smokeWorkspace.cjs');
 const {waitForFile}=require('./waitForFile.cjs');
 const appRoot=path.resolve(__dirname,'..');let smokeWorkspace,fixtureRoot,userData,application;

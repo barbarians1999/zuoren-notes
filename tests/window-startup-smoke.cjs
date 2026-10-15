@@ -3,10 +3,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { _electron } = require('playwright');
+const { _electron } = require('./electronHarness.cjs');
 const { createSmokeWorkspace, cleanupSmokeWorkspace } = require('./smokeWorkspace.cjs');
 
-test('startup maximizes even with a saved small restore size and window controls still work', { timeout: 30000 }, async () => {
+test('startup maximizes even with a saved small restore size and window controls still work', { timeout: 60000 }, async t => {
   const workspace = await createSmokeWorkspace('window-startup'), root = path.resolve(__dirname, '..');
   let app;
   try {
@@ -18,6 +18,11 @@ test('startup maximizes even with a saved small restore size and window controls
     if (packaged) assert.equal(await app.evaluate(({ app }) => app.getVersion()), require('../package.json').version);
     await page.waitForFunction(async () => (await window.reader.getWindowState()).maximized);
     assert.deepEqual(await page.evaluate(() => window.reader.getWindowState()), { maximized: true, fullscreen: false });
+    const minimumWidth = await app.evaluate(({ BrowserWindow, screen }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      return { actual: window.getMinimumSize()[0], expected: Math.floor(screen.getDisplayMatching(window.getBounds()).workAreaSize.width / 2) };
+    });
+    assert.equal(minimumWidth.actual, minimumWidth.expected, 'minimum width follows half of the current display work area');
     const assertContinuousBorder = async (name, hover = false) => {
       await page.mouse.move(300, 250);
       if (hover) await page.getByRole('button', { name: '关闭窗口', exact: true }).hover();
@@ -114,17 +119,24 @@ test('startup maximizes even with a saved small restore size and window controls
       await page.mouse.move(300, 250);
       await cdp.detach();
     };
-    for (const name of ['浅色', '纸页红', '深色']) {
+    // Theme resolution is independent of native hover assertions below.
+    await page.emulateMedia({ colorScheme: 'light' }); await palette('跟随系统');
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'constructivist-paper');
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'constructivist-dark');
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'constructivist-paper');
+    for (const name of ['纸页红', '浅色', '深色']) await t.test('wide window glyphs and separator: ' + name, async () => {
       await palette(name);
       await assertWindowFeedback();
       await assertContinuousBorder('topbar-wide-' + name);
       await assertContinuousBorder('topbar-wide-hover-' + name, true);
-    }
+    });
     await page.getByRole('button', { name: '还原窗口', exact: true }).click();
     await page.getByRole('button', { name: '最大化窗口', exact: true }).waitFor();
     const restore = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBounds());
     assert.ok(Math.abs(restore.width - 1000) <= 2 && Math.abs(restore.height - 680) <= 2, 'saved dimensions are restore bounds, not startup bounds');
-    for (const name of ['浅色', '纸页红', '深色']) {
+    for (const name of ['纸页红', '浅色', '深色']) {
       await palette(name);
       await assertContinuousBorder('topbar-narrow-' + name);
       await assertContinuousBorder('topbar-narrow-hover-' + name, true);

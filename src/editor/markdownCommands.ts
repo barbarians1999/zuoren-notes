@@ -2,6 +2,8 @@ import { EditorView } from '@codemirror/view';
 import { insertNewlineContinueMarkupCommand, markdownLanguage } from '@codemirror/lang-markdown';
 import { ensureSyntaxTree, syntaxTree } from '@codemirror/language';
 import { isResolvedMarkdownLink } from './markdownLinks';
+import { projectedHeadingLabel } from './markdownProjection';
+import { markdownSyntax } from './markdownLanguage';
 export type MarkdownInlineFormat = 'bold' | 'italic' | 'code' | 'highlight' | 'strike' | 'link';
 export type MarkdownBlockFormat = 'heading' | 'quote' | 'bullet' | 'ordered' | 'task' | 'table';
 
@@ -139,9 +141,19 @@ export function formatSourceBlock(view: EditorView, format: MarkdownBlockFormat)
   view.focus(); return true;
 }
 
+const outlineParser = markdownSyntax().language.parser;
+const outlineCache = new WeakMap<EditorView['state']['doc'], { text: string; level: number; line: number }[]>();
 export function markdownOutline(view: EditorView) {
+  const cached = outlineCache.get(view.state.doc);
+  if (cached) return cached;
   const headings: { text: string; level: number; line: number }[] = [];
-  syntaxTree(view.state).iterate({ enter(node) {
-    if (/^(ATX|Setext)Heading/.test(node.name)) headings.push({ text: view.state.sliceDoc(node.from, node.to).replace(/^#{1,6}\s+/, '').replace(/\n.*$/, ''), level: Number(node.name.slice(-1)), line: view.state.doc.lineAt(node.from).number - 1 });
-  } }); return headings;
+  // The same complete index supplies labels in editing and reading modes.
+  // Cache by immutable document, not selection or mode; a partial parse must
+  // not remove headings merely because the editor is hidden behind preview.
+  const tree = ensureSyntaxTree(view.state, view.state.doc.length, 100) || outlineParser.parse(view.state.doc.toString());
+  tree.iterate({ enter(node) {
+    if (/^(ATX|Setext)Heading/.test(node.name)) headings.push({ text: projectedHeadingLabel(view.state, node.node, tree), level: Number(node.name.slice(-1)), line: view.state.doc.lineAt(node.from).number - 1 });
+  } });
+  outlineCache.set(view.state.doc, headings);
+  return headings;
 }

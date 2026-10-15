@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { _electron: electron } = require('playwright');
+const { _electron: electron } = require('./electronHarness.cjs');
 
 const appRoot = path.resolve(__dirname, '..');
 let testRoot;

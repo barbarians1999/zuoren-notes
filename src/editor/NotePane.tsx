@@ -171,19 +171,10 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
     }
   }, [findOpen, mode, activeMatch?.from, activeMatch?.to, sourceView, previewMap]);
   useEffect(() => {
-    const element = host.current; if (!element) return;
-    if (mode === 'edit' && sourceView) {
-      const next = markdownOutline(sourceView);
-      setHeadings(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
-      return;
-    }
-    const update = () => {
-      const next = [...element.querySelectorAll<HTMLElement>('.markdown-preview :is(h1,h2,h3,h4,h5,h6)')].map(item => ({ text: item.textContent || '无标题', level: Number(item.tagName[1]) }));
-      setHeadings(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
-    };
-    const observer = new MutationObserver(update); observer.observe(element, { childList: true, characterData: true, subtree: true }); update();
-    return () => observer.disconnect();
-  }, [note?.path, mode, revision, sourceView, text]);
+    if (!outline || !sourceView || !note?.path) return;
+    const next = markdownOutline(sourceView);
+    setHeadings(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
+  }, [outline, note?.path, revision, sourceView, text]);
   useEffect(() => {
     setSelectedUnits(0); setParagraphUnits(0);
     const updateSelection = () => {

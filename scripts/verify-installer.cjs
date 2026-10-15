@@ -16,7 +16,10 @@ async function files(directory) {
 }
 async function main() {
   const manifest = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
-  const release = releaseDirectory(root, process.env.ZHAOYE_INSTALLER_OUTPUT), installer = path.join(release, manifest.build.win.artifactName.replace('${version}', manifest.version).replace('${ext}', 'exe'));
+  const release = releaseDirectory(root, process.env.ZHAOYE_INSTALLER_OUTPUT);
+  const installerName = process.env.ZHAOYE_INSTALLER_NAME || manifest.build.win.artifactName.replace('${version}', manifest.version).replace('${ext}', 'exe');
+  if (path.basename(installerName) !== installerName) throw Error('Invalid installer name');
+  const installer = path.join(release, installerName);
   const via = path.dirname(require.resolve('electron-builder'));
   const seven = require(require.resolve('7zip-bin', { paths: [via] })).path7za;
   const asar = require(require.resolve('@electron/asar', { paths: [via] }));

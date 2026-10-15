@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { hoverReady } = require('./electronHarness.cjs');
 
 // Exercise real hover/focus, including active tools in the night palette.
 async function assertGlyphActions(page, buttons) {
@@ -7,7 +8,7 @@ async function assertGlyphActions(page, buttons) {
     if (!(await button.isEnabled())) continue;
     await button.scrollIntoViewIfNeeded();
     await page.mouse.move(1, 1);
-    await button.hover();
+    await hoverReady(button);
     const bounds = await button.boundingBox();
     if (bounds) await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
     await page.waitForFunction(element => element?.isConnected && element.matches(':hover'), await button.elementHandle());

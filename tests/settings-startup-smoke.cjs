@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { _electron: electron } = require('playwright');
+const { _electron: electron } = require('./electronHarness.cjs');
 
 test('damaged settings are backed up and visibly reported at startup', { timeout: 30000 }, async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'zhaoye-settings-ui-'));

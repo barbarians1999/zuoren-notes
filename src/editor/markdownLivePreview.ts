@@ -3,6 +3,54 @@ import { ensureSyntaxTree, syntaxTree } from '@codemirror/language';
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view';
 import { renderMarkdown } from './markdownRendering';
 import { isResolvedMarkdownLink } from './markdownLinks';
+import { decodeMarkdownEntity, projectCodeBlock, projectTable, projectedSourcePosition, type BlockProjection, type CodeProjection, type TableProjection, type TextProjection } from './markdownProjection';
+
+function sameText(left: TextProjection, right: TextProjection) {
+  return left.text === right.text && left.anchor === right.anchor && left.segments.length === right.segments.length && left.segments.every((part, index) => {
+    const other = right.segments[index];
+    return part.displayFrom === other.displayFrom && part.displayTo === other.displayTo && part.sourceFrom === other.sourceFrom && part.sourceTo === other.sourceTo;
+  });
+}
+function sameBlock(left: BlockProjection, right: BlockProjection) {
+  return left.from === right.from && left.to === right.to && sameText(left.content, right.content)
+    && left.context.quoteDepth === right.context.quoteDepth && left.context.indentColumns === right.context.indentColumns
+    && left.context.markers.length === right.context.markers.length && left.context.markers.every((marker, index) => {
+      const other = right.context.markers[index]; return marker.column === other.column && marker.label === other.label && marker.source === other.source;
+    });
+}
+
+function textOffsetAtPoint(element: HTMLElement, event: MouseEvent) {
+  const caret = document.caretRangeFromPoint(event.clientX, event.clientY);
+  if (!caret || !element.contains(caret.startContainer)) return null;
+  const range = document.createRange(); range.selectNodeContents(element);
+  range.setEnd(caret.startContainer, caret.startOffset);
+  return range.toString().length;
+}
+
+function wrapBlock(view: EditorView, element: HTMLElement, projection: BlockProjection) {
+  const { context } = projection;
+  if (!context.quoteDepth && !context.indentColumns && !context.markers.length) return element;
+  const wrapper = document.createElement('div'); wrapper.className = 'cm-md-block-wrapper';
+  wrapper.dataset.quoteDepth = String(context.quoteDepth);
+  wrapper.style.setProperty('--md-quote-depth', String(context.quoteDepth));
+  wrapper.style.setProperty('--md-list-indent', `${context.indentColumns}ch`);
+  for (const marker of context.markers) {
+    const label = document.createElement('span'); label.className = 'cm-md-container-marker'; label.textContent = marker.label;
+    label.style.left = `calc(var(--md-quote-depth) * var(--md-quote-step) + ${marker.column}ch)`;
+    label.addEventListener('mousedown', event => event.preventDefault());
+    label.addEventListener('click', () => { view.dispatch({ selection: { anchor: marker.source }, scrollIntoView: true }); view.focus(); });
+    wrapper.append(label);
+  }
+  wrapper.append(element);
+  return wrapper;
+}
+
+class LiteralWidget extends WidgetType {
+  constructor(readonly text: string) { super(); }
+  eq(other: LiteralWidget) { return other.text === this.text; }
+  toDOM() { const span = document.createElement('span'); span.className = 'cm-md-literal'; span.textContent = this.text; return span; }
+  ignoreEvent() { return false; }
+}
 
 class MarkerWidget extends WidgetType {
   constructor(readonly label: string) { super(); }
@@ -32,11 +80,15 @@ class TaskWidget extends WidgetType {
 }
 
 class TableWidget extends WidgetType {
-  constructor(readonly source: string, readonly from: number, readonly cells: number[]) { super(); }
-  eq(other: TableWidget) { return other.from === this.from && other.source === this.source; }
+  constructor(readonly projection: TableProjection) { super(); }
+  get source() { return this.projection.content.text; }
+  get from() { return this.projection.from; }
+  get cells() { return this.projection.cells.map(cell => cell.anchor); }
+  eq(other: TableWidget) { return sameBlock(other.projection, this.projection) && other.projection.references === this.projection.references
+    && other.projection.cells.length === this.projection.cells.length && other.projection.cells.every((cell, index) => sameText(cell, this.projection.cells[index])); }
   toDOM(view: EditorView) {
     const el = document.createElement('div'); el.className = 'cm-md-table';
-    el.innerHTML = renderMarkdown(this.source);
+    el.innerHTML = renderMarkdown(this.source + this.projection.references);
     el.tabIndex = 0; el.setAttribute('aria-label', '表格，点击单元格编辑 Markdown');
     const activate = (position: number) => { view.dispatch({ selection: { anchor: position }, scrollIntoView: true }); view.focus(); };
     let press: { x: number; y: number } | null = null;
@@ -55,18 +107,23 @@ class TableWidget extends WidgetType {
       if (wasDragged) return;
       const cell = (event.target as Element).closest('th,td');
       const index = [...el.querySelectorAll('th,td')].indexOf(cell as Element);
-      activate(this.cells[index] ?? this.from);
+      const projected = this.projection.cells[index];
+      const offset = cell instanceof HTMLElement ? textOffsetAtPoint(cell, event) : null;
+      activate(projected ? offset !== null && cell?.textContent === projected.text ? projectedSourcePosition(projected, offset) : projected.anchor : this.from);
     });
     el.addEventListener('mouseup', () => setTimeout(() => { press = null; dragged = false; }, 0));
     el.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); activate(this.from); } });
-    return el;
+    return wrapBlock(view, el, this.projection);
   }
   ignoreEvent() { return true; }
 }
 
 class CodeBlockWidget extends WidgetType {
-  constructor(readonly code: string, readonly from: number, readonly language: string) { super(); }
-  eq(other: CodeBlockWidget) { return other.code === this.code && other.from === this.from && other.language === this.language; }
+  constructor(readonly projection: CodeProjection) { super(); }
+  get code() { return this.projection.content.text; }
+  get from() { return this.projection.content.anchor; }
+  get language() { return this.projection.language; }
+  eq(other: CodeBlockWidget) { return other.language === this.language && sameBlock(other.projection, this.projection); }
   toDOM(view: EditorView) {
     const box = document.createElement('div'); box.className = 'cm-md-code-preview';
     const pre = document.createElement('pre'), code = document.createElement('code');
@@ -77,7 +134,7 @@ class CodeBlockWidget extends WidgetType {
       label.textContent = this.language; box.prepend(label);
     }
     const activate = (offset = 0) => {
-      view.dispatch({ selection: { anchor: this.from + Math.min(this.code.length, Math.max(0, offset)) }, scrollIntoView: true });
+      view.dispatch({ selection: { anchor: projectedSourcePosition(this.projection.content, offset) }, scrollIntoView: true });
       view.focus();
     };
     let press: { x: number; y: number } | null = null;
@@ -94,17 +151,11 @@ class CodeBlockWidget extends WidgetType {
       event.preventDefault();
       const wasDragged = dragged; press = null; dragged = false;
       if (wasDragged) return;
-      const caret = document.caretRangeFromPoint(event.clientX, event.clientY);
-      let offset = 0;
-      if (caret && code.contains(caret.startContainer)) {
-        const range = document.createRange(); range.selectNodeContents(code);
-        range.setEnd(caret.startContainer, caret.startOffset); offset = range.toString().length;
-      }
-      activate(offset);
+      activate(textOffsetAtPoint(code, event) ?? 0);
     });
     box.addEventListener('mouseup', () => setTimeout(() => { press = null; dragged = false; }, 0));
     box.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); activate(); } });
-    return box;
+    return wrapBlock(view, box, this.projection);
   }
   ignoreEvent() { return true; }
 }
@@ -124,6 +175,8 @@ class HorizontalRuleWidget extends WidgetType {
 
 export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120): DecorationSet {
   const ranges: ReturnType<Decoration['range']>[] = [];
+  const blocks: ReturnType<Decoration['range']>[] = [];
+  const quoteDepths = new Map<number, number>();
   // Initial hydration may parse briefly. Typing has a smaller budget and
   // selection-only updates never force a synchronous full-document parse.
   // Language-worker tree updates finish the remaining decorations safely.
@@ -133,7 +186,11 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
     return from <= end && to >= start;
   });
   const hide = (from: number, to: number, widget?: WidgetType, block = false) => {
-    if (to > from) ranges.push(Decoration.replace({ widget, block }).range(from, to));
+    if (to > from) {
+      const range = Decoration.replace({ widget, block }).range(from, to);
+      ranges.push(range);
+      if (block) blocks.push(range);
+    }
   };
   const mark = (from: number, to: number, cls: string) => {
     if (to > from) ranges.push(Decoration.mark({ class: cls }).range(from, to));
@@ -142,10 +199,8 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
     const node = ref.node, { from, to, name } = node;
     if (name === 'FencedCode' || name === 'CodeBlock') {
       if (name === 'FencedCode' && !active(from, to)) {
-        const body = node.getChild('CodeText'), info = node.getChild('CodeInfo');
-        // Only decorate the view: document bytes, clipboard and undo stay Markdown.
-        hide(from, to, new CodeBlockWidget(body ? state.sliceDoc(body.from, body.to) : '', body?.from ?? state.doc.lineAt(from).to,
-          info ? state.sliceDoc(info.from, info.to) : ''), true);
+        const projection = projectCodeBlock(state, node);
+        hide(projection.from, projection.to, new CodeBlockWidget(projection), true);
       } else {
         mark(from, to, 'cm-md-code-block');
         const first = state.doc.lineAt(from).number, last = state.doc.lineAt(to).number;
@@ -157,13 +212,8 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
     }
     if (['HTMLBlock', 'CommentBlock', 'Image'].includes(name)) return false;
     if (name === 'Table' && !active(from, to)) {
-      const cells: number[] = [];
-      const cursor = node.cursor();
-      // SyntaxNode.cursor() retains its ancestors: next() can leave this table
-      // and walk the rest of the document. Bound the scan to this table so cell
-      // click targets stay local and multiple tables do not cause quadratic work.
-      do { if (cursor.name === 'TableCell') cells.push(cursor.from); } while (cursor.next() && cursor.from < to);
-      hide(from, to, new TableWidget(state.sliceDoc(from, to), from, cells), true);
+      const projection = projectTable(state, node, tree);
+      hide(projection.from, projection.to, new TableWidget(projection), true);
       return false;
     }
     if (name === 'HorizontalRule' && !active(from, to)) {
@@ -173,10 +223,14 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
     if (name === 'Blockquote') {
       const first = state.doc.lineAt(from).number;
       const last = state.doc.lineAt(Math.max(from, to - 1)).number;
+      let depth = 1;
+      for (let parent = node.parent; parent; parent = parent.parent) if (parent.name === 'Blockquote') depth++;
       for (let number = first; number <= last; number++) {
-        ranges.push(Decoration.line({ class: 'cm-md-quote' }).range(state.doc.line(number).from));
+        quoteDepths.set(number, Math.max(depth, quoteDepths.get(number) || 0));
       }
     }
+    if (name === 'Escape' && !active(from, to)) { hide(from, from + 1); return false; }
+    if (name === 'Entity' && !active(from, to)) { hide(from, to, new LiteralWidget(decodeMarkdownEntity(state.sliceDoc(from, to)))); return false; }
     if (/^(ATX|Setext)Heading/.test(name)) {
       const level = Number(name.slice(-1));
       mark(from, to, 'cm-md-heading cm-md-heading-' + level);
@@ -231,7 +285,19 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
       }
     }
   } });
-  return Decoration.set(ranges, true);
+  for (const [number, depth] of quoteDepths) ranges.push(Decoration.line({ class: 'cm-md-quote', attributes: {
+    'data-quote-depth': String(depth), style: `--md-quote-depth: ${depth}`,
+  } }).range(state.doc.line(number).from));
+  // A whole-line replacement owns its container prefix. Do not also paint a
+  // hidden list marker or an orphan quote line above the rendered block.
+  blocks.sort((left, right) => left.from - right.from);
+  const visible = ranges.filter(range => {
+    let low = 0, high = blocks.length;
+    while (low < high) { const middle = (low + high) >> 1; if (blocks[middle].to <= range.from) low = middle + 1; else high = middle; }
+    const block = blocks[low];
+    return !block || block === range || (range.from === range.to ? range.from < block.from : range.to <= block.from);
+  });
+  return Decoration.set(visible, true);
 }
 
 export const livePreview = StateField.define<DecorationSet>({

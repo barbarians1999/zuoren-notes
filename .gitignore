@@ -6,6 +6,8 @@ work/
 tmp/
 outputs/
 releases/
+logs/
+exports/
 *.log
 *.traineddata
 .reader/

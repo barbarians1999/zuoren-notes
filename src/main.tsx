@@ -23,6 +23,9 @@ import { THEMES, parseThemePreference, resolveTheme, themeVariables, type ThemeN
 import './styles.css';
 import { useFullscreenChrome } from './useFullscreenChrome';
 import { ReducedMotionContext, usePanelMotion, useTabMotion } from './uiMotion';
+import { ContextMenu, useOverlayFocus } from './ui/overlays';
+import { PaneSplitter } from './ui/PaneSplitter';
+import './ui/chrome.css';
 
 Object.defineProperty(window, 'readerDiagnostics', { configurable: true, value: Object.freeze({ snapshot: () => diagnostics.snapshot() }) });
 
@@ -79,6 +82,7 @@ function App() {
   });
   const [noteBodyFont, setNoteBodyFont] = useState<NoteBodyFont>(readNoteBodyFont);
   const [splitAt, setSplitAt] = useState(52);
+  const panesRef = useRef<HTMLDivElement>(null);
   const [root, setRootState] = useState('');
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [directory, setDirectory] = useState<DirectoryListing | null>(null);
@@ -103,7 +107,10 @@ function App() {
   const setQuery = useCallback((value: string) => { searchRequest.current.invalidate(); setQueryState(value); setResults([]); }, []);
   const sessionWriter = useRef(new SessionWriter());
   const settingsRef = useRef<HTMLDivElement>(null);
-  const fileContextMenuRef = useRef<HTMLDivElement>(null);
+  const settingsPanelRef = useRef<HTMLDivElement>(null);
+  const fileMenuTrigger = useRef<HTMLElement | null>(null);
+  useOverlayFocus(settingsOpen, settingsPanelRef, { kind: 'popover', onDismiss: () => setSettingsOpen(false),
+    returnFocus: () => settingsRef.current?.querySelector('button') || null });
   const inlineEntryInputRef = useRef<HTMLInputElement>(null);
   const newNoteGroup = useRef<NoteGroupId>('primary');
   const mutationBarrier = useRef(new MutationBarrier());
@@ -190,53 +197,6 @@ function App() {
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [activeNotePane]);
-
-  useEffect(() => {
-    if (!settingsOpen) return;
-    const closeOutside = (event: PointerEvent) => {
-      if (!settingsRef.current?.contains(event.target as Node)) setSettingsOpen(false);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSettingsOpen(false);
-    };
-    document.addEventListener('pointerdown', closeOutside);
-    document.addEventListener('keydown', closeOnEscape);
-    return () => {
-      document.removeEventListener('pointerdown', closeOutside);
-      document.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [settingsOpen]);
-
-  useEffect(() => {
-    if (!fileContextMenu) return;
-    requestAnimationFrame(() => fileContextMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus());
-    const closeOutside = (event: PointerEvent) => {
-      if (!fileContextMenuRef.current?.contains(event.target as Node)) setFileContextMenu(null);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { event.preventDefault(); setFileContextMenu(null); return; }
-      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Enter') return;
-      const items = [...(fileContextMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') || [])];
-      if (!items.length) return;
-      const index = items.indexOf(window.document.activeElement as HTMLButtonElement);
-      event.preventDefault();
-      if (event.key === 'Enter') { (window.document.activeElement as HTMLButtonElement | null)?.click(); return; }
-      items[(index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus();
-    };
-    const closeOnNavigation = () => setFileContextMenu(null);
-    document.addEventListener('pointerdown', closeOutside);
-    document.addEventListener('keydown', closeOnEscape);
-    window.addEventListener('resize', closeOnNavigation);
-    window.addEventListener('blur', closeOnNavigation);
-    window.addEventListener('scroll', closeOnNavigation, true);
-    return () => {
-      document.removeEventListener('pointerdown', closeOutside);
-      document.removeEventListener('keydown', closeOnEscape);
-      window.removeEventListener('resize', closeOnNavigation);
-      window.removeEventListener('blur', closeOnNavigation);
-      window.removeEventListener('scroll', closeOnNavigation, true);
-    };
-  }, [fileContextMenu]);
 
   useEffect(() => {
     if (!inlineEntryEdit) return;
@@ -472,15 +432,16 @@ function App() {
   }
   function pathDir(value: string) { return value.replace(/[\\/][^\\/]*$/, '') || value; }
   async function deleteEntry(entry: WorkspaceDirectoryEntry) {
-    const release = workspace.beginCommit(); if (!release) return;
+    const release = workspace.beginCommit(); if (!release) return false;
     const oldPath = entry.path, startDirectory = directory?.directory || root;
     try {
-      if (!(await workspace.saveAll())) return;
-      if (!(await readerSession.flush())) { setMessage('阅读进度或标注尚未保存成功，请重试后移入回收站。'); return; }
+      if (!(await workspace.saveAll())) return false;
+      if (!(await readerSession.flush())) { setMessage('阅读进度或标注尚未保存成功，请重试后移入回收站。'); return false; }
       mutationBarrier.current.block(oldPath);
       await reader().trashEntry(oldPath); const affected = (value: string) => sameOrDescendantPath(value, oldPath); workspace.forget(oldPath); readerSession.forgetPath(oldPath); setFiles(items => items.filter(item => !affected(item.path))); setScrollMemory(items => items.filter(item => !affected(item.path))); try { await loadDirectory(root, startDirectory); } catch (error) { setMessage(`刷新目录失败：${error instanceof Error ? error.message : String(error)}`); }
+      return true;
     }
-    catch (error) { releaseMutationBarrier(oldPath); setMessage(`删除失败：${error instanceof Error ? error.message : String(error)}`); }
+    catch (error) { releaseMutationBarrier(oldPath); setMessage(`删除失败：${error instanceof Error ? error.message : String(error)}`); return false; }
     finally { release(); /* retain successful tombstone; remove only on backend failure */ }
   }
   async function openFiles(group = workspace.activeGroup) {
@@ -690,7 +651,11 @@ function App() {
     const entries = directory?.entries || [];
     return query ? entries.filter(entry => entry.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())) : entries;
   }, [directory, query]);
-  const showContext = (event: React.MouseEvent, entry: WorkspaceDirectoryEntry) => { event.preventDefault(); event.stopPropagation(); setFileContextMenu({ entry, x: Math.min(event.clientX, window.innerWidth - 220), y: Math.min(event.clientY, window.innerHeight - 170) }); };
+  const showContext = (event: React.MouseEvent, entry: WorkspaceDirectoryEntry) => {
+    event.preventDefault(); event.stopPropagation(); fileMenuTrigger.current = event.currentTarget as HTMLElement;
+    const box = event.currentTarget.getBoundingClientRect();
+    setFileContextMenu({ entry, x: event.clientX || box.left, y: event.clientY || box.bottom });
+  };
   return <ReducedMotionContext.Provider value={motionReduced}><div className="app" inert={workspace.committing} aria-busy={workspace.committing} data-motion={motionReduced ? 'reduced' : 'full'} data-theme={resolvedTheme} data-fullscreen={windowState.fullscreen} data-layout={layout} style={{ '--reading-size': `${readingSize}px`, '--note-body-font': NOTE_BODY_FONTS[noteBodyFont], '--note-source-font': NOTE_BODY_FONTS[noteBodyFont] } as React.CSSProperties}>
     {windowState.fullscreen && <div className="fullscreen-reveal-edge" aria-hidden="true"/>}
     <header className="topbar">
@@ -700,7 +665,7 @@ function App() {
         <button className="quiet-action" title={sidebar ? '收起资料栏' : '展开资料栏'} onClick={() => setSidebar(value => !value)}>{sidebar ? <PanelLeftClose size={17}/> : <PanelLeftOpen size={17}/>}<span className="action-label">资料栏</span></button>
         <div className="settings-menu" ref={settingsRef}>
           <button className="quiet-action" aria-expanded={settingsOpen} aria-haspopup="dialog" title="设置" onClick={() => setSettingsOpen(value => !value)}><Settings2 size={17}/><span className="action-label">设置</span></button>
-          {settingsOpen && <div className="settings-popover" role="dialog" aria-label="阅读设置">
+          {settingsOpen && <div ref={settingsPanelRef} className="settings-popover" role="dialog" aria-label="阅读设置" tabIndex={-1}>
             <div className="settings-heading"><div><b>正文大小</b></div><strong>{readingSize}px</strong></div>
             <div className="font-size-control">
               <button aria-label="减小正文字体" title="减小" disabled={readingSize <= 14} onClick={() => setReadingSize(size => Math.max(14, size - 1))}>A−</button>
@@ -721,8 +686,8 @@ function App() {
               <span className="settings-section-title">外观</span>
               <div className="theme-options" role="group" aria-label="外观主题">
                 {([
-                  ['constructivist', '浅色', <Sun size={15}/>],
                   ['constructivist-paper', '纸页红', <Sun size={15}/>],
+                  ['constructivist', '浅色', <Sun size={15}/>],
                   ['constructivist-dark', '深色', <Moon size={15}/>],
                   ['system', '跟随系统', <Monitor size={15}/>],
                 ] as const).map(([value, label, icon]) => <button key={value} className={themePreference === value ? 'active' : ''} aria-pressed={themePreference === value} onClick={() => setThemePreference(value)}>{icon}<span>{label}</span></button>)}
@@ -734,10 +699,10 @@ function App() {
             </div>
           </div>}
         </div>
-        <button className="quiet-action" onClick={() => void openFiles()}><FolderOpen size={17}/><span className="action-label">打开文件</span></button>
-        <button className="quiet-action" onClick={openWorkspace}><FolderTree size={17}/><span className="action-label">打开文件夹</span></button>
-        <button className="quiet-action" onClick={() => beginInline('folder')}><FolderPlus size={17}/><span className="action-label">新建文件夹</span></button>
-        <button className="new-note-action" onClick={() => beginInline('note')}><Plus size={17}/><span>新笔记</span></button>
+        <button className="quiet-action" aria-label="打开文件" title="打开文件" onClick={() => void openFiles()}><FolderOpen size={17}/><span className="action-label">打开文件</span></button>
+        <button className="quiet-action" aria-label="打开文件夹" title="打开文件夹" onClick={openWorkspace}><FolderTree size={17}/><span className="action-label">打开文件夹</span></button>
+        <button className="quiet-action" aria-label="新建文件夹" title="新建文件夹" onClick={() => beginInline('folder')}><FolderPlus size={17}/><span className="action-label">新建文件夹</span></button>
+        <button className="new-note-action" aria-label="新笔记" title="新建笔记" onClick={() => beginInline('note')}><Plus size={17}/><span>新笔记</span></button>
       </div>
       <div className="window-controls" aria-label="窗口控制">
         <button aria-label="最小化窗口" title="最小化" onClick={() => void reader().windowControl('minimize')}><Minus size={16}/></button>
@@ -769,9 +734,9 @@ function App() {
             <div className="note-controls-slot" ref={setNoteControlsTarget}/>
           </div>
         </div>
-        <div className={'panes ' + layout + (layout === 'note' && workspace.groups.secondary.tabs.length ? ' dual-notes' : '')} style={{ '--split-at': `${splitAt}%` } as React.CSSProperties}>
+        <div ref={panesRef} className={'panes ' + layout + (layout === 'note' && workspace.groups.secondary.tabs.length ? ' dual-notes' : '')} style={{ '--split-at': `${splitAt}%` } as React.CSSProperties}>
           {(layout === 'read' || layout === 'split') && (activeEpub ? <EpubPane key={activeEpub.path} epub={activeEpub} theme={resolvedTheme} noteBodyFont={noteBodyFont} readingSize={readingSize} headerTarget={readerHeaderTarget} active={activeSurface === 'reader'} closing={readerClosing} onActivate={() => setActiveSurface('reader')} onClose={() => void closeEpub()} onMeta={change => readerSession.updateEpub(change, activeEpub)} onMessage={setMessage} onExcerpt={insertEpubExcerpt} onSelectionAction={saveEpubSelection} excerptTarget={activeDoc ? (workspace.activeGroup === 'secondary' ? '摘录到右栏' : '摘录到当前笔记') : null} target={isEpubAnchor(target) ? target : null}/> : <PdfPane dark={THEMES[resolvedTheme].colorScheme === 'dark'} pdf={activePdf} page={page} setPage={value => readerSession.setPage(value)} scale={scale} setScale={value => readerSession.setScale(value)} fullscreen={windowState.fullscreen} onToggleFullscreen={() => { void reader().windowControl('fullscreen'); }} onMeta={change => activePdf ? readerSession.updatePdf(change, activePdf) : Promise.resolve(false)} captureExcerpt={capturePdfExcerpt} onTextAction={onPdfTextAction} canExcerpt={!!activeDoc && !activeDoc.blocked()} target={target && 'pdfId' in target ? target : null} onMessage={setMessage}/>)}
-          {layout === 'split' && <div className="splitter" role="separator" aria-label="调整阅读与笔记宽度" aria-orientation="vertical" onPointerDown={event => { const start = event.clientX; const initial = splitAt; const move = (next: PointerEvent) => setSplitAt(Math.min(75, Math.max(25, initial + (next.clientX - start) / window.innerWidth * 100))); const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); }; window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); }}/>} 
+          {layout === 'split' && <PaneSplitter key={'splitter:' + (activeEpub?.path || activePdf?.path || 'reader')} container={panesRef} ratio={splitAt} onChange={setSplitAt} deferred={!!activeEpub}/>}
           {(['primary', 'secondary'] as const).map(group => <NoteGroupPane key={group} workspace={workspace} group={group}
             tabsTarget={noteTabsTarget} controlsTarget={noteControlsTarget}
             foreground={!epubVisible || activeSurface === 'note'} onFocus={() => setActiveSurface('note')}
@@ -785,14 +750,14 @@ function App() {
         </div>
       </main>
     </div>
-    {fileContextMenu && <div ref={fileContextMenuRef} className="file-context-menu" role="menu" style={{ left: fileContextMenu.x, top: fileContextMenu.y }} onPointerDown={event => event.stopPropagation()}><button role="menuitem" onClick={() => { setFileContextMenu(null); void reader().showItemInFolder(fileContextMenu.entry.path); }}>打开所在路径</button>{fileContextMenu.entry.kind === 'file' && fileContextMenu.entry.type === 'md' && <button role="menuitem" onClick={() => { const entry = fileContextMenu.entry as WorkspaceFile; setFileContextMenu(null); void openEntry(entry); }}>在新标签页中打开</button>}{fileContextMenu.entry.kind === 'file' && fileContextMenu.entry.type === 'md' && <button role="menuitem" onClick={() => { const entry = fileContextMenu.entry as WorkspaceFile; setFileContextMenu(null); void openNoteInSecondary(entry); }}>在右侧打开</button>}<button role="menuitem" onClick={() => beginRename(fileContextMenu.entry)}>重命名</button><button role="menuitem" onClick={() => { setTrashCandidate(fileContextMenu.entry); setFileContextMenu(null); }}>移到回收站</button></div>}
-    {trashCandidate && !modalConflict && !workspace.pendingClose && <TrashConfirmation name={trashCandidate.name} onCancel={() => setTrashCandidate(null)} onConfirm={() => { const entry = trashCandidate; setTrashCandidate(null); void deleteEntry(entry); }}/>}
-    {message && <div className="toast"><span>{message}</span><button onClick={() => setMessage('')}><X size={16}/></button></div>}
+    {fileContextMenu && <ContextMenu x={fileContextMenu.x} y={fileContextMenu.y} returnFocus={fileMenuTrigger.current} label="文件操作" onClose={() => setFileContextMenu(null)}><button role="menuitem" onClick={() => { setFileContextMenu(null); void reader().showItemInFolder(fileContextMenu.entry.path); }}>打开所在路径</button>{fileContextMenu.entry.kind === 'file' && fileContextMenu.entry.type === 'md' && <button role="menuitem" onClick={() => { const entry = fileContextMenu.entry as WorkspaceFile; setFileContextMenu(null); void openEntry(entry); }}>在新标签页中打开</button>}{fileContextMenu.entry.kind === 'file' && fileContextMenu.entry.type === 'md' && <button role="menuitem" onClick={() => { const entry = fileContextMenu.entry as WorkspaceFile; setFileContextMenu(null); void openNoteInSecondary(entry); }}>在右侧打开</button>}<button role="menuitem" onClick={() => beginRename(fileContextMenu.entry)}>重命名</button><button role="menuitem" className="menu-item-danger" onClick={() => { setTrashCandidate(fileContextMenu.entry); setFileContextMenu(null); }}>移到回收站</button></ContextMenu>}
+    {trashCandidate && !modalConflict && !workspace.pendingClose && <TrashConfirmation name={trashCandidate.name} onCancel={() => setTrashCandidate(null)} onConfirm={async () => { const entry = trashCandidate; const okay = await deleteEntry(entry); if (okay) setTrashCandidate(null); return okay; }}/>}
+    {message && <div className="toast"><span role="status">{message}</span><button aria-label="关闭提示" onClick={() => setMessage('')}><X size={16}/></button></div>}
     {workspace.pendingClose && !modalConflict && <UnsavedDialog description="关闭这份未能保存的笔记" onCancel={() => { workspace.pendingClose = null; workspace.blockingDocument = null; workspace.notify(); }}
       onDiscard={async () => { await workspace.finishPendingClose(true).catch(error => setMessage(String(error))); }}
       onSave={async () => { await workspace.finishPendingClose().catch(error => setMessage(String(error))); }}/>}
     {modalConflict && conflictDoc && <ConflictDialog conflict={{ ...modalConflict, conflict: true }} mine={conflictDoc.recoveryConflict?.recovery.content || conflictDoc.text}
-      closing={closing} onMine={() => void resolveConflict('mine')} onDisk={() => void resolveConflict('disk')} onSaveAs={() => void resolveConflict('copy')}/>}
+      closing={closing} onMine={() => resolveConflict('mine')} onDisk={() => resolveConflict('disk')} onSaveAs={() => resolveConflict('copy')}/>}
   </div></ReducedMotionContext.Provider>;
 }
 

@@ -68,7 +68,7 @@ function parseThemePreference(saved) {
 }
 function resolveTheme(preference, systemDark = false) {
   const parsed = parseThemePreference(preference);
-  return parsed === 'system' ? (systemDark ? 'constructivist-dark' : 'constructivist') : parsed;
+  return parsed === 'system' ? (systemDark ? 'constructivist-dark' : 'constructivist-paper') : parsed;
 }
 function themeVariables(theme) {
   return Object.fromEntries(Object.entries(THEMES[theme].colors).map(([key, color]) => ['--' + key, color]));

@@ -56,6 +56,8 @@ async function runBuilder() {
 
 async function main() {
   const manifest = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
+  const installerName = process.env.ZHAOYE_INSTALLER_NAME;
+  if (installerName && (path.basename(installerName) !== installerName || !installerName.endsWith('.exe'))) throw Error('Invalid installer name');
   const electron = await packageRoot('electron', root);
   const electronDist = path.join(electron.directory, 'dist');
   const runtimeVersion = (await fs.readFile(path.join(electronDist, 'version'), 'utf8')).trim();
@@ -76,6 +78,7 @@ async function main() {
     dependencies: { 'tesseract.js': manifest.dependencies['tesseract.js'] },
     build: {
       ...manifest.build,
+      win: { ...manifest.build.win, ...(installerName ? { artifactName: installerName } : {}) },
       electronVersion: electron.manifest.version,
       electronDist,
       files: [...manifest.build.files, 'node_modules/**/*'],

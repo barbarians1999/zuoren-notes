@@ -21,7 +21,7 @@ test('legacy, custom and invalid theme preferences resolve safely', () => {
   for (const legacy of ['light', 'blue-white', 'red-white']) assert.equal(parseThemePreference(legacy), 'constructivist');
   for (const legacy of ['dark', 'red-black']) assert.equal(parseThemePreference(legacy), 'constructivist-dark');
   assert.equal(parseThemePreference('system'), 'system');
-  assert.equal(resolveTheme('system', false), 'constructivist');
+  assert.equal(resolveTheme('system', false), 'constructivist-paper');
   assert.equal(resolveTheme('system', true), 'constructivist-dark');
   for (const name of Object.keys(THEMES)) {
     assert.equal(resolveTheme(name), name);
@@ -91,5 +91,5 @@ test('paper day is optional and preserves the original day and highlight colors'
   assert.equal(paper.sidebar, '#f5f4f0');
   assert.equal(paper['topbar-bg'], '#21211e');
   assert.equal(paper.accent, '#b52d24');
-  assert.equal(resolveTheme('system', false), 'constructivist');
+  assert.equal(resolveTheme('system', false), 'constructivist-paper');
 });

@@ -1,15 +1,18 @@
-param([string]$OutputDirectory)
+param([string]$OutputDirectory, [string]$ReleaseDirectory, [string]$InstallerName)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 $projectRoot = [IO.Path]::GetFullPath((Split-Path $PSScriptRoot -Parent))
 $manifest = Get-Content -LiteralPath (Join-Path $projectRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 $release = Join-Path ([IO.Path]::GetFullPath((Join-Path $projectRoot $manifest.build.directories.output))) $manifest.version
+if ($ReleaseDirectory) { $release = [IO.Path]::GetFullPath($ReleaseDirectory) }
+if (-not $InstallerName) { $InstallerName = $manifest.build.win.artifactName.Replace('${version}', $manifest.version).Replace('${ext}', 'exe') }
+if ([IO.Path]::GetFileName($InstallerName) -ne $InstallerName) { throw 'Invalid installer name.' }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $release 'icon-verification' }
 [IO.Directory]::CreateDirectory($OutputDirectory) | Out-Null
 $paths = [ordered]@{
     source = (Join-Path $projectRoot $manifest.build.win.icon)
     executable = (Join-Path $release 'win-unpacked/ZuorenNotes.exe')
-    installer = (Join-Path $release ($manifest.build.win.artifactName.Replace('${version}', $manifest.version).Replace('${ext}', 'exe')))
+    installer = (Join-Path $release $InstallerName)
 }
 $signatures = @{}
 foreach ($label in $paths.Keys) {

@@ -6,7 +6,7 @@ const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { PDFDocument, PDFName, PDFString, StandardFonts, rgb } = require('pdf-lib');
 const JSZip = require('jszip');
-const { _electron: electron, chromium } = require('playwright');
+const { _electron: electron, chromium } = require('./electronHarness.cjs');
 const { createSmokeWorkspace, cleanupSmokeWorkspace } = require('./smokeWorkspace.cjs');
 
 const appRoot = path.resolve(__dirname, '..');

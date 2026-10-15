@@ -112,15 +112,15 @@ export function usePdfSelection({ pdf, root, tool, onTextAction, onMessage, onCl
     try {
       const outcome = await (retry ? retry() : current.onTextAction(selected, action));
       if (draftRef.current?.id !== selected.id || latest.current.pdf?.data !== selected.documentKey) return;
-      if (outcome.done) clear();
+      if (outcome.done) { clear(); current.onMessage(outcome.inserted ? '摘录已插入当前笔记' : '高亮已保存'); }
       else { setResult(outcome); if (outcome.error) current.onMessage(outcome.error); }
     } catch (error) { if (draftRef.current?.id === selected.id) current.onMessage(`PDF 文字操作失败：${String(error)}`); }
     finally { lock.current = false; setBusy(false); }
   }
   async function copy() {
-    const value = draftRef.current; if (!value || latest.current.pdf?.data !== value.documentKey) return;
-    try { await navigator.clipboard.writeText(value.quote); }
-    catch (error) { latest.current.onMessage(`复制失败，请使用 Ctrl+C：${String(error)}`); }
+    const value = draftRef.current; if (!value || latest.current.pdf?.data !== value.documentKey) return false;
+    try { await navigator.clipboard.writeText(value.quote); return draftRef.current?.id === value.id && latest.current.pdf?.data === value.documentKey; }
+    catch (error) { if (draftRef.current?.id === value.id) latest.current.onMessage(`复制失败，请使用 Ctrl+C：${String(error)}`); return false; }
   }
   return { draft: draft?.documentKey === pdf?.data ? draft : null, pins, busy, result, clear, act, copy };
 }

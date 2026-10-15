@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { PDFDocument, StandardFonts } = require('pdf-lib');
-const { _electron } = require('playwright');
+const { _electron } = require('./electronHarness.cjs');
 const { digest } = require('../electron/storage.cjs');
 const { createSmokeWorkspace, cleanupSmokeWorkspace } = require('./smokeWorkspace.cjs');
 const { waitForFile } = require('./waitForFile.cjs');
@@ -34,7 +34,8 @@ test('region and OCR handoffs stay bound to the original note, retain retries an
     await page.waitForFunction(() => document.querySelector('[data-pdf-page="1"] canvas')?.width > 0);
     await app.evaluate(({ ipcMain }) => {
       const attachment = ipcMain._invokeHandlers.get('save-attachment'), anchor = ipcMain._invokeHandlers.get('make-anchor-path');
-      globalThis.__handoffAudit = { sources: [], delayAttachment: true, pending: false, release: null, failAnchor: false, anchors: 0 };
+      globalThis.__handoffAudit = { sources: [], delayAttachment: true, pending: false, release: null, failAnchor: false, anchors: 0,
+        delayAnchor: false, anchorPending: false, releaseAnchor: null, holdOcr: false, ocrJobs: [], canceled: [], failCancel: false };
       ipcMain.removeHandler('save-attachment'); ipcMain.handle('save-attachment', async (event, input) => {
         const audit = globalThis.__handoffAudit; audit.sources.push(input.sourcePath);
         if (audit.delayAttachment) { audit.delayAttachment = false; audit.pending = true; await new Promise(resolve => audit.release = resolve); }
@@ -43,12 +44,19 @@ test('region and OCR handoffs stay bound to the original note, retain retries an
       ipcMain.removeHandler('make-anchor-path'); ipcMain.handle('make-anchor-path', async (event, input) => {
         const audit = globalThis.__handoffAudit; audit.anchors++;
         if (audit.failAnchor) { audit.failAnchor = false; throw Error('injected handoff insertion failure'); }
+        if (audit.delayAnchor) { audit.delayAnchor = false; audit.anchorPending = true; await new Promise(resolve => audit.releaseAnchor = resolve); }
         return anchor(event, input);
       });
       ipcMain.removeHandler('start-ocr'); ipcMain.handle('start-ocr', event => {
-        const jobId = 'handoff-ocr';
-        setTimeout(() => event.sender.send('ocr-progress', { jobId, progress: 1, status: 'done', text: 'Captured OCR text' }), 80);
+        const audit = globalThis.__handoffAudit, jobId = 'handoff-ocr-' + (audit.ocrJobs.length + 1);
+        audit.ocrJobs.push(jobId);
+        if (!audit.holdOcr) setTimeout(() => event.sender.send('ocr-progress', { jobId, progress: 1, status: 'done', text: 'Captured OCR text' }), 80);
         return { jobId };
+      });
+      ipcMain.removeHandler('cancel-ocr'); ipcMain.handle('cancel-ocr', (_event, jobId) => {
+        const audit = globalThis.__handoffAudit;
+        if (audit.failCancel) { audit.failCancel = false; throw Error('injected OCR cancellation failure'); }
+        audit.canceled.push(jobId); return true;
       });
     });
     let lastDrag;
@@ -120,19 +128,64 @@ test('region and OCR handoffs stay bound to the original note, retain retries an
     await t.test('OCR insertion failure retains the confirmed text and retries only the original note transaction', async () => {
       await draw(); await page.getByRole('button', { name: '识别文字并摘录', exact: true }).click();
       const dialog = page.getByRole('dialog', { name: '扫描文字识别' }); await dialog.locator('textarea').waitFor();
+      assert.equal(await dialog.getAttribute('aria-modal'), 'true');
+      for (let step = 0; step < 7; step++) {
+        await page.keyboard.press(step % 2 ? 'Shift+Tab' : 'Tab');
+        assert.equal(await dialog.evaluate(el => el.contains(document.activeElement)), true, 'Tab stays in the OCR dialog');
+      }
+      await dialog.getByRole('button', { name: '关闭扫描文字识别', exact: true }).focus();
+      const pageBefore = await page.locator('.page-control input').inputValue();
+      await page.keyboard.press('ArrowRight');
+      assert.equal(await page.locator('.page-control input').inputValue(), pageBefore);
+      await page.keyboard.press('Control+f');
+      assert.equal(await page.getByRole('search', { name: '查找当前 PDF', exact: true }).count(), 0, 'OCR focus must not open PDF search behind the modal');
+      await page.evaluate(() => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true })));
+      assert.equal(await dialog.isVisible(), true, 'IME Escape does not dismiss OCR');
+      const screenshots = process.env.ZUOREN_SCREENSHOT_OUTPUT;
+      if (screenshots) { await fs.mkdir(screenshots, { recursive: true }); await page.screenshot({ path: path.join(screenshots, 'chrome-ocr-dialog.png') }); }
       await waitForFile(a, text => text.includes('![PDF'));
       await app.evaluate(() => globalThis.__handoffAudit.failAnchor = true);
       await dialog.getByRole('button', { name: '确认并插入文字', exact: true }).click();
       await dialog.getByRole('button', { name: '重试摘录', exact: true }).waitFor();
       assert.equal(JSON.parse(await fs.readFile(sidecar, 'utf8')).annotations.at(-1).ocrText, 'Captured OCR text');
       assert.doesNotMatch(await fs.readFile(a, 'utf8'), /Captured OCR text/);
+      await app.evaluate(() => { globalThis.__handoffAudit.delayAnchor = true; });
       await dialog.getByRole('button', { name: '重试摘录', exact: true }).click();
+      await app.evaluate(async () => { while (!globalThis.__handoffAudit.anchorPending) await new Promise(resolve => setTimeout(resolve, 10)); });
+      assert.equal(await dialog.getAttribute('aria-busy'), 'true');
+      await page.keyboard.press('Escape'); assert.equal(await dialog.isVisible(), true, 'writing must finish before dismissal');
+      assert.equal(await dialog.getByRole('button', { name: '关闭扫描文字识别', exact: true }).isDisabled(), true);
+      await app.evaluate(() => globalThis.__handoffAudit.releaseAnchor());
       await dialog.waitFor({ state: 'hidden' }); await waitForFile(a, text => text.includes('Captured OCR text'));
+      await page.waitForFunction(() => document.activeElement?.classList.contains('pdf-pane'));
       assert.equal((await fs.readFile(a, 'utf8')).match(/Captured OCR text/g).length, 1);
       assert.equal(JSON.parse(await fs.readFile(sidecar, 'utf8')).annotations.length, 3);
       assert.equal((await app.evaluate(() => globalThis.__handoffAudit.sources)).length, 3);
       await page.locator('.cm-content').click(); await page.keyboard.press('Control+z');
       await waitForFile(a, text => text.includes('![PDF') && !text.includes('Captured OCR text'));
+    });
+    await t.test('OCR close and Escape cancel only the active job, preserve saved images and restore focus', async () => {
+      await app.evaluate(() => { globalThis.__handoffAudit.holdOcr = true; });
+      for (const closeWithEscape of [false, true]) {
+        await draw(); await page.getByRole('button', { name: '识别文字并摘录', exact: true }).click();
+        const dialog = page.getByRole('dialog', { name: '扫描文字识别' }); await dialog.waitFor();
+        const jobId = await app.evaluate(() => globalThis.__handoffAudit.ocrJobs.at(-1));
+        await waitForFile(a, text => text.includes('![PDF'));
+        const savedText = await fs.readFile(a, 'utf8');
+        if (!closeWithEscape) {
+          await app.evaluate(() => { globalThis.__handoffAudit.failCancel = true; });
+          await dialog.getByRole('button', { name: '关闭扫描文字识别', exact: true }).click();
+          await page.waitForFunction(() => document.querySelector('.toast')?.textContent.includes('取消识别失败'));
+          assert.equal(await dialog.isVisible(), true, 'a failed cancellation stays available for retry');
+        }
+        if (closeWithEscape) await page.keyboard.press('Escape');
+        else await dialog.getByRole('button', { name: '关闭扫描文字识别', exact: true }).click();
+        await dialog.waitFor({ state: 'hidden' });
+        await page.waitForFunction(() => document.activeElement?.classList.contains('pdf-pane'));
+        assert.equal((await app.evaluate(() => globalThis.__handoffAudit.canceled)).at(-1), jobId);
+        assert.equal(await fs.readFile(a, 'utf8'), savedText, 'canceling recognition must not discard the saved image excerpt');
+      }
+      assert.equal((await app.evaluate(() => globalThis.__handoffAudit.canceled)).length, 2);
     });
     assert.equal(await fs.readFile(b, 'utf8'), originalB);
     assert.equal(digest(await fs.readFile(pdfFile)), digest(bytes)); assert.deepEqual(errors, []);

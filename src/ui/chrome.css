@@ -1,0 +1,86 @@
+/* Shared controls retain the existing square, red/ink design language. */
+.app { --control-height: 32px; --control-compact: 28px; --control-radius: 2px; --control-gap: 4px; }
+.app :is(.workspace-icon-action, .workspace-mode-switch button, .pdf-navigation button, .epub-header-actions button, .epub-navigation > button) {
+  min-height: var(--control-height); border-radius: var(--control-radius); gap: var(--control-gap);
+  transition: color 120ms ease, transform 100ms ease;
+}
+.app :is(.workspace-icon-action, .workspace-mode-switch button, .pdf-navigation button, .epub-header-actions button, .epub-navigation > button):not(:disabled):hover {
+  color: var(--hover-text); background: transparent;
+}
+.app[data-motion="full"] :is(.workspace-icon-action, .workspace-mode-switch button, .pdf-navigation button, .epub-header-actions button, .epub-navigation > button):not(:disabled):hover { transform: translateY(-1px); }
+.app[data-motion="reduced"] :is(.workspace-icon-action, .workspace-mode-switch button, .pdf-navigation button, .epub-header-actions button, .epub-navigation > button):hover { transform: none; }
+.app .workspace-mode-switch button.active:not(:disabled):hover { color: var(--accent); }
+.app :is(.workspace-icon-action, .workspace-mode-switch button, .pdf-navigation button, .epub-header-actions button, .epub-navigation > button):not(:disabled):active { transform: translateY(0); }
+.app :is(.workspace-icon-action, .pdf-navigation .icon-button, .epub-header-actions button) { width: var(--control-height); min-width: var(--control-height); padding: 6px; }
+.app :is(.pdf-tools, .epub-header-actions, .markdown-workspace-actions) { gap: var(--control-gap); }
+.app .topbar .quiet-action { min-height: var(--control-height); border-radius: var(--control-radius); }
+.app :is(.settings-popover, .file-context-menu, .dialog, .selection-toolbar, .selection-actions, .epub-selection-actions) { border-radius: var(--control-radius); }
+.app .file-context-menu {
+  min-width: 196px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); overflow-y: auto;
+  padding: 4px; border: 1px solid var(--line-strong); background: var(--surface); box-shadow: 0 4px 14px #0002;
+}
+.app .file-context-menu button {
+  display: flex; align-items: center; justify-content: flex-start; gap: 8px; min-height: 32px; width: 100%;
+  padding: 6px 10px; border: 0; border-radius: 0; background: transparent; color: var(--text); font-size: 12px; line-height: 1.5; text-align: left;
+}
+.app .file-context-menu button kbd { margin-left: auto; font: 10px ui-monospace, monospace; color: var(--text-muted); }
+.app .file-context-menu button:is(:hover, :focus-visible) { color: var(--accent); background: var(--hover); outline: 1px solid var(--line); outline-offset: -1px; }
+.app .file-context-menu .menu-item-danger { color: var(--danger); }
+.app .file-context-menu button[aria-checked="true"] { color: var(--accent); font-weight: 650; box-shadow: inset 2px 0 var(--accent); }
+.app .file-context-menu svg { width: 16px; height: 16px; flex: none; }
+.app .file-context-menu button:disabled { opacity: .45; cursor: not-allowed; }
+.app .settings-popover { border: 1px solid var(--line-strong); padding: 16px; box-shadow: 0 4px 14px #0002; }
+.app .settings-section { margin-top: 12px; padding-top: 12px; }
+.app .dialog { border: 1px solid var(--line-strong); padding: 20px; box-shadow: 0 8px 24px #0003; max-height: calc(100dvh - 32px); overflow-y: auto; }
+.app .dialog:focus { outline: none; }
+.app .dialog button { border-radius: var(--control-radius); min-height: 32px; }
+.app .dialog-error { color: var(--danger); }
+.app .dialog-actions { gap: 8px; flex-wrap: wrap; }
+.app .dialog .diff { min-width: 0; }
+.app .dialog .diff > div { min-width: 0; }
+.app .dialog .diff pre { overflow-wrap: anywhere; }
+.app .selection-actions, .app .epub-selection-actions { gap: 4px; }
+.app :is(.selection-actions, .epub-selection-actions) button { min-height: var(--control-compact); border-radius: var(--control-radius); }
+.app button.action-feedback { display: inline-grid; align-items: center; }
+.action-feedback > span:not(.sr-only) { grid-area: 1 / 1; display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+.action-feedback-result, .action-feedback[data-feedback="done"] > span:first-child { visibility: hidden; }
+.action-feedback[data-feedback="done"] > .action-feedback-result { visibility: visible; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.toolbar-overflow { flex: none; display: flex; align-items: center; }
+.app .note-workspace-bar .note-controls-slot { max-width: 100%; }
+.app .epub-header-actions { flex: none; }
+.app .reader-header-slot { container: reader-topbar / inline-size; }
+.app .epub-navigation .reader-tab-strip { min-width: 56px; }
+.app .note-workspace-bar .document-tab-strip { overscroll-behavior-inline: contain; scroll-padding-inline: 6px; }
+@container note-topbar (max-width: 480px) {
+  .app .note-header-slot, .app .compact-note-controls { gap: 3px; }
+  .app .compact-note-controls .markdown-workspace-actions { gap: 1px; }
+  .app .note-workspace-bar .document-tab { min-width: 56px; max-width: 132px; }
+  .app .note-workspace-bar .document-tab > button:first-child { padding-inline: 6px; gap: 3px; }
+  .app .note-workspace-bar .workspace-icon-action, .app .compact-note-controls .workspace-mode-switch button { min-width: 28px; width: 28px; min-height: 28px; padding-inline: 4px; }
+  .app .tab-pane-hint { display: none; }
+}
+@container (max-width: 480px) {
+  .app .pdf-navigation { gap: 2px; }
+  .app .pdf-navigation button { min-height: 28px; }
+  .app .pdf-navigation .icon-button { width: 28px; min-width: 28px; padding: 4px; }
+  .app .pdf-navigation .zoom-control { gap: 1px; }
+  .app .pdf-navigation .toolbar-spacer { min-width: 0; }
+  .app .epub-navigation { gap: 3px; padding-inline: 5px; }
+  .app .epub-header-actions { gap: 1px; }
+  .app .epub-header-actions button { min-width: 28px; width: 28px; padding: 4px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .app[data-motion="full"] .dialog { animation: dialog-enter 150ms cubic-bezier(.2,.75,.3,1); }
+}
+@keyframes dialog-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+.app .panes { position: relative; }
+.app .splitter { width: 8px; min-width: 8px; background: var(--surface); touch-action: none; z-index: 20; }
+.app .splitter::after { inset: 0 auto 0 50%; width: 1px; background: transparent; }
+.app .splitter:is(:hover, :focus-visible)::after, .app .panes[data-pane-dragging] .splitter::after { background: var(--accent); }
+.app .splitter:focus-visible { outline: none; }
+.app .splitter:focus-visible::after { width: 2px; }
+.app .splitter:is(:hover, :active) { background: var(--surface); }
+.splitter-shield { position: absolute; inset: 0; z-index: 19; pointer-events: auto; touch-action: none; cursor: col-resize; }
+.splitter-preview { position: absolute; inset: 0 auto 0 var(--split-preview, 50%); width: 2px; z-index: 21; background: var(--accent); pointer-events: none; }

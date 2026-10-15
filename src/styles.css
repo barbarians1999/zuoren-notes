@@ -28,6 +28,16 @@
   background: var(--surface-muted, #f1f3f1);
   font-size: 14px;
   --markdown-body-max-width: 880px;
+  --md-heading-1-size: 1.9em;
+  --md-heading-2-size: 1.55em;
+  --md-heading-3-size: 1.3em;
+  --md-heading-4-size: 1.15em;
+  --md-heading-5-size: 1.05em;
+  --md-heading-6-size: 1.05em;
+  --md-heading-weight: 700;
+  --md-heading-line-height: 1.3;
+  --md-quote-step: .8em;
+  --md-quote-width: 3px;
   --radius: 8px;
   --chrome-topbar-height: 48px;
   --chrome-note-row-height: 40px;
@@ -1028,13 +1038,13 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   caret-color: var(--accent);
 }
 .markdown-source-editor .cm-line { white-space: pre-wrap; }
-.markdown-source-editor .cm-md-heading { display: inline-block; color: var(--heading); font-family: var(--note-heading-font, var(--note-body-font)); font-weight: 700; line-height: 1.3; }
-.markdown-source-editor .cm-md-heading-1 { font-size: 1.9em; }
-.markdown-source-editor .cm-md-heading-2 { font-size: 1.55em; }
-.markdown-source-editor .cm-md-heading-3 { font-size: 1.3em; }
-.markdown-source-editor .cm-md-heading-4 { font-size: 1.15em; }
-.markdown-source-editor .cm-md-heading-5,
-.markdown-source-editor .cm-md-heading-6 { font-size: 1.05em; }
+.markdown-source-editor .cm-md-heading { display: inline-block; color: var(--heading); font-family: var(--note-heading-font, var(--note-body-font)); font-weight: var(--md-heading-weight); line-height: var(--md-heading-line-height); }
+.markdown-source-editor .cm-md-heading-1 { font-size: var(--md-heading-1-size); }
+.markdown-source-editor .cm-md-heading-2 { font-size: var(--md-heading-2-size); }
+.markdown-source-editor .cm-md-heading-3 { font-size: var(--md-heading-3-size); }
+.markdown-source-editor .cm-md-heading-4 { font-size: var(--md-heading-4-size); }
+.markdown-source-editor .cm-md-heading-5 { font-size: var(--md-heading-5-size); }
+.markdown-source-editor .cm-md-heading-6 { font-size: var(--md-heading-6-size); }
 .markdown-source-editor .cm-md-strong { font-weight: 700; }
 .markdown-source-editor .cm-md-code-block { font-family: "Cascadia Code", ui-monospace, monospace; }
 .markdown-source-editor .cm-md-code-line { background: var(--surface-muted); border-left: 3px solid var(--line); padding-left: 12px !important; }
@@ -1052,7 +1062,17 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .markdown-source-editor .cm-md-highlight { background: var(--mark-bg); border-radius: 2px; color: var(--mark-text); }
 .markdown-source-editor .cm-md-inline-code { padding: 0 .18em; border-radius: 3px; background: var(--surface-muted); font-family: "Cascadia Code", ui-monospace, monospace; }
 .markdown-source-editor .cm-md-link { color: var(--link); text-decoration: underline; text-underline-offset: 3px; }
-.markdown-source-editor .cm-md-quote { padding-left: 12px !important; border-left: 3px solid var(--quote-line); color: var(--text-muted); background: color-mix(in srgb, var(--surface-muted) 48%, transparent); font-style: italic; }
+.markdown-source-editor .cm-md-quote,
+.cm-md-block-wrapper {
+  --md-quote-depth: 0;
+  background-image: repeating-linear-gradient(to right, var(--quote-line) 0 var(--md-quote-width), transparent var(--md-quote-width) var(--md-quote-step));
+  background-size: calc(var(--md-quote-depth) * var(--md-quote-step)) 100%;
+  background-repeat: no-repeat;
+}
+.markdown-source-editor .cm-md-quote { padding-left: calc(var(--md-quote-depth) * var(--md-quote-step)) !important; border-left: 0; color: var(--quote); font-style: italic; }
+.cm-md-block-wrapper { position: relative; display: flow-root; min-width: 0; padding-left: calc(var(--md-quote-depth) * var(--md-quote-step) + var(--md-list-indent, 0px)); }
+.cm-md-container-marker { position: absolute; top: .7em; color: var(--accent); font-weight: 700; cursor: text; }
+.cm-md-literal { white-space: normal; }
 .markdown-source-editor .cm-md-indent-space,
 .markdown-source-editor .cm-md-indent-tab { background-image: linear-gradient(to right, transparent calc(50% - .5px), color-mix(in srgb, var(--accent) 42%, transparent) calc(50% - .5px) calc(50% + .5px), transparent calc(50% + .5px)); background-position: left top; background-size: .5em 100%; background-repeat: repeat-x; }
 .markdown-source-editor .cm-md-indent-tab { mask-image: repeating-linear-gradient(to bottom, #000 0 3px, transparent 3px 6px); }
@@ -1085,16 +1105,19 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   font-family: var(--note-heading-font, var(--note-body-font, "字体管家仿宋体 (非商业使用)", "仿宋_GB2312", "仿宋", "FangSong", "华文仿宋", "STFangsong", serif));
 }
 
-.markdown-preview h1, .markdown-preview h2, .markdown-preview h3 {
+.markdown-preview :is(h1,h2,h3,h4,h5,h6) {
   color: var(--heading);
-  font-weight: 600;
-  line-height: 1.35;
+  font-weight: var(--md-heading-weight);
+  line-height: var(--md-heading-line-height);
   letter-spacing: .01em;
 }
 
-.markdown-preview h1 { margin: .15em 0 .8em; font-size: 2em; }
-.markdown-preview h2 { margin: 1.6em 0 .65em; font-size: 1.48em; }
-.markdown-preview h3 { margin: 1.4em 0 .55em; font-size: 1.2em; }
+.markdown-preview h1 { margin: .15em 0 .8em; font-size: var(--md-heading-1-size); }
+.markdown-preview h2 { margin: 1.6em 0 .65em; font-size: var(--md-heading-2-size); }
+.markdown-preview h3 { margin: 1.4em 0 .55em; font-size: var(--md-heading-3-size); }
+.markdown-preview h4 { margin: 1.2em 0 .5em; font-size: var(--md-heading-4-size); }
+.markdown-preview h5 { margin: 1.1em 0 .45em; font-size: var(--md-heading-5-size); }
+.markdown-preview h6 { margin: 1em 0 .4em; font-size: var(--md-heading-6-size); }
 .markdown-preview p { margin: .72em 0; }
 
 .markdown-preview :is(ol, ul) {
@@ -1112,8 +1135,8 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 
 .markdown-preview blockquote {
   margin: 1.2em 0;
-  padding: .2em 0 .2em 1em;
-  border-left: 3px solid var(--quote-line);
+  padding: .2em 0 .2em var(--md-quote-step);
+  border-left: var(--md-quote-width) solid var(--quote-line);
   color: var(--quote);
 }
 
@@ -1556,7 +1579,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   border-bottom: 0;
   text-decoration: none;
 }
-.app[data-theme^="constructivist"] :is(.markdown-source-editor .cm-md-quote, .markdown-preview blockquote) { background: transparent; }
+.app[data-theme^="constructivist"] :is(.markdown-source-editor .cm-md-quote, .markdown-preview blockquote) { background-color: transparent; }
 .app[data-theme^="constructivist"] :is(.markdown-source-editor .cm-md-code-first, .markdown-source-editor .cm-md-code-last, .cm-md-code-preview, .markdown-preview pre) {
   border-radius: 2px;
 }

@@ -22,4 +22,10 @@ module.exports = [
   { name: 'inline-backticks', source: '``code with ` inside``', live: '.cm-md-inline-code', read: 'code', text: 'code with ` inside' },
   { name: 'autolink', source: '<https://example.com>', live: '.cm-md-link', read: 'a', text: 'https://example.com' },
   { name: 'reference-link', source: '[linked][ID]\n\n[id]: https://example.com', live: '.cm-md-link', read: 'a', text: 'linked' },
+  { name: 'quote-fenced-code', source: '> ~~~text\n> first\n> second\n> ~~~', live: '.cm-md-code-preview code', read: 'blockquote pre code', text: 'second' },
+  { name: 'list-fenced-code', source: '- parent\n\n  ~~~text\n  first\n  second\n  ~~~', live: '.cm-md-code-preview code', read: 'li pre code', text: 'second' },
+  { name: 'quote-table', source: '> | A | B |\n> | :--- | ---: |\n> | **x** | y |', live: '.cm-md-table table', read: 'blockquote table', text: 'A' },
+  { name: 'deep-list-table', source: '- outer\n  - inner\n\n    | A | B |\n    | --- | --- |\n    | x | y |', live: '.cm-md-table table', read: 'li li table', text: 'A' },
+  { name: 'list-quote-table', source: '1. > | A | B |\n   > | --- | --- |\n   > | x | y |', live: '.cm-md-table table', read: 'li blockquote table', text: 'A' },
+  { name: 'deep-quotes', source: '> outer\n> > inner\n> > > deepest', live: '.cm-line[data-quote-depth="3"]', read: 'blockquote blockquote blockquote', text: 'deepest' },
 ];

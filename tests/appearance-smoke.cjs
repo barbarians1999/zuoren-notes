@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { _electron: electron } = require('playwright');
+const { _electron: electron } = require('./electronHarness.cjs');
 const { createSmokeWorkspace, cleanupSmokeWorkspace } = require('./smokeWorkspace.cjs');
 const { platformFonts } = require('./platformFonts.cjs');
 

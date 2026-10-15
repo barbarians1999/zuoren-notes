@@ -1,20 +1,22 @@
 const assert = require('node:assert/strict');
 
 function options(args) {
-  const result = { profile: 'full', publish: false, cleanup: false, resume: false, version: null };
+  const result = { profile: 'full', publish: false, cleanup: false, resume: false, version: null, plan: null, localTest: false, receipt: null };
   for (let index = 0; index < args.length; index++) {
     const flag = args[index];
     if (flag === '--') continue;
     if (['--publish', '--cleanup', '--resume'].includes(flag)) result[flag.slice(2)] = true;
-    else if (flag === '--profile' || flag === '--version') {
+    else if (flag === '--local-test') result.localTest = true;
+    else if (['--profile', '--version', '--plan', '--receipt'].includes(flag)) {
       const value = args[++index];
       if (!value || value.startsWith('--')) throw Error('Missing value for ' + flag);
       result[flag.slice(2)] = value;
     } else throw Error('Unknown release argument: ' + flag);
   }
-  if (!['ui', 'full', 'markdown'].includes(result.profile)) throw Error('Profile must be ui, full, or markdown');
+  if (!['ui', 'full', 'markdown', 'directed'].includes(result.profile)) throw Error('Profile must be ui, full, markdown, or directed');
   if (result.version && !/^\d+\.\d+\.\d+$/.test(result.version)) throw Error('Invalid version');
-  if (result.cleanup && !result.publish) throw Error('Cleanup requires verified publication');
+  if (result.localTest && (result.publish || result.cleanup)) throw Error('Local test packages cannot publish or retire accepted deliveries');
+  if (result.receipt && !result.resume) throw Error('--receipt requires --resume');
   return result;
 }
 
@@ -61,4 +63,32 @@ async function releaseForTag(api, tag) {
   throw Error('Release lookup exceeded pagination limit');
 }
 
-module.exports = { options, changes, checkMac, passed, releaseForTag };
+// Resolve annotated tags too. Tag existence alone says nothing about which
+// release page, latest pointer, or asset bytes were published.
+async function tagCommit(api, tag) {
+  let object = (await api('git/ref/tags/' + tag)).object;
+  for (let depth = 0; object.type === 'tag' && depth < 8; depth++) object = (await api('git/tags/' + object.sha)).object;
+  if (object.type !== 'commit') throw Error('Tag does not resolve to a commit');
+  return object.sha;
+}
+async function checkPublication(api, { releaseId, tag, sourceCommit, assets, publicRelease = true }) {
+  const release = await api('releases/' + releaseId);
+  assert.equal(release.id, releaseId, 'Release identity changed');
+  assert.equal(release.tag_name, tag, 'Release tag_name mismatch');
+  assert.equal(await tagCommit(api, tag), sourceCommit, 'Tag commit mismatch');
+  assert.ok(!release.prerelease, 'Unexpected prerelease');
+  if (publicRelease) {
+    assert.equal(release.draft, false, 'Release still draft');
+    const latest = await api('releases/latest');
+    assert.equal(latest.id, releaseId, 'Latest points elsewhere');
+    assert.equal(latest.tag_name, tag, 'Latest tag_name mismatch');
+  }
+  for (const expected of assets) {
+    const matches = release.assets.filter(item => item.name === expected.name);
+    assert.equal(matches.length, 1, 'Missing/duplicate asset: ' + expected.name);
+    assert.equal(matches[0].size, expected.size, 'Asset size mismatch: ' + expected.name);
+    assert.equal(matches[0].digest, expected.digest, 'Asset hash mismatch: ' + expected.name);
+  }
+  return release;
+}
+module.exports = { options, changes, checkMac, passed, releaseForTag, checkPublication, tagCommit };

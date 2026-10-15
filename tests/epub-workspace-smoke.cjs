@@ -5,7 +5,7 @@ const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const JSZip = require('jszip');
-const { _electron } = require('playwright');
+const { _electron, readerReady } = require('./electronHarness.cjs');
 const { createSmokeWorkspace, cleanupSmokeWorkspace } = require('./smokeWorkspace.cjs');
 const { waitForFile } = require('./waitForFile.cjs');
 
@@ -47,7 +47,7 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
     await editor.evaluate(element => { window.__epubWorkspaceEditor = element; });
     await editor.click(); await page.keyboard.press('Control+End'); await page.keyboard.insertText('UNDO-PRESERVED');
     await page.locator('.file-row').filter({ hasText: 'book.epub' }).click();
-    await page.waitForFunction(() => !document.querySelector('.epub-loading') && !!document.querySelector('.epub-viewer iframe'));
+    await readerReady(page, 'epub');
     const bar = page.locator('.note-workspace-bar'), readerTab = page.getByRole('tab', { name: 'book.epub', exact: true });
     const assertCompactReaderTab = async () => {
       const geometry = await page.locator('[data-reader-tab="epub"]').evaluate(tab => {
@@ -211,6 +211,22 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
     assert.equal(afterSize.cfi.split('!')[0], beforeSize.split('!')[0], 'size changes stay in the original spine section');
     await waitForAnchor(beforeSize, 'reflow retains the exact mid-chapter text anchor, not merely the chapter');
     await capture('epub-unified-split');
+    // EPUB previews the divider while the pointer is held, retaining the exact
+    // iframe/documents; a release commits one new reading width.
+    await observeOutlineLayout();
+    const splitter = page.getByRole('separator', { name: '调整阅读与笔记宽度', exact: true });
+    const divider = await splitter.boundingBox();
+    await page.mouse.move(divider.x + divider.width / 2, divider.y + 90); await page.mouse.down();
+    await page.mouse.move(divider.x + divider.width / 2 + 60, divider.y + 90, { steps: 10 });
+    await page.locator('.splitter-preview').waitFor();
+    await assertOutlineLayout();
+    await page.mouse.up();
+    await page.waitForFunction(() => !document.querySelector('.splitter-preview') && document.querySelector('.epub-pane')?.dataset.reflowing === 'false');
+    await waitForAnchor(beforeSize, 'committed divider resize retains the exact book text anchor');
+    assert.equal(await editor.evaluate(el => el === window.__epubWorkspaceEditor), true, 'resizing keeps the note editor instance');
+    await splitter.dblclick();
+    await page.waitForFunction(() => document.querySelector('.epub-pane')?.dataset.reflowing === 'false');
+    await waitForAnchor(beforeSize, 'double-click balanced panes retain the same text anchor');
     await app.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; window.unmaximize(); window.setBounds({ width: 960, height: 640 }); });
     await page.getByRole('button', { name: '展开 EPUB 大纲', exact: true }).click();
     await outline.waitFor();

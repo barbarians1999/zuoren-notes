@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { options, changes, checkMac, passed, releaseForTag } = require('../scripts/release-support.cjs');
+const { options, changes, checkMac, passed, releaseForTag, checkPublication } = require('../scripts/release-support.cjs');
 
 test('publication resume and Mac publishing find drafts without using the published-only tag endpoint', async () => {
   const draft = { id: 5, tag_name: 'v0.3.4', draft: true };
@@ -27,13 +27,30 @@ test('release gate requires completed tests, without failures, cancellations, sk
 });
 
 test('release defaults to full verification and never silently enables publishing or cleanup', () => {
-  assert.deepEqual(options([]), { profile: 'full', publish: false, cleanup: false, resume: false, version: null });
+  assert.deepEqual(options([]), { profile: 'full', publish: false, cleanup: false, resume: false, version: null, plan: null, localTest: false, receipt: null });
   assert.equal(options(['--', '--profile', 'ui', '--publish', '--cleanup']).cleanup, true);
-  assert.throws(() => options(['--cleanup']), /verified publication/);
+  assert.equal(options(['--cleanup']).publish, false, 'local cleanup does not depend on GitHub');
+  assert.throws(() => options(['--local-test', '--cleanup']), /Local test/);
   assert.throws(() => options(['--profile', 'fast']), /Profile/);
   assert.throws(() => options(['--version', '--publish']), /Missing value/);
   assert.throws(() => options(['--version', '../0.3.4']), /Invalid version/);
   assert.throws(() => options(['--clobber']), /Unknown/);
+});
+
+test('final publication jointly rejects untagged, wrong commit/latest and altered assets', async () => {
+  const expected = { releaseId: 19, tag: 'v0.3.12', sourceCommit: 'abc', assets: [{ name: 'Setup.exe', size: 9, digest: 'sha256:' + 'a'.repeat(64) }] };
+  const release = { id: 19, tag_name: expected.tag, draft: false, prerelease: false, assets: expected.assets };
+  const fake = (overrides = {}) => async endpoint => overrides[endpoint] || (endpoint === 'git/ref/tags/' + expected.tag ? { object: { type: 'commit', sha: 'abc' } } : release);
+  assert.equal((await checkPublication(fake(), expected)).id, 19);
+  for (const overrides of [
+    { 'releases/19': { ...release, tag_name: 'untagged-123' } },
+    { 'releases/latest': { ...release, tag_name: 'untagged-123' } },
+    { 'releases/latest': { ...release, id: 18 } },
+    { 'git/ref/tags/v0.3.12': { object: { type: 'commit', sha: 'wrong' } } },
+    { 'releases/19': { ...release, assets: [{ ...expected.assets[0], digest: 'sha256:' + 'b'.repeat(64) }] } },
+    { 'releases/19': { ...release, draft: true } },
+  ]) await assert.rejects(checkPublication(fake(overrides), expected));
+  await checkPublication(fake({ 'git/ref/tags/v0.3.12': { object: { type: 'tag', sha: 'tag-object' } }, 'git/tags/tag-object': { object: { type: 'commit', sha: 'abc' } } }), expected);
 });
 
 test('release notes select the exact version and cannot be empty', () => {

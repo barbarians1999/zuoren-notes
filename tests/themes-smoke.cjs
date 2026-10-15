@@ -6,7 +6,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { PDFDocument, StandardFonts } = require('pdf-lib');
 const JSZip = require('jszip');
-const { _electron } = require('playwright');
+const { _electron } = require('./electronHarness.cjs');
 const { THEMES } = require('../src/appearanceTheme.cjs');
 const { createSmokeWorkspace, cleanupSmokeWorkspace } = require('./smokeWorkspace.cjs');
 const { waitForFile } = require('./waitForFile.cjs');
@@ -346,7 +346,7 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
   await page.reload(); await page.locator('.topbar').waitFor(); await openSettings(page);
   assert.equal(await page.evaluate(() => localStorage.getItem('zhaoye-theme')), 'system', 'system remains a preference across restart');
   await page.emulateMedia({ colorScheme: 'light' });
-  await page.waitForFunction(() => document.documentElement.dataset.theme === 'constructivist');
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'constructivist-paper');
   for (const name of custom) {
     await chooseTheme(page, name); await page.keyboard.press('Escape');
     await page.reload(); await page.locator('.topbar').waitFor(); await openSettings(page);
@@ -363,14 +363,14 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
   for (const [saved, scheme, expected] of [
     ['light', 'dark', 'constructivist'], ['blue-white', 'dark', 'constructivist'], ['red-white', 'dark', 'constructivist'],
     ['dark', 'light', 'constructivist-dark'], ['red-black', 'light', 'constructivist-dark'],
-    ['system', 'dark', 'constructivist-dark'], ['system', 'light', 'constructivist'],
+    ['system', 'dark', 'constructivist-dark'], ['system', 'light', 'constructivist-paper'],
     ['constructivist-paper', 'dark', 'constructivist-paper'],
   ]) {
     await page.evaluate(value => localStorage.setItem('zhaoye-theme', value), saved);
     await page.emulateMedia({ colorScheme: scheme }); await page.reload(); await page.locator('.topbar').waitFor();
     await page.waitForFunction(({ name, saved }) => document.documentElement.dataset.theme === name && localStorage.getItem('zhaoye-theme') === (saved === 'system' ? 'system' : name), { name: expected, saved });
     await page.emulateMedia({ colorScheme: scheme === 'dark' ? 'light' : 'dark' });
-    const switched = saved === 'system' ? (scheme === 'dark' ? 'constructivist' : 'constructivist-dark') : expected;
+    const switched = saved === 'system' ? (scheme === 'dark' ? 'constructivist-paper' : 'constructivist-dark') : expected;
     await page.waitForFunction(name => document.documentElement.dataset.theme === name, switched);
     assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), switched, saved + ' respects the preference');
   }

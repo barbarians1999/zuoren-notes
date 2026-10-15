@@ -2,7 +2,7 @@ const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises'), path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { _electron } = require('playwright');
+const { _electron } = require('./electronHarness.cjs');
 const { createSmokeWorkspace, cleanupSmokeWorkspace } = require('./smokeWorkspace.cjs');
 const { noteUI, focusNote, moreAction } = require('./noteUi.cjs');
 const { waitForFile } = require('./waitForFile.cjs');

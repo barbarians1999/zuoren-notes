@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, protocol, Menu, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, protocol, Menu, shell, screen } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -22,8 +22,22 @@ let mainWindow;
 let withWindowDialog;
 let allowClose = false;
 let quitRequested = false;
+let windowMinimumSyncTimer;
 const pendingMacFiles = [];
 let launchItems = { files: [] };
+
+function syncWindowMinimumWidth(window) {
+  if (!window || window.isDestroyed() || window !== mainWindow) return;
+  const display = screen.getDisplayMatching(window.getBounds());
+  const width = Math.floor(display.workAreaSize.width / 2);
+  const [currentWidth, currentHeight] = window.getMinimumSize();
+  if (currentWidth !== width) window.setMinimumSize(width, currentHeight);
+}
+
+function scheduleWindowMinimumWidthSync(window) {
+  clearTimeout(windowMinimumSyncTimer);
+  windowMinimumSyncTimer = setTimeout(() => syncWindowMinimumWidth(window), 140);
+}
 
 // Finder sends open-file rather than command-line arguments on macOS.
 // Register before ready so a cold launch does not lose the selected file.
@@ -348,15 +362,33 @@ function installHandlers() {
 function createWindow(settings = {}) {
   allowClose = false;
   quitRequested = false;
+  const initialMinimumWidth = Math.floor(screen.getPrimaryDisplay().workAreaSize.width / 2);
   mainWindow = new BrowserWindow({
     icon: path.join(__dirname, 'assets', process.platform === 'win32' ? 'app-constructivist.ico' : 'app-constructivist.png'),
     width: settings.window?.width || 1440, height: settings.window?.height || 920,
     show: false,
-    minWidth: 960, minHeight: 640,
+    minWidth: initialMinimumWidth, minHeight: 640,
     frame: false, thickFrame: true, roundedCorners: true, hasShadow: true,
     title: '左人笔记 · 阅读与思考', backgroundColor: '#f1f3f1',
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
+  const window = mainWindow;
+  const scheduleWidthSync = () => scheduleWindowMinimumWidthSync(window);
+  const syncChangedDisplay = display => {
+    if (screen.getDisplayMatching(window.getBounds()).id === display.id) scheduleWindowMinimumWidthSync(window);
+  };
+  window.on('move', scheduleWidthSync);
+  window.on('moved', scheduleWidthSync);
+  screen.on('display-metrics-changed', syncChangedDisplay);
+  screen.on('display-added', scheduleWidthSync);
+  screen.on('display-removed', scheduleWidthSync);
+  window.once('closed', () => {
+    clearTimeout(windowMinimumSyncTimer);
+    screen.removeListener('display-metrics-changed', syncChangedDisplay);
+    screen.removeListener('display-added', scheduleWidthSync);
+    screen.removeListener('display-removed', scheduleWidthSync);
+  });
+  syncWindowMinimumWidth(window);
   withWindowDialog = installWindowFocus(mainWindow);
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:|^mailto:/i.test(url)) void shell.openExternal(url);

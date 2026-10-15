@@ -7,7 +7,7 @@ const { randomUUID } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const appRoot = process.env.READER_APP_ROOT || path.resolve(__dirname, '..');
 const localRequire = createRequire(path.join(appRoot, 'package.json'));
-const { _electron: electron } = localRequire('playwright');
+const { _electron: electron } = require('./electronHarness.cjs');
 const { FileStore } = localRequire('./electron/storage.cjs');
 const original = '# Startup preservation\n\nNever lose this body.\n\n- [ ] task\n';
 

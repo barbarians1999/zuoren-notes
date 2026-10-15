@@ -6,7 +6,7 @@ const { createRequire } = require('node:module');
 const { spawnSync } = require('node:child_process');
 const { PDFDocument, StandardFonts, degrees } = require('pdf-lib');
 const UPNG = createRequire(require.resolve('pdf-lib'))('@pdf-lib/upng').default;
-const { _electron } = require('playwright');
+const { _electron } = require('./electronHarness.cjs');
 const { createSmokeWorkspace, cleanupSmokeWorkspace } = require('./smokeWorkspace.cjs');
 let workspace, app;
 after(async () => {

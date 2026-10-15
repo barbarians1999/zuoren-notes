@@ -1,0 +1,21 @@
+{
+  "reason": "0.3.10-0.3.12 local integration: Markdown projection, clipboard/undo/save/recovery, window/theme/chrome and reader handoff. Directed combined verification; NOT the full release chain.",
+  "source": [
+    "tests/markdown-presentation-smoke.cjs", "tests/markdown-interaction-smoke.cjs",
+    "tests/clipboard-smoke.cjs", "tests/linebreak-smoke.cjs", "tests/stability-smoke.cjs",
+    "tests/reading-actions-smoke.cjs", "tests/recovery-smoke.cjs",
+    "tests/window-startup-smoke.cjs", "tests/chrome-interaction-smoke.cjs",
+    "tests/fullscreen-chrome-smoke.cjs", "tests/note-tabs-smoke.cjs", "tests/path-reuse-smoke.cjs",
+    "tests/pdf-toolbar-smoke.cjs", "tests/epub-workspace-smoke.cjs", "tests/epub-search-smoke.cjs",
+    "tests/reader-handoff-smoke.cjs", "tests/input-focus-smoke.cjs"
+  ],
+  "packaged": [
+    "tests/markdown-presentation-smoke.cjs", "tests/markdown-interaction-smoke.cjs",
+    "tests/clipboard-smoke.cjs", "tests/linebreak-smoke.cjs", "tests/stability-smoke.cjs",
+    "tests/reading-actions-smoke.cjs", "tests/recovery-smoke.cjs",
+    "tests/window-startup-smoke.cjs", "tests/chrome-interaction-smoke.cjs",
+    "tests/fullscreen-chrome-smoke.cjs", "tests/note-tabs-smoke.cjs", "tests/path-reuse-smoke.cjs",
+    "tests/pdf-toolbar-smoke.cjs", "tests/epub-workspace-smoke.cjs", "tests/epub-search-smoke.cjs",
+    "tests/reader-handoff-smoke.cjs", "tests/input-focus-smoke.cjs"
+  ]
+}

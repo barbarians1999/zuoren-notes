@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { BookOpen, ChevronLeft, ChevronRight, List, Search, X } from 'lucide-react';
+import { BookOpen, ChevronLeft, ChevronRight, Copy, List, Search, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { OutlinePanel } from '../OutlinePanel';
+import { ActionButton } from '../ui/ActionButton';
 import type { EpubAnchor, EpubAnnotation, EpubMeta } from '../types';
 import { NOTE_BODY_FONTS, EPUB_MIN_SPREAD_WIDTH, type ActiveEpub, type FlatNavItem, type NoteBodyFont } from '../readerContext';
 import ePub, { EpubCFI, type Book, type Location, type NavItem, type Rendition } from 'epubjs';
@@ -484,7 +485,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
       if (generationRef.current !== generation) return;
       if (outcome.saved && !selectionFlow?.saved && annotation) renditionRef.current?.annotations.highlight(annotation.cfiRange, { annotationId: annotation.id }, undefined, 'zhaoye-epub-highlight', { fill: '#e4c95b', 'fill-opacity': '0.42', 'mix-blend-mode': 'multiply' });
       if (selectionActionGeneration.current !== actionGeneration) return;
-      if (outcome.done) { setSelection(null); setComment(''); setSelectionFlow(null); selectionAnnotation.current = null; setDeleteConfirm(null); }
+      if (outcome.done) { setSelection(null); setComment(''); setSelectionFlow(null); selectionAnnotation.current = null; setDeleteConfirm(null); onMessage(outcome.inserted ? '摘录已插入当前笔记' : '高亮已保存'); }
       else { setSelectionFlow(outcome); if (outcome.error) onMessage(outcome.error); }
     } catch (error) { onMessage(`EPUB 标注保存失败：${error instanceof Error ? error.message : String(error)}`); }
     finally { savingRef.current = false; setSavingAnnotation(false); }
@@ -527,6 +528,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
         return next;
       });
       if (outcome.error) onMessage(outcome.error);
+      else if (outcome.done) onMessage('摘录已插入当前笔记');
     } catch (error) { onMessage(`无法插入 EPUB 摘录：${error instanceof Error ? error.message : String(error)}`); }
     finally { savingRef.current = false; setSavingAnnotation(false); }
   }
@@ -620,7 +622,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
     </div>, headerTarget)}
     <div className="epub-content-row"><div className="epub-reader-shell"><div ref={host} className="epub-viewer"/>{loading && <div className="loading epub-loading">正在载入电子书…</div>}
       {searchOpen && <EpubSearchPanel data={epub.data} toc={toc} onNavigate={jumpSearch} onClose={closeSearch} onClear={clearSearchHighlight}/>}
-      {selection && <div className="epub-selection-actions" role="group" aria-label="处理选中文本"><span title={selection.quote}>{selection.quote.slice(0, 72)}{selection.quote.length > 72 ? '…' : ''}</span>{selectionFlow ? <><span className="epub-flow-status" role="status">{selectionFlow.error || '操作尚未完成'}</span><button className="primary" disabled={savingAnnotation || !selectionFlow.retry} onClick={() => void saveSelection(false)}>{selectionFlow.saved ? '重试摘录' : '重试保存'}</button></> : <><input aria-label="EPUB 批注" maxLength={10000} value={comment} onChange={event => setComment(event.target.value)} placeholder="可选批注"/><button className="primary" disabled={savingAnnotation} onClick={() => void saveSelection(false)}>高亮</button><button disabled={savingAnnotation} onClick={() => void saveSelection(!!excerptTarget)}>{excerptTarget ? `批注并${excerptTarget}` : '批注'}</button></>}<button disabled={savingAnnotation} onClick={() => { selectionActionGeneration.current += 1; setSelection(null); setComment(''); setSelectionFlow(null); selectionAnnotation.current = null; }}>取消</button></div>}
+      {selection && <div className="epub-selection-actions" role="group" aria-label="处理选中文本"><span title={selection.quote}>{selection.quote.slice(0, 72)}{selection.quote.length > 72 ? '…' : ''}</span><ActionButton aria-label="复制 EPUB 选中文字" title="复制选中文字" identity={selection.cfiRange} action={async () => { await navigator.clipboard.writeText(selection.quote); return true; }} successLabel="已复制" onError={onMessage}><Copy size={14}/>复制</ActionButton>{selectionFlow ? <><span className="epub-flow-status" role="status">{selectionFlow.error || '操作尚未完成'}</span><button className="primary" disabled={savingAnnotation || !selectionFlow.retry} onClick={() => void saveSelection(false)}>{selectionFlow.saved ? '重试摘录' : '重试保存'}</button></> : <><input aria-label="EPUB 批注" maxLength={10000} value={comment} onChange={event => setComment(event.target.value)} placeholder="可选批注"/><button className="primary" disabled={savingAnnotation} onClick={() => void saveSelection(false)}>高亮</button><button disabled={savingAnnotation} onClick={() => void saveSelection(!!excerptTarget)}>{excerptTarget ? `批注并${excerptTarget}` : '批注'}</button></>}<button disabled={savingAnnotation} onClick={() => { selectionActionGeneration.current += 1; setSelection(null); setComment(''); setSelectionFlow(null); selectionAnnotation.current = null; }}>取消</button></div>}
     </div><OutlinePanel open={outline} label="EPUB 大纲" className="epub-outline" emptyText={loading ? '正在读取目录…' : '这本电子书没有提供目录。'}
       returnFocus={() => headerTarget?.querySelector('[data-outline-toggle]') || null}
       items={toc.map((item, index) => ({ id: String(index), label: item.label, depth: item.depth, active: item.href === currentHref }))}

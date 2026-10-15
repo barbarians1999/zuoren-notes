@@ -32,10 +32,12 @@ export function htmlToMarkdown(html: string): string {
       return '\n\n' + [line(rows[0]), line(Array(width).fill('---')), ...rows.slice(1).map(line)].join('\n') + '\n\n';
     }
     if (tag === 'ul' || tag === 'ol') {
-      const start = Number(node.getAttribute('start')) || 1;
+      const requestedStart = node.getAttribute('start'), parsedStart = Number(requestedStart);
+      const start = requestedStart !== null && Number.isInteger(parsedStart) && parsedStart >= 0 && parsedStart <= 999999999 ? parsedStart : 1;
       return '\n' + Array.from(node.children).filter(item => item.tagName === 'LI').map((item, index) => {
         const body = children(item).trim();
-        return (tag === 'ol' ? (start + index) + '. ' : '- ') + body.replace(/\n/g, '\n  ');
+        const marker = tag === 'ol' ? (start + index) + '. ' : '- ';
+        return marker + body.replace(/\n/g, '\n' + ' '.repeat(marker.length));
       }).join('\n') + '\n';
     }
     let text = children(node);

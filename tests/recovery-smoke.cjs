@@ -5,7 +5,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { PDFDocument } = require('pdf-lib');
-const { _electron: electron } = require('playwright');
+const { _electron: electron } = require('./electronHarness.cjs');
 const { createSmokeWorkspace, cleanupSmokeWorkspace } = require('./smokeWorkspace.cjs');
 
 const appRoot = path.resolve(__dirname, '..');

@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { _electron: electron } = require('playwright');
+const { _electron: electron } = require('./electronHarness.cjs');
 const { createSmokeWorkspace, cleanupSmokeWorkspace } = require('./smokeWorkspace.cjs');
 
 test('prose selection hugs text and real formatting shortcuts toggle at the caret', { timeout: 60000 }, async () => {

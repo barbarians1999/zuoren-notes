@@ -14,6 +14,9 @@ import { cleanPdfRects, pdfRangeRects, visiblePdfHighlightRects, type PdfSelecte
 import type { PdfTextActionHandler } from './pdfTextAction';
 import { usePdfSelection } from './usePdfSelection';
 import { PdfPopover } from './PdfPopover';
+import { ActionButton } from '../ui/ActionButton';
+import { ResponsiveToolGroup } from '../ui/ResponsiveToolGroup';
+import { DialogFrame } from '../ui/overlays';
 import { createPdfRegionAction, type PdfExcerptContext, type PdfRegionAction } from './pdfRegionAction';
 import type { ExcerptFlowResult } from './excerptFlow';
 import { groupedPdfImages, paintPdfAppearance, type PdfRaster } from './pdfAppearance';
@@ -207,6 +210,7 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
       if (event.isComposing || event.keyCode === 229 || !(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== 'f') return;
       const origin = event.target instanceof Node ? event.target : window.document.activeElement;
       if (!origin || !pane.current?.contains(origin)) return;
+      if (origin instanceof Element && origin.closest('[aria-modal="true"]')) return;
       event.preventDefault(); event.stopPropagation(); setSearchOpen(true);
       requestAnimationFrame(() => { searchInput.current?.focus(); searchInput.current?.select(); });
     };
@@ -287,6 +291,7 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
   };
   return <section className={'pane pdf-pane' + (textSelection.draft ? ' pdf-text-selected' : '')} ref={pane} tabIndex={-1} onPointerDownCapture={event => { if (!(event.target instanceof Element) || !event.target.closest('button, input, textarea')) pane.current?.focus({ preventScroll: true }); }} onKeyDown={event => {
     if (event.defaultPrevented || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    if (event.target instanceof Element && event.target.closest('[aria-modal="true"]')) return;
     if (event.target instanceof HTMLElement && (event.target.isContentEditable || event.target.closest('input, textarea, select'))) return;
     if (event.key === 'Escape') { textSelection.clear(); setAnnotationMenu(null); event.preventDefault(); event.stopPropagation(); return; }
     if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
@@ -313,12 +318,12 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
         <span className="page-control"><span className="page-word">第</span><input ref={pageInput} aria-label="当前页码" inputMode="numeric" value={pageDraft} onChange={event => setPageDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); submitPageDraft(); } else if (event.key === 'Escape') { event.preventDefault(); setPageDraft(String(page)); (event.target as HTMLInputElement).blur(); } }} onBlur={() => setPageDraft(String(page))}/><span>/ {pages || '…'}<span className="page-word"> 页</span></span></span>
         <button className="icon-button" title="下一页（→ / PageDown）" aria-label="下一页" onClick={() => jump(page + 1)}><ChevronRight size={18}/></button>
       </div>
-      <div className="pdf-tools" role="toolbar" aria-label="PDF 标记工具">
+      <ResponsiveToolGroup container={pane} label="PDF 标记工具">
         <button aria-label="选择" title="选择文本" aria-pressed={tool === 'select'} className={tool === 'select' ? 'on' : ''} onClick={() => setTool('select')}><MousePointer2 size={16}/><span>选择</span></button>
         <button aria-label="文字高亮" title="文字高亮" aria-pressed={tool === 'highlight'} className={tool === 'highlight' ? 'on' : ''} onClick={() => setTool('highlight')}><Highlighter size={16}/><span>文字高亮</span></button>
         <button aria-label="框选" title="框选" aria-pressed={tool === 'region'} className={tool === 'region' ? 'on' : ''} onClick={() => setTool('region')}><Crop size={16}/><span>框选</span></button>
         <button aria-label="批注" title="批注" aria-pressed={tool === 'note'} className={tool === 'note' ? 'on' : ''} onClick={() => setTool('note')}><MessageSquare size={16}/><span>批注</span></button>
-      </div>
+      </ResponsiveToolGroup>
       <span className="toolbar-spacer"/>
       <button className="icon-button" aria-label="在 PDF 中查找" title="在 PDF 中查找（Ctrl+F）" onClick={() => { setSearchOpen(true); requestAnimationFrame(() => searchInput.current?.focus()); }}><Search size={16}/></button>
       <div className="toolbar-group zoom-control"><button className="icon-button" title="缩小" aria-label="缩小" onClick={() => requestScale((zoomAnchor.current?.scale ?? scale) - .15)}><ZoomOut size={17}/></button><span>{Math.round(scale * 100)}%</span><button className="icon-button" title="放大" aria-label="放大" onClick={() => requestScale((zoomAnchor.current?.scale ?? scale) + .15)}><ZoomIn size={17}/></button><button className="icon-button" aria-pressed={fullscreen} title={fullscreen ? '退出全屏阅读' : '进入全屏阅读'} aria-label={fullscreen ? '退出全屏阅读' : '进入全屏阅读'} onClick={onToggleFullscreen}>{fullscreen ? <Minimize2 size={17}/> : <Maximize2 size={17}/>}</button></div>
@@ -343,7 +348,7 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
         onSelect={item => { if (toc.length) void goToDestination(toc[Number(item.id)].dest); else jump(Number(item.id) + 1); }}/>
     </div>
     {textSelection.draft && <PdfPopover root={pane} anchor={() => visibleRect('.pdf-text-selection')} className="selection-actions pdf-text-actions">
-      <button aria-label="复制 PDF 选中文字" onClick={() => void textSelection.copy()}><Copy size={14}/>复制</button>
+      <ActionButton aria-label="复制 PDF 选中文字" title="复制选中文字（Ctrl+C）" identity={textSelection.draft.id} action={textSelection.copy} successLabel="已复制" onError={onMessage}><Copy size={14}/>复制</ActionButton>
       {textSelection.result?.retry ? <><span role="status">{textSelection.result.saved ? '高亮已保存，摘录待重试' : '操作未完成'}</span><button disabled={textSelection.busy} onClick={() => void textSelection.act('excerpt')}>{textSelection.result.saved ? '重试摘录' : '重试操作'}</button></> : <>
         <button disabled={textSelection.busy} onClick={() => void textSelection.act('highlight')}><Highlighter size={14}/>高亮</button>
         <button disabled={textSelection.busy || !canExcerpt} title={!canExcerpt ? '请先打开可写入的笔记并处理保存或恢复冲突' : '将选中文字插入当前笔记'} onClick={() => void textSelection.act('excerpt')}>摘录到当前笔记</button>
@@ -403,6 +408,7 @@ function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, c
   const [selection, setSelection] = useState<PdfRect[] | null>(null);
   const [comment, setComment] = useState('');
   const [ocr, setOcr] = useState<(OcrDialog & { action: PdfRegionAction; result?: ExcerptFlowResult }) | null>(null);
+  const ocrTitleId = React.useId();
   const regionOperation = useRef<{ action: PdfRegionAction; doOcr: boolean } | null>(null);
   const [regionResult, setRegionResult] = useState<ExcerptFlowResult | null>(null);
   const ocrTextAction = useRef<(() => Promise<ExcerptFlowResult>) | null>(null);
@@ -561,6 +567,17 @@ function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, c
     finally { savingRef.current = false; setSavingAnnotation(false); }
   }
 
+  async function closeOcr() {
+    if (!ocr || savingRef.current) return;
+    const current = ocr;
+    savingRef.current = true; setSavingAnnotation(true);
+    try {
+      if (current.status !== 'done' && !current.error) await reader().cancelOcr(current.jobId);
+      setOcr(value => value?.jobId === current.jobId ? null : value);
+    } catch (error) { onMessage(`取消识别失败，请重试：${String(error)}`); }
+    finally { savingRef.current = false; setSavingAnnotation(false); }
+  }
+
   function renderRegionActions(): React.ReactNode {
     if (regionResult?.retry) return <><span role="status">{regionResult.error}</span><button disabled={savingAnnotation} onClick={() => void saveRegion()}>{regionResult.saved ? '重试摘录' : '重试操作'}</button></>;
     return <><button disabled={savingAnnotation} onClick={() => void saveRegion(false)}>保存图片摘录</button><button className="primary" disabled={savingAnnotation} onClick={() => void saveRegion(true)}>识别文字并摘录</button></>;
@@ -584,6 +601,18 @@ function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, c
     {!!pageAnnotations.length && <aside className="annotation-list"><b>本页标记</b>{pageAnnotations.map(annotation => <div key={annotation.id}><span>{annotation.type === 'highlight' ? '高亮' : annotation.type === 'region' ? '框选' : '批注'} · {annotation.anchor.quote || annotation.text || annotation.ocrText || '第 ' + page + ' 页'}</span><button disabled={deleting} onClick={() => onShowAnnotation(annotation.id)}>查看</button></div>)}</aside>}
     </div>}
     </div>
-    {ocr && <div className="modal-backdrop"><div className="dialog ocr-dialog" role="dialog" aria-label="扫描文字识别"><div className="dialog-head"><h2>扫描文字识别</h2><button disabled={savingAnnotation} onClick={() => setOcr(null)}><X/></button></div>{ocr.status !== 'done' && !ocr.error ? <><p>{ocr.status} · {Math.round(ocr.progress * 100)}%</p><progress max="1" value={ocr.progress}/><div className="dialog-actions"><button onClick={() => { void reader().cancelOcr(ocr.jobId); setOcr(null); }}>取消识别</button></div></> : ocr.error ? <><p>识别失败：{ocr.error}</p><p>图片摘录已经保留。</p></> : <><p>请核对并修改识别结果，再插入笔记。</p><textarea disabled={savingAnnotation || !!ocr.result?.saved} value={ocr.text} onChange={event => { ocrTextAction.current = null; setOcr({ ...ocr, text: event.target.value, result: undefined }); }}/>{ocr.result?.error && <p role="status">{ocr.result.error}</p>}<div className="dialog-actions"><button disabled={savingAnnotation} onClick={() => setOcr(null)}>只保留图片</button><button className="primary" disabled={savingAnnotation} onClick={() => void acceptOcr()}>{ocr.result?.saved ? '重试摘录' : '确认并插入文字'}</button></div></>}</div></div>}
+    {ocr && <DialogFrame className="ocr-dialog" labelledBy={ocrTitleId} busy={savingAnnotation} onCancel={() => void closeOcr()}
+      returnFocus={() => holder.current?.closest<HTMLElement>('.pdf-pane') || null}>
+      <div className="dialog-head"><h2 id={ocrTitleId}>扫描文字识别</h2><button aria-label="关闭扫描文字识别" title="关闭（Esc）" disabled={savingAnnotation} onClick={() => void closeOcr()}><X/></button></div>
+      {ocr.status !== 'done' && !ocr.error ? <>
+        <p>{ocr.status} · {Math.round(ocr.progress * 100)}%</p><progress aria-label="文字识别进度" max="1" value={ocr.progress}/>
+        <div className="dialog-actions"><button disabled={savingAnnotation} onClick={() => void closeOcr()}>取消识别</button></div>
+      </> : ocr.error ? <><p>识别失败：{ocr.error}</p><p>图片摘录已经保留。</p></> : <>
+        <p>请核对并修改识别结果，再插入笔记。</p>
+        <textarea aria-label="识别文字" disabled={savingAnnotation || !!ocr.result?.saved} value={ocr.text} onChange={event => { ocrTextAction.current = null; setOcr({ ...ocr, text: event.target.value, result: undefined }); }}/>
+        {ocr.result?.error && <p role="status">{ocr.result.error}</p>}
+        <div className="dialog-actions"><button disabled={savingAnnotation} onClick={() => void closeOcr()}>只保留图片</button><button className="primary" disabled={savingAnnotation} onClick={() => void acceptOcr()}>{ocr.result?.saved ? '重试摘录' : '确认并插入文字'}</button></div>
+      </>}
+    </DialogFrame>}
   </section>;
 }

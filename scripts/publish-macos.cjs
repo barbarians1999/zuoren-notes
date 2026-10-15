@@ -2,7 +2,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
-const { releaseForTag } = require('./release-support.cjs');
+const { releaseForTag, checkPublication } = require('./release-support.cjs');
 const repository=process.env.GITHUB_REPOSITORY;
 const tag=process.env.RELEASE_TAG;
 const token=process.env.GH_TOKEN;
@@ -60,6 +60,9 @@ async function main() {
     if(!asset || asset.name!==previous.name || asset.size!==previous.size || asset.digest!==previous.digest) throw new Error('Windows asset changed unexpectedly');
   }
   for(const item of downloads) if(final.assets.find(asset=>asset.name===item.name)?.digest!==`sha256:${item.sha256}`) throw new Error('Uploaded asset digest mismatch: '+item.name);
+  await checkPublication(api, { releaseId: release.id, tag, sourceCommit: process.env.GITHUB_SHA,
+    publicRelease: !final.draft,
+    assets: [...windows, ...await Promise.all(downloads.map(async item => ({ name: item.name, size: (await fs.stat(item.file)).size, digest: `sha256:${item.sha256}` })))] });
   console.log('Published verified Mac packages: '+final.html_url);
 }
 main().catch(error=>{console.error(error.message);process.exitCode=1;});
