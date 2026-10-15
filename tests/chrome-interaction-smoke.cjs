@@ -127,6 +127,11 @@ test('shared chrome preserves focus, async failures and confirmed copy feedback'
       assert.equal(await fs.readFile(path.join(workspace.fixture, 'paper.pdf')).then(bytes => bytes.equals(pdfBytes)), true);
     });
     await t.test('splitter measures its pane, ignores tiny drags and cancels cleanly', async () => {
+      // The compact toolbar case deliberately leaves a 760px window. At that
+      // width the 240px pane minimum can clamp a valid drag; use a known wide
+      // viewport for the separate, unclamped distance assertion.
+      const size = await app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.setSize(1200, 800); return win.getContentSize(); });
+      await page.waitForFunction(([width, height]) => innerWidth === width && innerHeight === height, size);
       const splitter = page.getByRole('separator', { name: '调整阅读与笔记宽度', exact: true });
       const panes = page.locator('.panes');
       const ratio = () => panes.evaluate(el => parseFloat(el.style.getPropertyValue('--split-at')));
@@ -140,6 +145,7 @@ test('shared chrome preserves focus, async failures and confirmed copy feedback'
       await start(2); await page.mouse.up(); assert.equal(await ratio(), initial, 'micro movement does not resize');
       await start(55);
       const expected = initial + 55 / width * 100;
+      await page.waitForFunction(value => Math.abs(parseFloat(document.querySelector('.panes').style.getPropertyValue('--split-at')) - value) < .05, expected);
       assert.ok(Math.abs(await ratio() - expected) < .05, 'drag distance uses the content width, excluding the sidebar');
       await page.mouse.up();
       await page.waitForFunction(value => Math.abs(parseFloat(document.querySelector('.panes').style.getPropertyValue('--split-at')) - value) < .05, expected);

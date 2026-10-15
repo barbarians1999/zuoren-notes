@@ -48,7 +48,16 @@ async function main() {
   let checkpoint;
   if (args.resume) {
     checkpoint = await readJson(checkpointFile).catch(() => { throw Error('No modern build checkpoint; historical directed reports cannot prove exact source identity'); });
-    assertReusableBuild(checkpoint, source, version, args.localTest ? 'local-test' : 'official');
+    try { assertReusableBuild(checkpoint, source, version, args.localTest ? 'local-test' : 'official'); }
+    catch (error) {
+      // Before the first installer, archive the abandoned identity rather than
+      // overwriting a delivered package or inventing a successful receipt.
+      const entries = await fs.readdir(directory);
+      if (checkpoint.artifactHashes || entries.some(name => name !== 'BUILD.json')) throw error;
+      await writeJson(path.join(logs, 'ABANDONED-BUILD.json'), checkpoint);
+      checkpoint = { schemaVersion: 2, version, kind: args.localTest ? 'local-test' : 'official', source, tests: {}, createdAt: new Date().toISOString() };
+      await writeJson(checkpointFile, checkpoint);
+    }
     if (checkpoint.artifactHashes) for (const [file, expected] of Object.entries(checkpoint.artifactHashes)) if (await sha256(path.join(directory, file)) !== expected) throw Error('Existing build bytes changed: ' + file);
   } else {
     await fs.mkdir(path.dirname(directory), { recursive: true });
@@ -77,10 +86,27 @@ async function main() {
     const identity = await testIdentity(root, plan[stage]);
     if (checkpoint.tests[stage]?.inputsSha256 === identity.sha256 && checkpoint.tests[stage].status === 'passed') { console.log('[delivery] reuse verified ' + stage + ' tests'); continue; }
     if (stage === 'source' && (await directoryIdentity(root, 'dist')).sha256 !== checkpoint.buildOutputs.sha256) throw Error('Source UI build output changed; inspect before revalidation');
-    const text = stage === 'unit'
-      ? await node(stage, ['--test', '--test-reporter=tap', ...plan.unit])
-      : await node(stage, ['scripts/test-ui.cjs', '--files', ...plan[stage]], stage === 'packaged' ? environment : { ZUOREN_UI_DIAGNOSTICS: environment.ZUOREN_UI_DIAGNOSTICS });
-    checkpoint.tests[stage] = { status: 'passed', count: passed(text), inputsSha256: identity.sha256, files: plan[stage], log: path.relative(root, path.join(logs, stage + '.log')), completedAt: new Date().toISOString() };
+    if (stage === 'unit') {
+      const text = await node(stage, ['--test', '--test-reporter=tap', ...plan.unit]);
+      checkpoint.tests[stage] = { status: 'passed', count: passed(text), inputsSha256: identity.sha256, files: plan.unit, log: path.relative(root, path.join(logs, stage + '.log')), completedAt: new Date().toISOString() };
+    } else {
+      const fileResults = checkpoint.tests[stage]?.fileResults || {};
+      checkpoint.tests[stage] = { status: 'incomplete', fileResults };
+      for (const file of plan[stage]) {
+        const fileIdentity = await testIdentity(root, [file]);
+        if (fileResults[file]?.status === 'passed' && fileResults[file].inputsSha256 === fileIdentity.sha256) { console.log('[delivery] reuse ' + stage + ': ' + file); continue; }
+        const name = stage + '-' + path.basename(file, '.cjs');
+        try {
+          const text = await node(name, ['scripts/test-ui.cjs', '--files', file], stage === 'packaged' ? environment : { ZUOREN_UI_DIAGNOSTICS: environment.ZUOREN_UI_DIAGNOSTICS });
+          fileResults[file] = { status: 'passed', count: passed(text), inputsSha256: fileIdentity.sha256, log: path.relative(root, path.join(logs, name + '.log')) };
+        } catch (error) {
+          fileResults[file] = { status: 'failed', inputsSha256: fileIdentity.sha256, log: path.relative(root, path.join(logs, name + '.log')) };
+          await writeJson(checkpointFile, checkpoint); throw error;
+        }
+        await writeJson(checkpointFile, checkpoint);
+      }
+      checkpoint.tests[stage] = { status: 'passed', count: plan[stage].reduce((sum, file) => sum + fileResults[file].count, 0), inputsSha256: identity.sha256, files: plan[stage], fileResults, completedAt: new Date().toISOString() };
+    }
     await writeJson(checkpointFile, checkpoint);
   }
   const powershell = path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe');

@@ -167,10 +167,11 @@ test('region and OCR handoffs stay bound to the original note, retain retries an
     await t.test('OCR close and Escape cancel only the active job, preserve saved images and restore focus', async () => {
       await app.evaluate(() => { globalThis.__handoffAudit.holdOcr = true; });
       for (const closeWithEscape of [false, true]) {
+        const imageCount = ((await fs.readFile(a, 'utf8')).match(/!\[PDF/g) || []).length;
         await draw(); await page.getByRole('button', { name: '识别文字并摘录', exact: true }).click();
         const dialog = page.getByRole('dialog', { name: '扫描文字识别' }); await dialog.waitFor();
         const jobId = await app.evaluate(() => globalThis.__handoffAudit.ocrJobs.at(-1));
-        await waitForFile(a, text => text.includes('![PDF'));
+        await waitForFile(a, text => (text.match(/!\[PDF/g) || []).length === imageCount + 1);
         const savedText = await fs.readFile(a, 'utf8');
         if (!closeWithEscape) {
           await app.evaluate(() => { globalThis.__handoffAudit.failCancel = true; });

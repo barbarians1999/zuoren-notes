@@ -3,6 +3,7 @@ import { BookOpen, ChevronLeft, ChevronRight, Copy, List, Search, X } from 'luci
 import { createPortal } from 'react-dom';
 import { OutlinePanel } from '../OutlinePanel';
 import { ActionButton } from '../ui/ActionButton';
+import { releaseEpubBook } from './epubBookRelease';
 import type { EpubAnchor, EpubAnnotation, EpubMeta } from '../types';
 import { NOTE_BODY_FONTS, EPUB_MIN_SPREAD_WIDTH, type ActiveEpub, type FlatNavItem, type NoteBodyFont } from '../readerContext';
 import ePub, { EpubCFI, type Book, type Location, type NavItem, type Rendition } from 'epubjs';
@@ -198,6 +199,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
     let disposed = false;
     const generation = ++generationRef.current;
     let locationsReady = false;
+    let locationGeneration: Promise<unknown> | undefined;
     let resizeRestoreToken = 0;
     let relocated: ((location: Location) => void) | null = null;
     let selectedListener: ((cfiRange: string, contents: any) => void) | null = null;
@@ -371,7 +373,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
           }
           setLoading(false);
         }
-        void book.locations.generate(1500).then(() => { if (generationRef.current !== generation) return; locationsReady = true; return rendition.reportLocation(); }).catch(() => undefined);
+        if (!disposed) locationGeneration = book.locations.generate(1500).then(() => { if (generationRef.current !== generation) return; locationsReady = true; return rendition.reportLocation(); }).catch(() => undefined);
       } catch (error) {
         if (!disposed) { setLoading(false); onMessage(`EPUB 无法显示：${error instanceof Error ? error.message : String(error)}`); }
       }
@@ -403,7 +405,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
       if (selectedListener) rendition.off('selected', selectedListener);
       rendition.off('rendered', restoreRenderedPosition);
       try { rendition.destroy(); } catch { /* already destroyed */ }
-      try { book.destroy(); } catch { /* already destroyed */ }
+      void releaseEpubBook(book, locationGeneration).catch(error => console.warn('EPUB resource release failed', error));
       if (renditionRef.current === rendition) renditionRef.current = null;
       if (bookRef.current === book) bookRef.current = null;
       element.replaceChildren();

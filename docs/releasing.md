@@ -64,7 +64,7 @@ node scripts/test-ui.cjs --files tests/markdown-presentation-smoke.cjs
 - 安装包绝对目录、文件名、字节数和 SHA256，实际应用 ASAR 与 EXE 哈希。
 - `localAcceptance.status=passed` 与完成时间。没有这些证据的历史回执不直接升级为正式回执。
 
-`BUILD.json` 记录可恢复检查点。每次运行日志在 `logs/releases/版本/runs/时间/`，历史回执先归档再更新，不覆盖历史失败证据。`SHA256SUMS.txt` 使用实际本地文件名；GitHub 上传另生成使用公开文件名的校验清单。
+`BUILD.json` 记录可恢复检查点，源码与包内 UI 逐个测试文件保存通过证据，单项失败不会抹掉其他已通过文件。每次运行日志在 `logs/releases/版本/runs/时间/`，历史回执先归档再更新，不覆盖历史失败证据。`SHA256SUMS.txt` 使用实际本地文件名；GitHub 上传另生成使用公开文件名的校验清单。
 
 `logs/releases/版本/LOCAL-DELIVERY.json` 分别记录验收、同步、清理与未执行的 GitHub 状态。退出码 0 表示所请求阶段完成，2 表示包已验收但同步／退役仍有待处理，1 表示构建或验证未获验收。清理失败不撤销已通过的包验收。
 
@@ -79,9 +79,9 @@ pnpm release --profile markdown --resume --cleanup
 pnpm release --profile directed --plan docs/verification-plans/0.3.12.json --resume --cleanup
 ```
 
-也可用 `--receipt C:/绝对路径/releases/版本/VALIDATION.json --resume` 明确回执。现有构建必须与源码输入、依赖锁、运行时及包文件哈希一致。单测、源码 UI、包内 UI 的输入独立比较，只有相关测试文件／共享 helper／组合夹具变更的阶段重验；测试变化本身不重制安装包。无关文档或对话变化不会重做包。应用源码、依赖或运行时改变则拒绝复用，先准备新版本，不能覆盖旧目录。
+也可用 `--receipt C:/绝对路径/releases/版本/VALIDATION.json --resume` 明确回执。现有构建必须与源码输入、依赖锁、运行时及包文件哈希一致。单测、源码 UI、包内 UI 的输入独立比较；UI 按文件复用，只有失败或身份变化的文件重验，共享 helper／夹具／驱动脚本变化则覆盖受影响的集合。测试变化本身不重制安装包，无关文档或对话变化不会重做包。应用源码、依赖或运行时改变则拒绝复用已有包，先准备新版本，不能覆盖旧目录。
 
-没有 BUILD 检查点的历史包拒绝自动续用。失败安装器的目录不自动覆盖；先保留诊断并检查具体失败阶段。只有未产生包的检查点可以继续未完成构建。不要反复重跑直到偶然通过。
+没有 BUILD 检查点的历史包拒绝自动续用。失败安装器的目录不自动覆盖；先保留诊断并检查具体失败阶段。只有目录中尚未产生任何包、仅存在 BUILD 检查点时，源码修复后的 `--resume` 才能归档旧检查点并重新构建，不能把旧测试沿用为新源码通过。不要反复重跑直到偶然通过。
 
 本地未提交测试包须显式：
 
