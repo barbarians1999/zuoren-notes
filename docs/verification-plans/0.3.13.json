@@ -1,0 +1,15 @@
+{
+  "reason": "0.3.13 targeted delivery for the four confirmed ponytail-audit regressions: case-sensitive rename/recovery identity, code blank lines in rich paste, Electron display metrics callback parameters, and Markdown outline heading provenance. Source and packaged UI coverage includes document lifecycle, clipboard/undo, mixed HTML/Markdown outline, window metrics and path reuse. NOT full release regression.",
+  "source": [
+    "tests/clipboard-smoke.cjs",
+    "tests/markdown-presentation-smoke.cjs",
+    "tests/window-startup-smoke.cjs",
+    "tests/path-reuse-smoke.cjs"
+  ],
+  "packaged": [
+    "tests/clipboard-smoke.cjs",
+    "tests/markdown-presentation-smoke.cjs",
+    "tests/window-startup-smoke.cjs",
+    "tests/path-reuse-smoke.cjs"
+  ]
+}

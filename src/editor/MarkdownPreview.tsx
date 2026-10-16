@@ -3,8 +3,8 @@ import type { ReaderAnchor } from '../types';
 import { reader, resolveLocal } from '../readerContext';
 import { renderMarkdown } from './markdownRendering';
 import { decodeReaderAnchor } from '../readerAnchor.cjs';
-import { findMarkdownTasks, taskPreviewSource } from './markdownTasks';
-export const MarkdownPreview = React.memo(function MarkdownPreview({ notePath, text, onJump, onToggleTask }: { notePath: string; text: string; onJump: (anchor: ReaderAnchor) => void; onToggleTask?: (position: number, checked: boolean, expectedSource: string) => boolean }) {
+import { findMarkdownTasks, markdownPreviewSource } from './markdownTasks';
+export const MarkdownPreview = React.memo(function MarkdownPreview({ notePath, text, headings, onJump, onToggleTask }: { notePath: string; text: string; headings: readonly { line: number; previewAt: number }[]; onJump: (anchor: ReaderAnchor) => void; onToggleTask?: (position: number, checked: boolean, expectedSource: string) => boolean }) {
   const [rendered, setRendered] = useState<{ notePath: string; source: string; html: string; taskNonce: string | null } | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const restoreScroll = useRef<{ notePath: string; top: number } | null>(null);
@@ -32,7 +32,14 @@ export const MarkdownPreview = React.memo(function MarkdownPreview({ notePath, t
       // Resolve actual rendered images, never image-looking text inside code.
       const container = document.createElement('template');
       const tasks = findMarkdownTasks(text), taskNonce = crypto.randomUUID();
-      container.innerHTML = renderMarkdown(taskPreviewSource(text, tasks, taskNonce) || '<p><br></p>');
+      container.innerHTML = renderMarkdown(markdownPreviewSource(text, tasks, taskNonce, headings) || '<p><br></p>');
+      for (const heading of headings) {
+        const identity = `${taskNonce}:${heading.line}`;
+        const marker = container.content.querySelector(`[data-zuoren-heading="${identity}"]`);
+        const element = marker?.closest('h1,h2,h3,h4,h5,h6');
+        if (element) element.setAttribute('data-zuoren-heading', identity);
+        marker?.remove();
+      }
       for (const input of container.content.querySelectorAll<HTMLInputElement>('input')) input.disabled = true;
       for (const task of tasks) {
         const marker = container.content.querySelector(`[data-zuoren-task="${taskNonce}:${task.position}"]`);
@@ -69,8 +76,8 @@ export const MarkdownPreview = React.memo(function MarkdownPreview({ notePath, t
       } finally { if (timeout !== undefined) window.clearTimeout(timeout); }
     })();
     return () => { disposed = true; if (timeout !== undefined) window.clearTimeout(timeout); };
-  }, [notePath, text, !!onToggleTask]);
-  return <div ref={root} data-note-path={notePath} className={'markdown-preview' + (html === null ? ' preview-loading' : '')} tabIndex={0} aria-label="Markdown 预览" aria-busy={html === null} onClick={event => {
+  }, [notePath, text, headings, !!onToggleTask]);
+  return <div ref={root} data-note-path={notePath} data-heading-nonce={rendered?.taskNonce || undefined} data-preview-current={rendered?.notePath === notePath && rendered.source === text} className={'markdown-preview' + (html === null ? ' preview-loading' : '')} tabIndex={0} aria-label="Markdown 预览" aria-busy={html === null} onClick={event => {
     const input = event.target;
     if (input instanceof HTMLInputElement && input.type === 'checkbox') {
       event.preventDefault();

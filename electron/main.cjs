@@ -374,7 +374,7 @@ function createWindow(settings = {}) {
   });
   const window = mainWindow;
   const scheduleWidthSync = () => scheduleWindowMinimumWidthSync(window);
-  const syncChangedDisplay = display => {
+  const syncChangedDisplay = (_event, display) => {
     if (screen.getDisplayMatching(window.getBounds()).id === display.id) scheduleWindowMinimumWidthSync(window);
   };
   window.on('move', scheduleWidthSync);

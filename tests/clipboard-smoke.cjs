@@ -52,6 +52,12 @@ test('clipboard source, HTML tasks/tables, styling, safe images and undo round-t
   const rich = await paste({ 'text/html': '<div>first<br>second</div><p><span style="font-weight:700">bold</span> <span style="font-style:italic">italic</span></p><ul><li><input type="checkbox" checked>done</li><li><input type="checkbox">todo</li></ul><ol start="3"><li>three</li></ol><table><tr><th>A</th><th>B</th></tr><tr><td>x</td><td>y</td></tr></table><p><a href="javascript:alert(1)">bad link</a></p><script>evil</script>' });
   for (const fragment of ['first\nsecond', '**bold**', '*italic*', '- [x] done', '- [ ] todo', '3. three', '| A | B |', '| --- | --- |', '| x | y |']) assert.ok(rich.md.includes(fragment), fragment + ': ' + rich.md);
   assert.doesNotMatch(rich.md, /javascript:|<script|evil/);
+  const codeBody = 'first\n\n\nlast\n\n\n\nend';
+  const code = await paste({ 'text/html': '<p>before</p><pre><code>' + codeBody + '</code></pre><p>after</p>' });
+  assert.ok(code.md.includes('```\n' + codeBody + '\n```'), 'rich paste preserves all blank lines inside code');
+  await waitForFile(note, value => value === code.md);
+  await editor.focus(); await page.keyboard.press('Control+z');
+  await waitForFile(note, value => value === rich.md);
   const vscode = await paste({ 'text/plain': '## raw\n**exact**', 'text/html': '<pre>different</pre>', 'vscode-editor-data': '{}' });
   assert.equal(vscode.md, '## raw\n**exact**');
   const preferred = await paste({ 'text/plain': 'fallback', 'text/markdown': '~~preferred~~', 'text/html': '<b>other</b>' });

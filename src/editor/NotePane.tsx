@@ -310,13 +310,14 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
       <button type="button" aria-label="关闭查找" title="关闭（Esc）" onClick={closeFind}>×</button>
     </div>}
     <div className="note-body" ref={host}>
-      {!note ? <div className="empty-state"><FileText size={28}/><p>打开或新建 Markdown 笔记</p><small>编辑后自动保存</small></div> : <div className="note-content"><div className="note-editor-surface" style={{ display: mode === 'preview' ? 'none' : 'flex' }}><MarkdownSourceEditor notePath={note.path} onView={setSourceView} onSelectionChange={setSourceSelection} sharedDocument={sharedDocument!} tab={tab!}/></div>{mode === 'preview' && <MarkdownPreview notePath={note.path} text={text} onJump={stableJump} onToggleTask={toggleTask}/>}</div>}
+      {!note ? <div className="empty-state"><FileText size={28}/><p>打开或新建 Markdown 笔记</p><small>编辑后自动保存</small></div> : <div className="note-content"><div className="note-editor-surface" style={{ display: mode === 'preview' ? 'none' : 'flex' }}><MarkdownSourceEditor notePath={note.path} onView={setSourceView} onSelectionChange={setSourceSelection} sharedDocument={sharedDocument!} tab={tab!}/></div>{mode === 'preview' && <MarkdownPreview notePath={note.path} text={text} headings={sourceView ? markdownOutline(sourceView) : []} onJump={stableJump} onToggleTask={toggleTask}/>}</div>}
       <OutlinePanel open={outline} label="Markdown 大纲" emptyText="使用标题组织笔记后，目录会出现在这里。"
         returnFocus={() => document.querySelector(`[data-note-controls="${paneId}"] [data-outline-toggle]`) || host.current?.querySelector('[data-outline-toggle]') || null}
         items={headings.map((item, index) => ({ id: String(index), label: item.text, depth: item.level - 1, indicator: String(item.level) }))}
         onSelect={entry => { const index = Number(entry.id), item = headings[index]; if (!item) return;
           if (mode === 'edit' && sourceView && item.line !== undefined) { const line = sourceView.state.doc.line(Math.min(item.line + 1, sourceView.state.doc.lines)); sourceView.dispatch({ selection: { anchor: line.from }, effects: CodeMirrorView.scrollIntoView(line.from, { y: 'start' }) }); sourceView.focus(); return; }
-          host.current?.querySelectorAll('.markdown-preview :is(h1,h2,h3,h4,h5,h6)')[index]?.scrollIntoView({ block: 'start', behavior: reducedMotion ? 'auto' : 'smooth' }); }}/>
+          const preview = host.current?.querySelector<HTMLElement>('.markdown-preview'), nonce = preview?.dataset.headingNonce;
+          if (preview?.dataset.previewCurrent === 'true' && nonce && item.line !== undefined) preview.querySelector(`[data-zuoren-heading="${nonce}:${item.line}"]`)?.scrollIntoView({ block: 'start', behavior: reducedMotion ? 'auto' : 'smooth' }); }}/>
     </div>
     {selectionToolbar && mode === 'edit' && sourceView && <div className="selection-toolbar" role="toolbar" aria-label="选中文本格式" style={{ left: selectionToolbar.left, top: selectionToolbar.top }} onPointerDown={event => event.preventDefault()}>
       <button title="加粗（Ctrl+B）" onClick={() => runInlineFormat('bold')}>B</button>

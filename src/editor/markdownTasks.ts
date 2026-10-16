@@ -15,12 +15,16 @@ export function findMarkdownTasks(source: string): MarkdownTask[] {
   return tasks;
 }
 
-export function taskPreviewSource(source: string, tasks: readonly MarkdownTask[], nonce: string): string {
+export function markdownPreviewSource(source: string, tasks: readonly MarkdownTask[], nonce: string, headings: readonly { line: number; previewAt: number }[] = []): string {
+  const markers = [
+    ...tasks.map(task => ({ insertAt: task.insertAt, html: `<span data-zuoren-task="${nonce}:${task.position}"></span>` })),
+    ...headings.map(heading => ({ insertAt: heading.previewAt, html: `${source[heading.previewAt - 1] === '#' ? ' ' : ''}<span data-zuoren-heading="${nonce}:${heading.line}"></span> ` })),
+  ].sort((a, b) => a.insertAt - b.insertAt);
   const parts: string[] = [];
   let from = 0;
-  for (const task of tasks) {
-    parts.push(source.slice(from, task.insertAt), `<span data-zuoren-task="${nonce}:${task.position}"></span>`);
-    from = task.insertAt;
+  for (const marker of markers) {
+    parts.push(source.slice(from, marker.insertAt), marker.html);
+    from = marker.insertAt;
   }
   return parts.join('') + source.slice(from);
 }

@@ -49,6 +49,15 @@ async function atomicWrite(file, data) {
   } finally { await fs.unlink(temp).catch(() => {}); }
 }
 
+async function realPathOrParent(file) {
+  try { return await fs.realpath(file); }
+  catch (error) {
+    const parent = path.dirname(file);
+    if (error.code !== 'ENOENT' || parent === file) throw error;
+    return path.join(await realPathOrParent(parent), path.basename(file));
+  }
+}
+
 class FileStore {
   constructor() { this.roots = new Set(); this.files = new Set(); this.lastBackup = new Map(); this.queues = new Map(); this.identities = new Map(); }
   async contentIdentity(file) {
@@ -156,7 +165,7 @@ class FileStore {
       };
       await visit(source);
     }
-    const identity = value => path.resolve(value).toLocaleLowerCase('en-US');
+    const rootKey = path.resolve(source), foldedRoot = rootKey.toLocaleLowerCase('en-US');
     const migrations = [];
     for (let directory of directories) {
       let entries; try {
@@ -175,9 +184,12 @@ class FileStore {
         let value; try { value = JSON.parse(raw.toString('utf8')); }
         catch { continue; } // Damaged records are preserved byte-for-byte and remain addressable by ID.
         if (!validRecovery(value, recoveryId, value?.sourcePath)) continue;
-        const sourceKey = identity(value.sourcePath), rootKey = identity(source);
-        if (isDirectory ? !(sourceKey === rootKey || sourceKey.startsWith(rootKey + path.sep.toLocaleLowerCase('en-US'))) : sourceKey !== rootKey) continue;
-        const nextSource = isDirectory ? path.join(target, path.relative(source, value.sourcePath)) : target;
+        const foldedSource = path.resolve(value.sourcePath).toLocaleLowerCase('en-US');
+        if (isDirectory ? !(foldedSource === foldedRoot || foldedSource.startsWith(foldedRoot + path.sep)) : foldedSource !== foldedRoot) continue;
+        // Canonicalize aliases, but never merge distinct case-sensitive names.
+        const sourceKey = await realPathOrParent(value.sourcePath);
+        if (isDirectory ? !(sourceKey === rootKey || sourceKey.startsWith(rootKey + path.sep)) : sourceKey !== rootKey) continue;
+        const nextSource = isDirectory ? path.join(target, path.relative(source, sourceKey)) : target;
         migrations.push({ file, raw, next: Buffer.from(JSON.stringify({ ...value, sourcePath: nextSource })) });
       }
     }
@@ -200,10 +212,15 @@ class FileStore {
       if (stat.isDirectory()) return { path: real, name: path.basename(real), kind: 'folder' };
       return { path: real, name: path.basename(real), relative: real, kind: 'file', type: /\.pdf$/i.test(real) ? 'pdf' : /\.epub$/i.test(real) ? 'epub' : 'md' };
     }
-    const sameIdentity = target.toLocaleLowerCase() === source.toLocaleLowerCase();
-    if (!sameIdentity) {
-      try { await fs.access(target); throw new Error('同名文件或文件夹已经存在'); }
-      catch (error) { if (error.code !== 'ENOENT') throw error; }
+    let sameIdentity = false;
+    try {
+      const existing = await fs.stat(target);
+      const sameEntity = stat.ino && existing.ino ? stat.dev === existing.dev && stat.ino === existing.ino
+        : await fs.realpath(target) === source;
+      sameIdentity = target.toLocaleLowerCase() === source.toLocaleLowerCase() && sameEntity;
+      if (!sameIdentity) throw new Error('同名文件或文件夹已经存在');
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
     }
     const migrations = stat.isFile() && /\.(md|markdown)$/i.test(source)
       ? await this.recoveryMigrations(source, target, false)

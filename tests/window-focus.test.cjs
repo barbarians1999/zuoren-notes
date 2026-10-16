@@ -2,6 +2,9 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { installWindowFocus } = require('../electron/window-focus.cjs');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
 function fixture() {
   const win = new EventEmitter(), contents = new EventEmitter();
   const state = { windowFocused: true, contentFocused: false, destroyed: false, calls: 0 };
@@ -42,4 +45,15 @@ test('overlapping dialogs wait for the last completion and never steal focus fro
   firstDone(); await first; assert.equal(f.state.calls, 0);
   f.state.windowFocused = false; secondDone(); await second; assert.equal(f.state.calls, 0);
   f.state.windowFocused = true; f.win.emit('focus'); assert.equal(f.state.calls, 1);
+});
+test('display metrics callback uses Electron event/display arguments and ignores unrelated displays', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../electron/main.cjs'), 'utf8');
+  const callback = source.match(/const syncChangedDisplay = [\s\S]*?\n  \};/)[0];
+  let scheduled = 0;
+  const current = { id: 42 }, screen = new EventEmitter(), window = { getBounds: () => ({}) };
+  screen.getDisplayMatching = () => current;
+  const context = { screen, window, scheduleWindowMinimumWidthSync: () => scheduled++ };
+  vm.runInNewContext(callback + '\nscreen.on("display-metrics-changed", syncChangedDisplay);', context);
+  screen.emit('display-metrics-changed', {}, { id: 9 }, ['workArea']); assert.equal(scheduled, 0);
+  screen.emit('display-metrics-changed', {}, current, ['workArea']); assert.equal(scheduled, 1);
 });

@@ -6,7 +6,13 @@ const escape = (text: string) => text.replace(/([\\`*_[\]~])/g, '\\$1');
 export function htmlToMarkdown(html: string): string {
   const root = document.createElement('template');
   root.innerHTML = DOMPurify.sanitize(html, { FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'form'] });
-  function children(node: Node): string { return Array.from(node.childNodes).map(walk).join(''); }
+  function children(node: Node): string {
+    return Array.from(node.childNodes).map(walk).reduce((text, next) => {
+      const tail = text.match(/\n+$/)?.[0] || '', head = next.match(/^\n+/)?.[0] || '';
+      // Normalize sibling block boundaries, never the inside of a code block.
+      return tail && head ? text.slice(0, -tail.length) + '\n\n' + next.slice(head.length) : text + next;
+    }, '');
+  }
   function walk(node: Node): string {
     if (node.nodeType === Node.TEXT_NODE) return escape(node.textContent || '');
     if (!(node instanceof HTMLElement)) return '';
@@ -55,7 +61,7 @@ export function htmlToMarkdown(html: string): string {
     if (tag === 'div') return text + '\n';
     return text;
   }
-  return children(root.content).replace(/\n{3,}/g, '\n\n').trim();
+  return children(root.content).trim();
 }
 
 export const markdownClipboard = EditorView.domEventHandlers({

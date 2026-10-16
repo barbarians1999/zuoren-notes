@@ -14,9 +14,11 @@ test('nested Markdown presentation maps clicks to source and preserves paste, ou
   const errors = [];
   try {
     await fs.mkdir(workspace.fixture, { recursive: true });
-    const note = path.join(workspace.fixture, 'structure.md'), pasteNote = path.join(workspace.fixture, 'paste.md');
+    const note = path.join(workspace.fixture, 'structure.md'), pasteNote = path.join(workspace.fixture, 'paste.md'), outlineNote = path.join(workspace.fixture, 'outline.md');
+    const outlineSource = '<h2 data-zuoren-heading="fake:2">HTML heading</h2>\n\n## <span id="first-md"></span>Same heading\n\n<h2>Another HTML heading</h2>\n\n<span id="second-md"></span>Same heading\n---\n\n> ## Quoted heading\n\n~~~md\n## Code only\n~~~\n';
     const pasteBase = '# Paste base\n';
     await fs.writeFile(note, source); await fs.writeFile(pasteNote, pasteBase);
+    await fs.writeFile(outlineNote, outlineSource);
     const packaged = process.env.ZHAOYE_SMOKE_EXECUTABLE || process.env.ZHAOYE_EXE;
     const launch = async file => {
       app = await _electron.launch({ executablePath: packaged || path.join(root, 'node_modules/electron/dist/electron.exe'),
@@ -137,6 +139,31 @@ test('nested Markdown presentation maps clicks to source and preserves paste, ou
         await waitForFile(pasteNote, text => text === pasteBase);
         assert.equal(await sourceText(), pasteBase, 'the entire rich paste is one undo transaction');
       }
+    });
+    await t.test('mixed HTML/Markdown outline jumps target source headings, including duplicate labels', async () => {
+      await row('outline.md').dblclick(); await content.waitFor(); await toPreview();
+      await pane.getByRole('button', { name: '展开大纲', exact: true }).click();
+      const outline = pane.getByRole('complementary', { name: 'Markdown 大纲', exact: true });
+      await outline.locator('button').nth(2).waitFor();
+      assert.equal(await outline.locator('button').count(), 3, 'raw HTML and code headings do not enter the source outline');
+      const preview = pane.locator('.markdown-preview');
+      await preview.evaluate(element => {
+        window.__outlineScroll = [];
+        for (const heading of element.querySelectorAll('h1,h2,h3,h4,h5,h6')) {
+          const original = heading.scrollIntoView;
+          heading.scrollIntoView = function (options) { window.__outlineScroll.push({ id: this.querySelector('[id]')?.id, text: this.textContent }); original.call(this, options); };
+        }
+      });
+      for (const [index, id] of ['first-md', 'second-md'].entries()) {
+        await outline.locator('button').nth(index).click();
+        assert.equal(await page.evaluate(() => window.__outlineScroll.at(-1)?.id), id, 'outline clicks must not land on HTML or another same-named heading');
+      }
+      await outline.locator('button').nth(2).click();
+      assert.equal(await page.evaluate(() => window.__outlineScroll.at(-1)?.text.trim()), 'Quoted heading');
+      await toEdit(); await outline.locator('button').nth(1).click();
+      assert.ok((await content.locator('.cm-activeLine').innerText()).includes('second-md'), 'editing jumps to the same source heading');
+      assert.equal(await sourceText(), outlineSource);
+      assert.equal(await fs.readFile(outlineNote, 'utf8'), outlineSource, 'outline navigation never changes stored Markdown');
     });
     await row('structure.md').dblclick(); assert.equal(await sourceText(), source); await waitForFile(note, value => value === source);
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close()); await app.waitForEvent('close'); app = undefined;

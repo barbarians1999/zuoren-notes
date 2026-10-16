@@ -142,17 +142,20 @@ export function formatSourceBlock(view: EditorView, format: MarkdownBlockFormat)
 }
 
 const outlineParser = markdownSyntax().language.parser;
-const outlineCache = new WeakMap<EditorView['state']['doc'], { text: string; level: number; line: number }[]>();
+const outlineCache = new WeakMap<EditorView['state']['doc'], { text: string; level: number; line: number; previewAt: number }[]>();
 export function markdownOutline(view: EditorView) {
   const cached = outlineCache.get(view.state.doc);
   if (cached) return cached;
-  const headings: { text: string; level: number; line: number }[] = [];
+  const headings: { text: string; level: number; line: number; previewAt: number }[] = [];
   // The same complete index supplies labels in editing and reading modes.
   // Cache by immutable document, not selection or mode; a partial parse must
   // not remove headings merely because the editor is hidden behind preview.
   const tree = ensureSyntaxTree(view.state, view.state.doc.length, 100) || outlineParser.parse(view.state.doc.toString());
   tree.iterate({ enter(node) {
-    if (/^(ATX|Setext)Heading/.test(node.name)) headings.push({ text: projectedHeadingLabel(view.state, node.node, tree), level: Number(node.name.slice(-1)), line: view.state.doc.lineAt(node.from).number - 1 });
+    if (!/^(ATX|Setext)Heading/.test(node.name)) return;
+    let previewAt = node.name.startsWith('ATX') ? node.node.getChild('HeaderMark')!.to : node.from;
+    while (previewAt < node.to && /[\t ]/.test(view.state.sliceDoc(previewAt, previewAt + 1))) previewAt++;
+    headings.push({ text: projectedHeadingLabel(view.state, node.node, tree), level: Number(node.name.slice(-1)), line: view.state.doc.lineAt(node.from).number - 1, previewAt });
   } });
   outlineCache.set(view.state.doc, headings);
   return headings;
