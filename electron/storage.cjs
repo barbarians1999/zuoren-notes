@@ -45,7 +45,17 @@ async function atomicWrite(file, data) {
   try {
     const handle = await fs.open(temp, 'wx');
     try { await handle.writeFile(data); await handle.sync(); } finally { await handle.close(); }
-    await fs.rename(temp, file);
+    // Windows scanners and indexers can briefly deny replacing an open target.
+    // Retry only transient sharing/access errors; keep the atomic replacement
+    // and leave the original untouched if the bounded retries still fail.
+    const retryable = new Set(['EPERM', 'EACCES', 'EBUSY']);
+    for (let attempt = 0; ; attempt++) {
+      try { await fs.rename(temp, file); break; }
+      catch (error) {
+        if (process.platform !== 'win32' || !retryable.has(error.code) || attempt >= 5) throw error;
+        await new Promise(resolve => setTimeout(resolve, 25 * (2 ** attempt)));
+      }
+    }
   } finally { await fs.unlink(temp).catch(() => {}); }
 }
 

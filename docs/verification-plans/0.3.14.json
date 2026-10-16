@@ -1,0 +1,15 @@
+{
+  "reason": "0.3.14 targeted delivery includes the four audited regressions plus a bounded retry for transient Windows atomic-replace locks found by the 0.3.13 packaged lifecycle check. Source and packaged UI coverage includes document lifecycle, clipboard/undo, mixed HTML/Markdown outline, window metrics and path reuse. NOT full release regression.",
+  "source": [
+    "tests/clipboard-smoke.cjs",
+    "tests/markdown-presentation-smoke.cjs",
+    "tests/window-startup-smoke.cjs",
+    "tests/path-reuse-smoke.cjs"
+  ],
+  "packaged": [
+    "tests/clipboard-smoke.cjs",
+    "tests/markdown-presentation-smoke.cjs",
+    "tests/window-startup-smoke.cjs",
+    "tests/path-reuse-smoke.cjs"
+  ]
+}
