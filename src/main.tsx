@@ -26,6 +26,7 @@ import { ReducedMotionContext, usePanelMotion, useTabMotion } from './uiMotion';
 import { ContextMenu, useOverlayFocus } from './ui/overlays';
 import { PaneSplitter } from './ui/PaneSplitter';
 import './ui/chrome.css';
+import { NOTE_FONT_FACES_CSS } from './noteFonts';
 
 Object.defineProperty(window, 'readerDiagnostics', { configurable: true, value: Object.freeze({ snapshot: () => diagnostics.snapshot() }) });
 
@@ -657,6 +658,7 @@ function App() {
     setFileContextMenu({ entry, x: event.clientX || box.left, y: event.clientY || box.bottom });
   };
   return <ReducedMotionContext.Provider value={motionReduced}><div className="app" inert={!sessionReady || workspace.committing} aria-busy={!sessionReady || workspace.committing} data-session-ready={sessionReady} data-motion={motionReduced ? 'reduced' : 'full'} data-theme={resolvedTheme} data-fullscreen={windowState.fullscreen} data-layout={layout} style={{ '--reading-size': `${readingSize}px`, '--note-body-font': NOTE_BODY_FONTS[noteBodyFont], '--note-source-font': NOTE_BODY_FONTS[noteBodyFont] } as React.CSSProperties}>
+    <style>{NOTE_FONT_FACES_CSS}</style>
     {windowState.fullscreen && <div className="fullscreen-reveal-edge" aria-hidden="true"/>}
     <header className="topbar">
       <button className="icon-button sidebar-toggle" aria-label={sidebar ? '收起资料栏' : '展开资料栏'} title={sidebar ? '收起资料栏' : '展开资料栏'} onClick={() => setSidebar(value => !value)}>{sidebar ? <PanelLeftClose size={18}/> : <PanelLeftOpen size={18}/>}</button>

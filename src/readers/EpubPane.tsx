@@ -12,7 +12,7 @@ import { THEMES, type ThemeName } from '../appearanceTheme.cjs';
 import { EpubSearchPanel } from './EpubSearchPanel';
 import type { EpubSearchResult } from './epubSearch';
 import type { ExcerptFlowResult } from './excerptFlow';
-import noteLocalFontsCss from '../noteLocalFonts.css?inline';
+import { NOTE_FONT_FACES_CSS } from '../noteFonts';
 import headingFontUrl from '../assets/SourceHanSerifSC-VF.woff2?url';
 function flattenToc(items: NavItem[], depth = 0): FlatNavItem[] {
   return items.flatMap(item => [{ href: item.href, label: item.label.trim(), depth }, ...flattenToc(item.subitems || [], depth + 1)]);
@@ -79,7 +79,7 @@ const EPUB_THEME_STYLE_ID = 'zuoren-notes-epub-theme';
 function epubThemeCss(theme: ThemeName, fontFamily: string, readingSize: number) {
   const { colors, colorScheme } = THEMES[theme];
   return `
-    ${noteLocalFontsCss}
+    ${NOTE_FONT_FACES_CSS}
     @font-face { font-family: "Zhaoye Heading"; src: url("${new URL(headingFontUrl, document.baseURI).href}") format("woff2"); font-style: normal; font-weight: 200 900; font-display: swap; }
     :root { color-scheme: ${colorScheme}; }
     html, body { background: ${colors.surface} !important; color: ${colors.text} !important; }

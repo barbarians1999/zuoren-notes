@@ -1,0 +1,15 @@
+{
+  "reason": "0.3.16 local desktop delivery bundles the user's existing HanYi 55W and Font Manager FangSong files. Actual glyph checks require webfont resources with local font sources disabled; covers editor, preview, EPUB, bold/italic, heading isolation, theme/font settings, and EPUB workspace typography. Includes directed source-editor/document-lifecycle and packaged platform baselines. No persistence model changes; NOT full release regression. Font public redistribution rights remain unverified; this is local delivery only.",
+  "source": [
+    "tests/body-font-smoke.cjs",
+    "tests/appearance-smoke.cjs",
+    "tests/epub-workspace-smoke.cjs",
+    "tests/input-focus-smoke.cjs"
+  ],
+  "packaged": [
+    "tests/body-font-smoke.cjs",
+    "tests/appearance-smoke.cjs",
+    "tests/epub-workspace-smoke.cjs",
+    "tests/input-focus-smoke.cjs"
+  ]
+}

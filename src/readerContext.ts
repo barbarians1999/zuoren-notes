@@ -1,4 +1,3 @@
-import './noteLocalFonts.css';
 import type { PdfMeta, EpubMeta, PdfAnnotation, WorkspaceDirectoryEntry } from './types';
 export type Layout = 'read' | 'note' | 'split';
 export type { NoteMode } from './types';

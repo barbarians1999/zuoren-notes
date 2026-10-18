@@ -11,10 +11,10 @@ const { createSmokeWorkspace, cleanupSmokeWorkspace } = require('./smokeWorkspac
 async function assertHanYi(page, expression) {
   const fonts = await platformFonts(page, expression);
   assert.ok(fonts.length > 0, 'probe must have rendered glyphs');
-  assert.ok(fonts.every(font => font.postScriptName === 'HYShuFang-55W' && font.glyphCount > 0), `Expected exact HanYi 55W glyphs, got ${JSON.stringify(fonts)}`);
+  assert.ok(fonts.every(font => font.postScriptName === 'HYShuFang-55W' && font.glyphCount > 0 && font.isCustomFont), `Expected bundled HanYi 55W glyphs, got ${JSON.stringify(fonts)}`);
 }
 
-test('installed HanYi 55W supplies actual editor, preview and EPUB glyphs', { timeout: 60000 }, async t => {
+test('bundled body fonts supply actual editor, preview and EPUB glyphs without local fonts', { timeout: 60000 }, async () => {
   const workspace = await createSmokeWorkspace('body-font');
   let app;
   try {
@@ -32,8 +32,19 @@ test('installed HanYi 55W supplies actual editor, preview and EPUB glyphs', { ti
     const epubBytes = await zip.generateAsync({ type: 'nodebuffer' });
     await fs.writeFile(epubPath, epubBytes);
     const root = path.resolve(__dirname, '..');
-    app = await _electron.launch({ executablePath: path.join(root, 'node_modules/electron/dist/electron.exe'), args: [root, workspace.fixture], env: { ...process.env, ZHAOYE_TEST_USER_DATA: workspace.userData } });
+    const packaged = process.env.ZHAOYE_SMOKE_EXECUTABLE || process.env.ZHAOYE_EXE;
+    app = await _electron.launch({ executablePath: packaged || path.join(root, 'node_modules/electron/dist/electron.exe'), args: packaged ? [workspace.fixture] : [root, workspace.fixture], env: { ...process.env, ZHAOYE_TEST_USER_DATA: workspace.userData } });
     const page = await app.firstWindow();
+    const screenshot = async name => {
+      if (!process.env.ZUOREN_SCREENSHOT_OUTPUT) return;
+      await fs.mkdir(process.env.ZUOREN_SCREENSHOT_OUTPUT, { recursive: true });
+      await page.screenshot({ path: path.join(process.env.ZUOREN_SCREENSHOT_OUTPUT, name + '.png') });
+    };
+    assert.equal(await app.evaluate(({ app }) => app.getVersion()), require('../package.json').version);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('DOM.enable');
+    await cdp.send('CSS.enable');
+    await cdp.send('CSS.setLocalFontsEnabled', { enabled: false });
     await page.locator('.file-row').filter({ hasText: 'font.md' }).dblclick();
     const body = page.locator('.cm-line').filter({ hasText: '汉仪书仿正文测试' });
     await body.waitFor();
@@ -42,8 +53,8 @@ test('installed HanYi 55W supplies actual editor, preview and EPUB glyphs', { ti
       try { return (await document.fonts.load('20px "Zuoren HanYi 55W"')).length > 0; }
       catch { return false; }
     });
-    assert.equal(await page.evaluate(() => Array.from(document.fonts).some(font => font.family === 'Zuoren HanYi 55W')), true, 'exact local font face must be declared');
-    if (!available) { t.skip('HanYi 55W is not installed on this test machine.'); return; }
+    assert.equal(await page.evaluate(() => Array.from(document.fonts).some(font => font.family === 'Zuoren HanYi 55W')), true, 'exact bundled font face must be declared');
+    assert.equal(available, true, 'HanYi 55W must load even when local font sources are disabled');
     await page.locator('.cm-content').evaluate(element => { window.__fontEditor = element; });
     await page.getByRole('button', { name: '设置', exact: true }).click();
     await page.getByRole('combobox', { name: 'Markdown 正文字体' }).selectOption('hanyi-shufang-55w');
@@ -60,22 +71,25 @@ test('installed HanYi 55W supplies actual editor, preview and EPUB glyphs', { ti
     const headingFonts = await platformFonts(page, `document.querySelector('.markdown-preview h1')`);
     assert.ok(headingFonts.some(font => /SourceHanSerif/.test(font.postScriptName) && font.glyphCount >= 2), `Chinese heading keeps Source Han Serif: ${JSON.stringify(headingFonts)}`);
     assert.ok(headingFonts.every(font => font.postScriptName !== 'HYShuFang-55W'), 'body preference must not replace heading font');
+    await screenshot('bundled-hanyi-preview');
     await page.locator('.file-row').filter({ hasText: 'font.epub' }).click();
     const paragraph = page.frameLocator('.epub-viewer iframe').first().locator('p');
     await paragraph.waitFor();
     await paragraph.evaluate(() => document.fonts.ready);
     await assertHanYi(page, `document.querySelector('.epub-viewer iframe').contentDocument.querySelector('p')`);
+    await screenshot('bundled-hanyi-epub');
     await page.getByRole('button', { name: '设置', exact: true }).click();
     await page.getByRole('combobox', { name: 'Markdown 正文字体' }).selectOption('fangsong');
     await paragraph.evaluate(() => document.fonts.ready);
     const fallbackFonts = await platformFonts(page, `document.querySelector('.epub-viewer iframe').contentDocument.querySelector('p')`);
-    assert.ok(fallbackFonts.every(font => font.postScriptName === 'AaFangSongNon-CommercialUse'), 'existing FangSong remains unchanged');
+    assert.ok(fallbackFonts.length > 0 && fallbackFonts.every(font => font.postScriptName === 'AaFangSongNon-CommercialUse' && font.isCustomFont), 'Font Manager FangSong also uses bundled glyphs');
     await page.getByRole('combobox', { name: 'Markdown 正文字体' }).selectOption('hanyi-shufang-55w');
     await paragraph.evaluate(() => document.fonts.ready);
     await assertHanYi(page, `document.querySelector('.epub-viewer iframe').contentDocument.querySelector('p')`);
     assert.equal(await fs.readFile(notePath, 'utf8'), original);
     assert.deepEqual(await fs.readFile(epubPath), epubBytes);
     assert.deepEqual(errors, []);
+    await cdp.detach();
   } finally {
     await app?.close();
     await cleanupSmokeWorkspace(workspace);

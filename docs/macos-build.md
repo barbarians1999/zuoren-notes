@@ -28,6 +28,6 @@ GitHub 私有仓库的 macOS 工作流会使用账户的 Actions 分钟额度；
 
 目前只做 ad-hoc 完整性签名，未使用 Apple Developer ID，也没有 Apple 公证；Gatekeeper 可能阻止首次打开。不要将其描述为已获 Apple 认证的正式分发版，不提供批量关闭系统安全检查的命令。
 
-正文系统字体仍需对应机器安装，汉仪书仿 55W 不包含在源码或安装包内。Windows 与 Mac 的本机字体不一定相同，未安装时会使用现有字体回退链。
+0.3.16 的正文汉仪书仿55W和字体管家仿宋改为随应用资源加载，共用 Windows 与 Mac 渲染路径，不再依赖本机字体注册。本轮仅验证 Windows 本地包，尚未验证 Mac；字体的公开再分发授权也尚未确认，公开构建前须核对包内 `electron/assets/fonts/BODY-FONTS-NOTICE.txt` 和对应授权。
 
 不在用户的 Windows 工作站下载或安装 Mac 运行包。构建与验证发生在 GitHub 的临时 Mac 环境。

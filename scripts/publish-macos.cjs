@@ -49,7 +49,7 @@ async function main() {
     execFileSync('gh',['release','upload',tag,item.file,'--repo',repository],{stdio:'inherit'});
   }
   const start='<!-- macos-downloads -->',end='<!-- /macos-downloads -->';
-  const note=`${start}\n\n## macOS 测试版\n\n- Apple 芯片（M1 及更新）：\`ZuorenNotes-${version}-macOS-arm64.dmg\`\n- Intel Mac：\`ZuorenNotes-${version}-macOS-x64.dmg\`\n- 两个包均在对应架构的 macOS 环境构建，并通过单元测试、实际包内 Markdown 保存/撤销、PDF/EPUB 读取、文件打开和重启恢复检查。\n- 仅做 ad-hoc 完整性签名，**未提供 Apple Developer ID 签名或公证**；首次打开可能被系统拦截。只从可信来源下载，在“系统设置 → 隐私与安全性”中核对后允许打开。\n- 字体仍依赖本机安装；汉仪书仿 55W 不随包提供。\n- 本次补充 Mac 平台，不替换 Windows 安装包。构建源码：\`${process.env.GITHUB_SHA}\`。\n- Mac 校验值见 \`${checksumName}\`，定向验证范围见对应 \`VALIDATION.json\`；不声称已完成完整 Mac 发布回归。\n\n${end}`;
+  const note=`${start}\n\n## macOS 测试版\n\n- Apple 芯片（M1 及更新）：\`ZuorenNotes-${version}-macOS-arm64.dmg\`\n- Intel Mac：\`ZuorenNotes-${version}-macOS-x64.dmg\`\n- 两个包均在对应架构的 macOS 环境构建，并通过单元测试、实际包内 Markdown 保存/撤销、PDF/EPUB 读取、文件打开和重启恢复检查。\n- 仅做 ad-hoc 完整性签名，**未提供 Apple Developer ID 签名或公证**；首次打开可能被系统拦截。只从可信来源下载，在“系统设置 → 隐私与安全性”中核对后允许打开。\n- 正文仿宋与汉仪书仿55W从应用资源加载；字体来源和许可信息见包内 BODY-FONTS-NOTICE.txt，公开再分发须另行确认授权。\n- 本次补充 Mac 平台，不替换 Windows 安装包。构建源码：\`${process.env.GITHUB_SHA}\`。\n- Mac 校验值见 \`${checksumName}\`，定向验证范围见对应 \`VALIDATION.json\`；不声称已完成完整 Mac 发布回归。\n\n${end}`;
   const original=release.body||'';
   const begin=original.indexOf(start),finish=original.indexOf(end);
   const body=begin>=0&&finish>=begin ? original.slice(0,begin)+note+original.slice(finish+end.length) : original+'\n\n'+note;

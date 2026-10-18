@@ -3,7 +3,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const digest = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const unique = files => [...new Set(files)].sort();
-const ui = ['window-startup', 'session-startup', 'path-reuse', 'note-tabs', 'fullscreen-chrome', 'epub-workspace', 'epub-search', 'pdf-toolbar', 'chrome-interaction'];
+const ui = ['window-startup', 'session-startup', 'body-font', 'path-reuse', 'note-tabs', 'fullscreen-chrome', 'epub-workspace', 'epub-search', 'pdf-toolbar', 'chrome-interaction'];
 const markdown = ['source-editor', 'markdown-interaction', 'markdown-presentation', 'clipboard', 'linebreak', 'stability', 'document-lifecycle', 'reading-actions'];
 const groups = {
   editor: [...markdown, 'editor-polish', 'note-tabs', 'note-toolbar'],

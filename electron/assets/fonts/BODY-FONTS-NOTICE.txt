@@ -1,0 +1,22 @@
+Bundled body font files in this local desktop build
+
+HYShuFang55W.ttf
+  Font: HYShuFang 55W / HYShuFang-55W
+  Copyright (c) 2022 Beijing Hanyi Innovation Technology Co.,Ltd.
+  Source: the user's existing local font file, copied without modification.
+  License information in the font: http://hanyi.com.cn/law.php
+  SHA-256: 6400704587bcf241ff306d93492638f712e4f51daf48e8d7e3cbb78daef54f6a
+
+ZhaoyeFangSong.ttf
+  Font: AaFangSong (Non-Commercial Use) / AaFangSongNon-CommercialUse
+  Copyright(c) 2020 HanMeiHutong (XiaMen) Technology Co.Ltd.
+  Source: existing repository font file, unchanged.
+  The font's license metadata references Apache License 2.0:
+  http://www.apache.org/licenses/LICENSE-2.0.html
+  Its family and trademark metadata also say Non-Commercial Use.
+  SHA-256: d7f1e05baffe0bfb9a9d7f504e359007c3dee41826d44c62c43658a15d9ef89e
+
+These notices preserve the files' embedded attribution. Font embedding bits
+are not proof of a software redistribution license. Public redistribution
+rights for these exact files have not been verified; this change is a local
+desktop delivery and does not authorize publishing these fonts or packages.
