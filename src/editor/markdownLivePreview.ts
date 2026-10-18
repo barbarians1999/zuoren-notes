@@ -1,9 +1,36 @@
-import { StateField, type EditorState } from '@codemirror/state';
+import { countColumn, StateField, type EditorState } from '@codemirror/state';
 import { ensureSyntaxTree, syntaxTree } from '@codemirror/language';
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view';
 import { renderMarkdown } from './markdownRendering';
 import { isResolvedMarkdownLink } from './markdownLinks';
-import { decodeMarkdownEntity, projectCodeBlock, projectTable, projectedSourcePosition, type BlockProjection, type CodeProjection, type TableProjection, type TextProjection } from './markdownProjection';
+import { decodeMarkdownEntity, projectCodeBlock, projectTable, projectedSourcePosition, type BlockProjection, type CodeProjection, type TableProjection, type TextProjection, type MarkdownNode } from './markdownProjection';
+
+type ListGuide = { column: number; active: boolean };
+const sameGuides = (left: ListGuide[], right: ListGuide[]) => left.length === right.length && left.every((guide, index) => guide.column === right[index].column && guide.active === right[index].active);
+function listGuides(state: EditorState, node: MarkdownNode, activeItems: Set<number>): ListGuide[] {
+  const items: MarkdownNode[] = [], guides: ListGuide[] = [];
+  for (let parent: MarkdownNode | null = node; parent; parent = parent.parent) if (parent.name === 'ListItem') items.unshift(parent);
+  let previousColumn = 0;
+  for (const item of items) {
+    const marker = item.getChild('ListMark');
+    if (!marker) continue;
+    const line = state.doc.lineAt(marker.from);
+    const column = countColumn(state.sliceDoc(line.from, marker.from).replace(/>[\t ]?/g, ''), state.tabSize);
+    if (column > previousColumn) guides.push({ column: (previousColumn + column) / 2, active: activeItems.has(item.from) });
+    previousColumn = column;
+  }
+  return guides;
+}
+function guideAttributes(guides: ListGuide[]) {
+  const background = guides.map(guide => {
+    const left = `var(--md-quote-depth, 0) * var(--md-quote-step) + ${guide.column} * var(--md-list-space-width, .5ch)`;
+    const color = `var(--md-list-guide-${guide.active ? 'active' : 'color'})`;
+    return `linear-gradient(to right, transparent calc(${left} - .5px), ${color} calc(${left} - .5px) calc(${left} + .5px), transparent calc(${left} + .5px))`;
+  }).join(', ');
+  return { 'data-list-guides': guides.map(guide => guide.column).join(','),
+    'data-list-guide-active': guides.filter(guide => guide.active).map(guide => guide.column).join(','),
+    style: `--md-list-guides: ${background}; --md-list-guide-sizes: ${guides.map(() => 'auto').join(', ')}` };
+}
 
 function sameText(left: TextProjection, right: TextProjection) {
   return left.text === right.text && left.anchor === right.anchor && left.segments.length === right.segments.length && left.segments.every((part, index) => {
@@ -27,10 +54,14 @@ function textOffsetAtPoint(element: HTMLElement, event: MouseEvent) {
   return range.toString().length;
 }
 
-function wrapBlock(view: EditorView, element: HTMLElement, projection: BlockProjection) {
+function wrapBlock(view: EditorView, element: HTMLElement, projection: BlockProjection, guides: ListGuide[]) {
   const { context } = projection;
   if (!context.quoteDepth && !context.indentColumns && !context.markers.length) return element;
   const wrapper = document.createElement('div'); wrapper.className = 'cm-md-block-wrapper';
+  if (guides.length) {
+    wrapper.classList.add('cm-md-list-guides');
+    for (const [key, value] of Object.entries(guideAttributes(guides))) wrapper.setAttribute(key, value);
+  }
   wrapper.dataset.quoteDepth = String(context.quoteDepth);
   wrapper.style.setProperty('--md-quote-depth', String(context.quoteDepth));
   wrapper.style.setProperty('--md-list-indent', `${context.indentColumns}ch`);
@@ -53,9 +84,13 @@ class LiteralWidget extends WidgetType {
 }
 
 class MarkerWidget extends WidgetType {
-  constructor(readonly label: string) { super(); }
-  eq(other: MarkerWidget) { return other.label === this.label; }
-  toDOM() { const el = document.createElement('span'); el.className = 'cm-md-list-marker'; el.textContent = this.label; return el; }
+  constructor(readonly label: string, readonly columns = 0) { super(); }
+  eq(other: MarkerWidget) { return other.label === this.label && other.columns === this.columns; }
+  toDOM() {
+    const el = document.createElement('span'); el.className = 'cm-md-list-marker'; el.textContent = this.label;
+    if (this.columns) { el.dataset.sourceColumns = String(this.columns); el.style.setProperty('--md-list-marker-columns', String(this.columns)); }
+    return el;
+  }
 }
 
 class TaskWidget extends WidgetType {
@@ -80,11 +115,11 @@ class TaskWidget extends WidgetType {
 }
 
 class TableWidget extends WidgetType {
-  constructor(readonly projection: TableProjection) { super(); }
+  constructor(readonly projection: TableProjection, readonly guides: ListGuide[]) { super(); }
   get source() { return this.projection.content.text; }
   get from() { return this.projection.from; }
   get cells() { return this.projection.cells.map(cell => cell.anchor); }
-  eq(other: TableWidget) { return sameBlock(other.projection, this.projection) && other.projection.references === this.projection.references
+  eq(other: TableWidget) { return sameBlock(other.projection, this.projection) && sameGuides(other.guides, this.guides) && other.projection.references === this.projection.references
     && other.projection.cells.length === this.projection.cells.length && other.projection.cells.every((cell, index) => sameText(cell, this.projection.cells[index])); }
   toDOM(view: EditorView) {
     const el = document.createElement('div'); el.className = 'cm-md-table';
@@ -113,17 +148,17 @@ class TableWidget extends WidgetType {
     });
     el.addEventListener('mouseup', () => setTimeout(() => { press = null; dragged = false; }, 0));
     el.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); activate(this.from); } });
-    return wrapBlock(view, el, this.projection);
+    return wrapBlock(view, el, this.projection, this.guides);
   }
   ignoreEvent() { return true; }
 }
 
 class CodeBlockWidget extends WidgetType {
-  constructor(readonly projection: CodeProjection) { super(); }
+  constructor(readonly projection: CodeProjection, readonly guides: ListGuide[]) { super(); }
   get code() { return this.projection.content.text; }
   get from() { return this.projection.content.anchor; }
   get language() { return this.projection.language; }
-  eq(other: CodeBlockWidget) { return other.language === this.language && sameBlock(other.projection, this.projection); }
+  eq(other: CodeBlockWidget) { return other.language === this.language && sameBlock(other.projection, this.projection) && sameGuides(other.guides, this.guides); }
   toDOM(view: EditorView) {
     const box = document.createElement('div'); box.className = 'cm-md-code-preview';
     const pre = document.createElement('pre'), code = document.createElement('code');
@@ -155,7 +190,7 @@ class CodeBlockWidget extends WidgetType {
     });
     box.addEventListener('mouseup', () => setTimeout(() => { press = null; dragged = false; }, 0));
     box.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); activate(); } });
-    return wrapBlock(view, box, this.projection);
+    return wrapBlock(view, box, this.projection, this.guides);
   }
   ignoreEvent() { return true; }
 }
@@ -177,10 +212,17 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
   const ranges: ReturnType<Decoration['range']>[] = [];
   const blocks: ReturnType<Decoration['range']>[] = [];
   const quoteDepths = new Map<number, number>();
+  const guideLines = new Map<number, ListGuide[]>(), codeLines = new Set<number>();
   // Initial hydration may parse briefly. Typing has a smaller budget and
   // selection-only updates never force a synchronous full-document parse.
   // Language-worker tree updates finish the remaining decorations safely.
   const tree = (parseBudget > 0 && ensureSyntaxTree(state, state.doc.length, parseBudget)) || syntaxTree(state);
+  const activeItems = new Set<number>();
+  for (const range of state.selection.ranges) {
+    for (let node: MarkdownNode | null = tree.resolveInner(state.doc.lineAt(range.head).to, -1); node; node = node.parent) {
+      if (node.name === 'ListItem') { activeItems.add(node.from); break; }
+    }
+  }
   const active = (from: number, to: number) => state.selection.ranges.some(range => {
     const start = state.doc.lineAt(range.from).from, end = state.doc.lineAt(range.to).to;
     return from <= end && to >= start;
@@ -200,11 +242,12 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
     if (name === 'FencedCode' || name === 'CodeBlock') {
       if (name === 'FencedCode' && !active(from, to)) {
         const projection = projectCodeBlock(state, node);
-        hide(projection.from, projection.to, new CodeBlockWidget(projection), true);
+        hide(projection.from, projection.to, new CodeBlockWidget(projection, listGuides(state, node, activeItems)), true);
       } else {
         mark(from, to, 'cm-md-code-block');
         const first = state.doc.lineAt(from).number, last = state.doc.lineAt(to).number;
         for (let number = first; number <= last; number++) {
+          codeLines.add(number);
           ranges.push(Decoration.line({ class: 'cm-md-code-line' + (number === first ? ' cm-md-code-first' : '') + (number === last ? ' cm-md-code-last' : '') }).range(state.doc.line(number).from));
         }
       }
@@ -213,7 +256,7 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
     if (['HTMLBlock', 'CommentBlock', 'Image'].includes(name)) return false;
     if (name === 'Table' && !active(from, to)) {
       const projection = projectTable(state, node, tree);
-      hide(projection.from, projection.to, new TableWidget(projection), true);
+      hide(projection.from, projection.to, new TableWidget(projection, listGuides(state, node, activeItems)), true);
       return false;
     }
     if (name === 'HorizontalRule' && !active(from, to)) {
@@ -251,23 +294,25 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
       if (name === 'InlineCode') return false;
     }
     if (name === 'ListItem') {
+      const guides = listGuides(state, node, activeItems);
+      if (guides.length) {
+        const last = state.doc.lineAt(Math.max(from, to - 1)).number;
+        for (let number = state.doc.lineAt(from).number; number <= last; number++) {
+          const levels = new Map((guideLines.get(number) || []).map(guide => [guide.column, guide]));
+          for (const guide of guides) levels.set(guide.column, guide);
+          guideLines.set(number, [...levels.values()].sort((left, right) => left.column - right.column));
+        }
+      }
       const marker = node.getChild('ListMark'), task = node.getChild('Task')?.getChild('TaskMarker');
       if (marker) {
         const line = state.doc.lineAt(marker.from);
-        for (let cursor = line.from; cursor < marker.from;) {
-          if (!/[\t ]/.test(state.sliceDoc(cursor, cursor + 1))) { cursor++; continue; }
-          const tab = state.sliceDoc(cursor, cursor + 1) === '\t';
-          let end = cursor + 1;
-          while (end < marker.from && /[\t ]/.test(state.sliceDoc(end, end + 1)) && (state.sliceDoc(end, end + 1) === '\t') === tab) end++;
-          mark(cursor, end, tab ? 'cm-md-indent-tab' : 'cm-md-indent-space');
-          cursor = end;
-        }
         mark(marker.to, line.to, 'cm-md-list');
         if (!active(line.from, line.to)) {
           if (task) hide(marker.from, task.to, new TaskWidget(task.from + 1, /x/i.test(state.sliceDoc(task.from, task.to))));
           else {
             let end = marker.to; while (end < line.to && state.sliceDoc(end, end + 1) === ' ') end++;
-            hide(marker.from, end, new MarkerWidget(node.parent?.name === 'OrderedList' ? state.sliceDoc(marker.from, marker.to) : '•'));
+            const label = node.parent?.name === 'OrderedList' ? state.sliceDoc(marker.from, marker.to) : '•';
+            hide(marker.from, end, new MarkerWidget(label, label === '•' ? end - marker.from : 0));
           }
         }
       }
@@ -285,6 +330,13 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
       }
     }
   } });
+  for (const [number, guides] of guideLines) if (!codeLines.has(number)) {
+    const line = state.doc.line(number), attributes = guideAttributes(guides);
+    const indent = countColumn((line.text.match(/^[\t >]*/)?.[0] || '').replace(/>[\t ]?/g, ''), state.tabSize);
+    ranges.push(Decoration.line({ class: 'cm-md-list-guides', attributes: {
+      ...attributes, style: attributes.style + `; --md-list-wrap-indent: calc(${indent} * var(--md-list-space-width, .5ch))`,
+    } }).range(line.from));
+  }
   for (const [number, depth] of quoteDepths) ranges.push(Decoration.line({ class: 'cm-md-quote', attributes: {
     'data-quote-depth': String(depth), style: `--md-quote-depth: ${depth}`,
   } }).range(state.doc.line(number).from));

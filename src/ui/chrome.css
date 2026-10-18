@@ -1,5 +1,7 @@
 /* Shared controls retain the existing square, red/ink design language. */
 .app { --control-height: 32px; --control-compact: 28px; --control-radius: 2px; --control-gap: 4px; }
+/* Preserve mounted editors and their measurements until session restoration settles. */
+.app[data-session-ready="false"] > :is(.topbar, .body) { visibility: hidden; }
 .app :is(.workspace-icon-action, .workspace-mode-switch button, .pdf-navigation button, .epub-header-actions button, .epub-navigation > button) {
   min-height: var(--control-height); border-radius: var(--control-radius); gap: var(--control-gap);
   transition: color 120ms ease, transform 100ms ease;

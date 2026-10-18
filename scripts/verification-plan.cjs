@@ -3,12 +3,12 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const digest = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const unique = files => [...new Set(files)].sort();
-const ui = ['window-startup', 'path-reuse', 'note-tabs', 'fullscreen-chrome', 'epub-workspace', 'epub-search', 'pdf-toolbar', 'chrome-interaction'];
+const ui = ['window-startup', 'session-startup', 'path-reuse', 'note-tabs', 'fullscreen-chrome', 'epub-workspace', 'epub-search', 'pdf-toolbar', 'chrome-interaction'];
 const markdown = ['source-editor', 'markdown-interaction', 'markdown-presentation', 'clipboard', 'linebreak', 'stability', 'document-lifecycle', 'reading-actions'];
 const groups = {
   editor: [...markdown, 'editor-polish', 'note-tabs', 'note-toolbar'],
   readers: ['readers', 'reader-reliability', 'reader-handoff', 'epub-search', 'epub-workspace', 'pdf-toolbar', 'pdf-selection', 'pdf-appearance'],
-  workspace: ['startup-preservation', 'settings-startup', 'window-startup', 'fullscreen-chrome', 'appearance', 'body-font', 'input-focus', 'chrome-interaction', 'themes', 'path-reuse', 'recovery', 'wide-review', 'electron', 'ui-motion'],
+  workspace: ['startup-preservation', 'settings-startup', 'window-startup', 'session-startup', 'fullscreen-chrome', 'appearance', 'body-font', 'input-focus', 'chrome-interaction', 'themes', 'path-reuse', 'recovery', 'wide-review', 'electron', 'ui-motion'],
 };
 const smoke = names => unique(names.map(name => `tests/${name}-smoke.cjs`));
 function testPlan(root, profile, customFile) {

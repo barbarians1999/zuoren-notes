@@ -14,11 +14,13 @@ test('nested Markdown presentation maps clicks to source and preserves paste, ou
   const errors = [];
   try {
     await fs.mkdir(workspace.fixture, { recursive: true });
-    const note = path.join(workspace.fixture, 'structure.md'), pasteNote = path.join(workspace.fixture, 'paste.md'), outlineNote = path.join(workspace.fixture, 'outline.md');
+    const note = path.join(workspace.fixture, 'structure.md'), pasteNote = path.join(workspace.fixture, 'paste.md'), outlineNote = path.join(workspace.fixture, 'outline.md'), guidesNote = path.join(workspace.fixture, 'guides.md');
+    const guidesSource = 'cursor\n\n  - Parent\n    Continued ' + 'wrapped words '.repeat(18) + '\n\n    Second paragraph\n    - Child\n      Child continuation\n      - Grandchild\n        Deep continuation\n  - Sibling\n\n> - Quoted parent\n>   - Quoted child\n>     Quoted continuation\n\n  - Block parent\n\n    ```text\n    literal code\n    ```\n\n    | A | B |\n    | --- | --- |\n    | x | y |\n\n  Ordinary prose\n';
     const outlineSource = '<h2 data-zuoren-heading="fake:2">HTML heading</h2>\n\n## <span id="first-md"></span>Same heading\n\n<h2>Another HTML heading</h2>\n\n<span id="second-md"></span>Same heading\n---\n\n> ## Quoted heading\n\n~~~md\n## Code only\n~~~\n';
     const pasteBase = '# Paste base\n';
     await fs.writeFile(note, source); await fs.writeFile(pasteNote, pasteBase);
     await fs.writeFile(outlineNote, outlineSource);
+    await fs.writeFile(guidesNote, guidesSource);
     const packaged = process.env.ZHAOYE_SMOKE_EXECUTABLE || process.env.ZHAOYE_EXE;
     const launch = async file => {
       app = await _electron.launch({ executablePath: packaged || path.join(root, 'node_modules/electron/dist/electron.exe'),
@@ -164,6 +166,68 @@ test('nested Markdown presentation maps clicks to source and preserves paste, ou
       assert.ok((await content.locator('.cm-activeLine').innerText()).includes('second-md'), 'editing jumps to the same source heading');
       assert.equal(await sourceText(), outlineSource);
       assert.equal(await fs.readFile(outlineNote, 'utf8'), outlineSource, 'outline navigation never changes stored Markdown');
+    });
+    await t.test('structural list guides stay continuous, use one stroke per level and preserve source in both themes', async () => {
+      await row('guides.md').dblclick(); await content.waitFor();
+      const line = text => content.locator('.cm-line').filter({ hasText: text });
+      await line('Child continuation').click();
+      for (const text of ['Parent', 'Continued', 'Second paragraph']) {
+        const item = line(text).filter({ hasNotText: /Child|Block|Quoted/ });
+        assert.equal(await item.getAttribute('data-list-guides'), '1');
+      }
+      assert.equal(await line('Child continuation').getAttribute('data-list-guides'), '1,3');
+      assert.equal(await line('Child continuation').getAttribute('data-list-guide-active'), '3');
+      assert.equal(await line('Deep continuation').getAttribute('data-list-guides'), '1,3,5');
+      assert.equal(await line('Sibling').getAttribute('data-list-guide-active'), '');
+      assert.equal(await line('Ordinary prose').getAttribute('data-list-guides'), null);
+      assert.equal(await line('Quoted continuation').getAttribute('data-list-guides'), '1');
+      assert.equal(await line('Quoted continuation').getAttribute('data-quote-depth'), '1');
+      const parentMarker = await line('Parent').filter({ hasNotText: /Block|Quoted/ }).locator('.cm-md-list-marker').boundingBox();
+      const childMarker = await line('Child').filter({ hasNotText: /continuation|Grandchild|Quoted/ }).locator('.cm-md-list-marker').boundingBox();
+      assert.ok(childMarker.x > parentMarker.x, 'hanging indentation must not pull a nested bullet back to the parent column');
+      const firstInk = locator => locator.evaluate(el => {
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT); let node;
+        while ((node = walker.nextNode())) if (node.textContent.trim() && !node.parentElement.closest('.cm-md-list-marker')) {
+          const range = document.createRange(); range.setStart(node, node.textContent.search(/\S/)); range.setEnd(node, node.textContent.search(/\S/) + 1);
+          return range.getBoundingClientRect().left;
+        }
+      });
+      assert.ok(Math.abs(await firstInk(line('Parent').filter({ hasNotText: /Block|Quoted/ })) - await firstInk(line('Continued'))) < 1.5, 'bullet body and continuation share one left edge');
+      assert.ok(Math.abs(await firstInk(line('Child').filter({ hasNotText: /continuation|Grandchild|Quoted/ })) - await firstInk(line('Child continuation'))) < 1.5, 'nested bullet body and continuation share one left edge');
+      const bulletEnd = await line('Child').filter({ hasNotText: /continuation|Grandchild|Quoted/ }).locator('.cm-md-list-marker').evaluate(el => {
+        const range = document.createRange(); range.selectNodeContents(el); return range.getBoundingClientRect().right;
+      });
+      assert.ok(await firstInk(line('Child continuation')) > bulletEnd + .5, 'the compact bullet still leaves a visible gap before text');
+      for (const block of ['.cm-md-code-preview', '.cm-md-table']) {
+        assert.equal(await content.locator(block).evaluate(el => el.parentElement.dataset.listGuides), '1', 'a rendered block keeps its outer list guide');
+      }
+      const wrapped = await line('Continued').evaluate(el => ({ height: el.getBoundingClientRect().height, line: parseFloat(getComputedStyle(el).lineHeight) }));
+      assert.ok(wrapped.height > wrapped.line * 1.5, 'the fixture exercises a wrapped physical line');
+      const clearance = await line('Continued').evaluate(el => {
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT); let node;
+        while ((node = walker.nextNode())) if (node.textContent.trim()) break;
+        const range = document.createRange(); range.setStart(node, node.textContent.search(/\S/)); range.setEnd(node, node.textContent.length);
+        const space = parseFloat(getComputedStyle(el.closest('.cm-editor')).getPropertyValue('--md-list-space-width'));
+        return { space, guide: el.getBoundingClientRect().left + space, text: [...range.getClientRects()].map(rect => rect.left) };
+      });
+      assert.ok(clearance.space > 0 && clearance.text.every(left => left > clearance.guide + 1), 'the measured font-space gutter keeps every wrapped row clear of the guide');
+      for (const theme of ['纸页红', '深色']) {
+        await page.getByRole('button', { name: '设置', exact: true }).click();
+        await page.getByRole('button', { name: theme, exact: true }).click(); await page.keyboard.press('Escape');
+        await line('Child continuation').click();
+        const paint = await line('Child continuation').evaluate(el => ({ image: getComputedStyle(el).backgroundImage, repeat: getComputedStyle(el).backgroundRepeat, sizes: getComputedStyle(el).backgroundSize.split(',').map(value => value.trim()) }));
+        assert.notEqual(paint.image, 'none'); assert.ok(!paint.repeat.includes('repeat-x'), 'guides are explicit levels, never a repeating pattern per space');
+        assert.deepEqual(paint.sizes, ['auto', 'auto', '0px 100%'], 'each list stroke has its own layer; the quote pattern is clipped away outside quotes');
+        if (process.env.ZUOREN_SCREENSHOT_OUTPUT) {
+          await content.focus(); await page.keyboard.press('Control+Home'); await line('Child continuation').click();
+          await page.locator('.app').screenshot({ path: path.join(process.env.ZUOREN_SCREENSHOT_OUTPUT, theme === '深色' ? 'list-guides-dark.png' : 'list-guides-light.png') });
+        }
+      }
+      await line('Deep continuation').click(); await page.keyboard.press('End'); await page.keyboard.insertText('Z');
+      await waitForFile(guidesNote, text => text === guidesSource.replace('Deep continuation', 'Deep continuationZ'));
+      await content.focus(); await page.keyboard.press('Control+z'); await waitForFile(guidesNote, text => text === guidesSource);
+      await toPreview(); await pane.locator('.markdown-preview li').first().waitFor(); await toEdit();
+      assert.equal(await sourceText(), guidesSource, 'guides never rewrite spaces, containers or code');
     });
     await row('structure.md').dblclick(); assert.equal(await sourceText(), source); await waitForFile(note, value => value === source);
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close()); await app.waitForEvent('close'); app = undefined;

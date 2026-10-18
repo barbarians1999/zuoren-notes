@@ -1,7 +1,7 @@
 {
   "name": "zuoren-notes-reader",
   "productName": "左人笔记",
-  "version": "0.3.14",
+  "version": "0.3.15",
   "type": "module",
   "description": "本地 PDF、EPUB 与 Markdown 研究阅读和笔记软件",
   "private": true,

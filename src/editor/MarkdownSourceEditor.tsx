@@ -31,6 +31,14 @@ export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, shar
   const shared = useRef({ document: sharedDocument, tab }); shared.current = { document: sharedDocument, tab };
   useEffect(() => {
     if (!root.current) return;
+    const measure = document.createElement('canvas').getContext('2d');
+    const measureListSpace = (view: EditorView) => {
+      if (!measure) return;
+      const style = getComputedStyle(view.contentDOM);
+      measure.font = style.font;
+      const width = measure.measureText(' ').width + (parseFloat(style.letterSpacing) || 0);
+      view.dom.style.setProperty('--md-list-space-width', `${width}px`);
+    };
     const extensions: Extension[] = [
         markdownClipboard, documentViewSetup, markdownSyntax(), proseHighlighting, livePreview, markdownTextSelection, indentUnit.of('\t'), EditorState.tabSize.of(4),
         Prec.highest(keymap.of([{ key: 'Enter', run: exitEmptyIndent }, { key: 'Enter', run: exitEmptyBlockquote }, { key: 'Enter', run: continueMarkdown }, { key: 'Mod-z', run: undoNoteView }, { key: 'Mod-Shift-z', run: redoNoteView }, { key: 'Mod-y', run: redoNoteView }])),
@@ -38,6 +46,7 @@ export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, shar
         Prec.highest(keymap.of([{ key: 'Mod-b', run: view => formatSourceSelection(view, 'bold') }, { key: 'Mod-i', run: view => formatSourceSelection(view, 'italic') }, { key: 'Mod-Shift-x', run: view => formatSourceSelection(view, 'strike') }])),
         EditorView.lineWrapping,
         EditorView.updateListener.of(update => {
+          if (update.geometryChanged) measureListSpace(update.view);
           if (update.selectionSet || update.focusChanged) {
             const selection = update.state.selection.main;
             if (!update.view.hasFocus || selection.empty) {
@@ -74,6 +83,7 @@ export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, shar
     const view = new EditorView({ parent: root.current, state: EditorState.create({ doc: shared.current.document.state.doc, selection: shared.current.tab.selection, extensions }), dispatchTransactions: (transactions, view) => {
       shared.current.document.dispatch(view, transactions);
     } });
+    measureListSpace(view);
     viewRef.current = view; callback.current(view);
     return () => { callback.current(null); viewRef.current = null; view.destroy(); };
   }, []);

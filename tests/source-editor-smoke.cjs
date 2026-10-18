@@ -71,7 +71,7 @@ test('Markdown editing keeps continuous source text like Obsidian', { timeout: 9
   await page.waitForTimeout(1800);
   assert.match(await fs.readFile(notePath, 'utf8'), /- 缩进父项\n\t- 缩进子项/, 'Tab stores a tab character and Markdown parses it as four-column indentation');
   assert.equal(await page.locator('.cm-md-code-preview').count(), 0, 'nested list indentation must not become a code block');
-  assert.equal(await page.locator('.markdown-source-editor .cm-md-indent-tab').count(), 1, 'tab indentation uses a distinct guide');
+  assert.equal(await childLine.getAttribute('data-list-guides'), '2', 'one structural guide represents this Tab-indented level');
   await page.locator('.markdown-source-editor .cm-line').filter({ hasText: '这是' }).click();
   const parentMarker = await parentLine.locator('.cm-md-list-marker').boundingBox();
   const childMarker = await childLine.locator('.cm-md-list-marker').boundingBox();
@@ -80,9 +80,10 @@ test('Markdown editing keeps continuous source text like Obsidian', { timeout: 9
   await spaceChild.click(); await page.keyboard.press('Home'); await page.keyboard.insertText('  ');
   await page.waitForTimeout(1800);
   assert.match(await fs.readFile(notePath, 'utf8'), /- 空格父项\n  - 空格子项/, 'typed spaces remain literal spaces');
-  assert.equal(await page.locator('.markdown-source-editor .cm-md-indent-space').count(), 1, 'space indentation uses a distinct guide');
-  assert.notEqual(await page.locator('.markdown-source-editor .cm-md-indent-space').evaluate(el => getComputedStyle(el).backgroundImage), 'none', 'space guide is visibly drawn');
-  assert.notEqual(await page.locator('.markdown-source-editor .cm-md-indent-tab').evaluate(el => getComputedStyle(el).maskImage), 'none', 'tab guide uses a visually distinct dashed pattern');
+  assert.equal(await spaceChild.getAttribute('data-list-guides'), '1', 'two spaces form one structural guide');
+  assert.equal(await spaceChild.getAttribute('data-list-guide-active'), '1', 'the current item highlights its own level');
+  assert.notEqual(await spaceChild.evaluate(el => getComputedStyle(el).backgroundImage), 'none', 'the list guide is visibly drawn');
+  assert.equal(await childLine.getAttribute('data-list-guide-active'), '', 'another item keeps its neutral guide');
   for (const item of [
     { text: '无序回车测试', continuationPreview: '•无序回车测试\n- ', exited: '- 无序回车测试\n\n' },
     { text: '有序回车测试', continuationPreview: '1.有序回车测试\n2. ', exited: '1. 有序回车测试\n\n' },

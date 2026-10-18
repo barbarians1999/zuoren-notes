@@ -129,7 +129,7 @@ test('unresolved bracket text stays literal while defined reference links and au
 test('Tab nested Markdown keeps formatting; ordinary indented text remains code like Obsidian', async () => {
  const nested = 'cursor\n\n- parent\n\t- **bold** *italic* ~~strike~~ ==highlight==\n\t- [ ] task';
  const { result } = await plan(nested);
- for (const cls of ['strong', 'emphasis', 'strikethrough', 'highlight', 'indent-tab']) assert.ok(result.some(x => x.spec.class === 'cm-md-' + cls), cls);
+ for (const cls of ['strong', 'emphasis', 'strikethrough', 'highlight', 'list-guides']) assert.ok(result.some(x => x.spec.class === 'cm-md-' + cls), cls);
  assert.ok(result.some(x => x.spec.widget?.constructor.name === 'TaskWidget'));
  assert.equal(result.some(x => x.spec.class?.includes('code-block')), false);
  for (const indent of ['\t', '    ']) {
@@ -139,9 +139,52 @@ test('Tab nested Markdown keeps formatting; ordinary indented text remains code 
  }
 });
 
-test('indent guides cover whitespace only and exclude quote/list markers', async () => {
- const { result } = await plan('cursor\n\n> - parent\n> \t- child');
- const guides = result.filter(x => /^cm-md-indent-(tab|space)$/.test(x.spec.class || ''));
- assert.ok(guides.length);
- for (const guide of guides) assert.match(guide.source, /^[\t ]+$/);
+test('list guides follow levels across continuation lines and paragraphs without changing source', async () => {
+ const text = 'cursor\n\n  - first\n    continued\n\n    second paragraph\n    - child\n      child continued\n  - sibling\n\nplain\n  prose';
+ const { state, result } = await plan(text, { anchor: text.indexOf('child continued') });
+ const guides = result.filter(x => x.spec.class === 'cm-md-list-guides');
+ const at = value => guides.find(x => x.from === state.doc.lineAt(text.indexOf(value)).from)?.spec.attributes;
+ assert.equal(at('first')['data-list-guides'], '1');
+ assert.equal(at('continued')['data-list-guides'], '1');
+ assert.equal(at('second paragraph')['data-list-guides'], '1');
+ assert.equal(at('child continued')['data-list-guides'], '1,3');
+ assert.equal(at('child continued')['data-list-guide-active'], '3');
+ assert.equal(at('first')['data-list-guide-active'], '');
+ assert.equal(at('sibling')['data-list-guide-active'], '');
+ assert.equal(at('prose'), undefined);
+ assert.equal(state.doc.toString(), text);
+ assert.equal(result.some(x => /^cm-md-indent-/.test(x.spec.class || '')), false);
+});
+
+test('Tab width and ordered-marker width choose one guide per level, including quoted lists', async () => {
+ for (const [text, columns] of [['cursor\n\n- parent\n\t- child', '2'], ['cursor\n\n10. parent\n    - child', '2'], ['cursor\n\n> - parent\n>   - child', '1']]) {
+  const { state, result } = await plan(text);
+  const line = state.doc.lineAt(text.indexOf('child')).from;
+  const guide = result.find(x => x.from === line && x.spec.class === 'cm-md-list-guides');
+  assert.equal(guide.spec.attributes['data-list-guides'], columns);
+  assert.equal(guide.spec.attributes['data-list-guide-active'], '');
+ }
+});
+
+test('bullet display keeps the source marker width so continuation text can align', async () => {
+ const { result } = await plan('cursor\n\n  - first\n    continued\n\n  +   spaced\n      continued');
+ const markers = result.filter(x => x.spec.widget?.constructor.name === 'MarkerWidget');
+ assert.deepEqual(markers.map(x => x.spec.widget.columns), [2, 4]);
+});
+
+test('ordinary spaces and code have no list guides; moving between items changes only active guide', async () => {
+ for (const text of ['cursor\n\n  prose', 'cursor\n\n\tcode', 'cursor\n\n    code', 'cursor\n\n> quote']) {
+  assert.equal((await plan(text)).result.some(x => x.spec.class === 'cm-md-list-guides'), false);
+ }
+ const text = 'cursor\n\n  - first\n  - second';
+ for (const selected of ['first', 'second']) {
+  const { state, result } = await plan(text, { anchor: text.indexOf(selected) });
+  const active = result.filter(x => x.spec.class === 'cm-md-list-guides' && x.spec.attributes['data-list-guide-active']);
+  assert.equal(active.length, 1);
+  assert.equal(active[0].from, state.doc.lineAt(text.indexOf(selected)).from);
+  assert.equal(state.doc.toString(), text);
+ }
+ const beforeMarker = await plan(text, { anchor: text.indexOf('  - first') });
+ const active = beforeMarker.result.find(x => x.spec.class === 'cm-md-list-guides' && x.spec.attributes['data-list-guide-active']);
+ assert.equal(active?.spec.attributes['data-list-guide-active'], '1', 'the leading whitespace belongs to the current list row too');
 });

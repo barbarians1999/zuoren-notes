@@ -1065,19 +1065,33 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .markdown-source-editor .cm-md-quote,
 .cm-md-block-wrapper {
   --md-quote-depth: 0;
-  background-image: repeating-linear-gradient(to right, var(--quote-line) 0 var(--md-quote-width), transparent var(--md-quote-width) var(--md-quote-step));
-  background-size: calc(var(--md-quote-depth) * var(--md-quote-step)) 100%;
+  background-image: var(--md-list-guides, none), repeating-linear-gradient(to right, var(--quote-line) 0 var(--md-quote-width), transparent var(--md-quote-width) var(--md-quote-step));
+  background-size: var(--md-list-guide-sizes, auto), calc(var(--md-quote-depth) * var(--md-quote-step)) 100%;
   background-repeat: no-repeat;
 }
 .markdown-source-editor .cm-md-quote { padding-left: calc(var(--md-quote-depth) * var(--md-quote-step)) !important; border-left: 0; color: var(--quote); font-style: italic; }
 .cm-md-block-wrapper { position: relative; display: flow-root; min-width: 0; padding-left: calc(var(--md-quote-depth) * var(--md-quote-step) + var(--md-list-indent, 0px)); }
 .cm-md-container-marker { position: absolute; top: .7em; color: var(--accent); font-weight: 700; cursor: text; }
 .cm-md-literal { white-space: normal; }
-.markdown-source-editor .cm-md-indent-space,
-.markdown-source-editor .cm-md-indent-tab { background-image: linear-gradient(to right, transparent calc(50% - .5px), color-mix(in srgb, var(--accent) 42%, transparent) calc(50% - .5px) calc(50% + .5px), transparent calc(50% + .5px)); background-position: left top; background-size: .5em 100%; background-repeat: repeat-x; }
-.markdown-source-editor .cm-md-indent-tab { mask-image: repeating-linear-gradient(to bottom, #000 0 3px, transparent 3px 6px); }
+.markdown-source-editor .cm-md-list-guides {
+  --md-list-guide-color: color-mix(in srgb, var(--text) 16%, transparent);
+  --md-list-guide-active: color-mix(in srgb, var(--accent) 42%, transparent);
+  background-image: var(--md-list-guides), repeating-linear-gradient(to right, var(--quote-line) 0 var(--md-quote-width), transparent var(--md-quote-width) var(--md-quote-step));
+  background-size: var(--md-list-guide-sizes), calc(var(--md-quote-depth, 0) * var(--md-quote-step)) 100%;
+  background-repeat: no-repeat;
+}
+.markdown-source-editor .cm-line.cm-md-list-guides {
+  padding-left: calc(var(--md-quote-depth, 0) * var(--md-quote-step) + var(--md-list-wrap-indent)) !important;
+  text-indent: calc(0px - var(--md-list-wrap-indent));
+}
 .markdown-source-editor .cm-md-list { color: var(--text); }
-.markdown-source-editor .cm-md-list-marker { display: inline-block; min-width: 1.25em; margin-right: .25em; color: var(--accent); font-weight: 700; text-align: center; }
+.markdown-source-editor .cm-md-list-marker { display: inline-block; min-width: 1.25em; margin-right: .25em; color: var(--accent); font-weight: 700; text-align: center; text-indent: 0; }
+.markdown-source-editor .cm-md-list-marker[data-source-columns] {
+  min-width: 0;
+  width: calc(var(--md-list-marker-columns) * var(--md-list-space-width, .5ch));
+  margin-right: 0;
+  font-family: system-ui, sans-serif;
+}
 .markdown-source-editor .cm-md-task-checkbox { width: 1em; height: 1em; margin: 0 .38em .08em 0; accent-color: var(--accent); vertical-align: middle; cursor: pointer; }
 
 .markdown-preview {

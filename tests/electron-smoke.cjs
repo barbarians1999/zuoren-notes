@@ -554,7 +554,7 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   });
   await page.getByRole('button', { name: '进入全屏阅读' }).evaluate(button => { window.__fullscreenClicks = 0; button.addEventListener('click', () => window.__fullscreenClicks++); });
   await page.getByRole('button', { name: '进入全屏阅读' }).click();
-  try { await page.getByRole('button', { name: '退出全屏阅读' }).waitFor(); }
+  try { await page.getByRole('button', { name: '退出全屏', exact: true }).waitFor({ state: 'attached' }); }
   catch (error) {
     console.error('[fullscreen-audit]', await application.evaluate(({ BrowserWindow }) => ({ state: BrowserWindow.getAllWindows()[0].isFullScreen(), events: globalThis.__fullscreenAudit })), await page.evaluate(() => ({ clicks: window.__fullscreenClicks, label: document.querySelector('.zoom-control button:last-child')?.getAttribute('aria-label') })));
     throw error;
@@ -562,7 +562,7 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   await page.waitForFunction(() => document.querySelector('.app').dataset.fullscreen === 'true');
   await page.keyboard.press('F6'); // Fullscreen deliberately hides reader controls until revealed.
   await page.waitForFunction(() => document.querySelector('.app').dataset.chromeVisible === 'true');
-  await page.getByRole('button', { name: '退出全屏阅读' }).click();
+  await page.getByRole('button', { name: '退出全屏', exact: true }).click();
   await page.getByRole('button', { name: '进入全屏阅读' }).waitFor();
   await page.screenshot({ path: path.join(outputs, '照页-PDF连续阅读.png'), fullPage: true });
   await page.locator('.pdf-outline').getByRole('button', { name: 'Chapter one' }).click();

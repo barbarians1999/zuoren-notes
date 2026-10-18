@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { PDFDocument, StandardFonts } = require('pdf-lib');
-const { _electron, readerReady } = require('./electronHarness.cjs');
+const { _electron, readerReady, settle } = require('./electronHarness.cjs');
 const { createSmokeWorkspace, cleanupSmokeWorkspace } = require('./smokeWorkspace.cjs');
 const appRoot = path.resolve(__dirname, '..');
 let workspace, application;
@@ -53,6 +53,8 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
     await sameRow();
     assert.equal(await bar.getAttribute('title'), filename);
     assert.ok((await bar.getByRole('button', { name: '展开 PDF 大纲', exact: true }).getAttribute('title')).includes(filename));
+    const outlineToggle = await bar.locator('[data-pdf-outline-toggle]').boundingBox(), barBounds = await bar.boundingBox();
+    assert.ok(outlineToggle.x > barBounds.x + barBounds.width / 2, 'outline control sits beside its right-hand panel');
     for (const name of ['文字高亮', '框选', '批注', '选择']) {
       const button = tools.getByRole('button', { name, exact: true });
       await button.click(); assert.equal(await button.getAttribute('aria-pressed'), 'true');
@@ -64,6 +66,7 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
     assert.equal(await panel.locator('.outline-title').innerText(), '大纲');
     const panelBounds = await panel.boundingBox(), viewportBounds = await page.locator('.pdf-canvas-wrap').boundingBox();
     assert.ok(panelBounds.x >= viewportBounds.x + viewportBounds.width - 1, 'PDF outline uses the same right-hand edge as EPUB and notes');
+    await settle(panel); await page.screenshot({ path: path.join(output, 'pdf-outline-right.png') });
     await panel.getByRole('button', { name: '第 2 页', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('[aria-label="当前页码"]')?.value === '2');
     assert.equal(await bar.getByRole('textbox', { name: '当前页码', exact: true }).inputValue(), '2', 'books without embedded outlines keep page navigation');
@@ -192,11 +195,13 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
       return BrowserWindow.getAllWindows()[0].isFullScreen();
     }), true);
     await page.waitForTimeout(100);
-    assert.equal(await bar.locator('.zoom-control button:last-child').getAttribute('aria-label'), '退出全屏阅读', 'late fullscreen reply must not restore an old label');
+    assert.equal(await bar.getByRole('button', { name: '进入全屏阅读', exact: true }).count(), 0, 'late fullscreen reply must not restore the entry button');
+    assert.equal(await bar.getByRole('button', { name: '退出全屏阅读', exact: true }).count(), 0, 'fullscreen has only the window-level exit');
     await page.mouse.move(400, 2);
     await page.waitForFunction(() => document.querySelector('.app').dataset.chromeVisible === 'true');
     await sameRow();
-    await bar.getByRole('button', { name: '退出全屏阅读', exact: true }).click();
+    await settle(page.locator('.topbar')); await page.screenshot({ path: path.join(output, 'pdf-toolbar-fullscreen.png') });
+    await page.getByRole('button', { name: '退出全屏', exact: true }).click();
     assert.equal(await application.evaluate(async ({ BrowserWindow }) => {
       for (let i = 0; i < 200 && globalThis.__fullscreenReplyCount < 2; i++) await new Promise(resolve => setTimeout(resolve, 10));
       return BrowserWindow.getAllWindows()[0].isFullScreen();

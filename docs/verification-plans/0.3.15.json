@@ -1,0 +1,21 @@
+{
+  "reason": "0.3.15 targeted delivery combines structural Markdown list guides with PDF toolbar/fullscreen and restored-session startup fixes. Covers guide rendering and source preservation, PDF outline placement and fullscreen exit, delayed settings/document restoration, and collapsed-sidebar first paint. Includes the directed profile's document lifecycle/source-editor baseline and package-platform baseline; NOT full release regression.",
+  "source": [
+    "tests/markdown-presentation-smoke.cjs",
+    "tests/pdf-toolbar-smoke.cjs",
+    "tests/session-startup-smoke.cjs",
+    "tests/fullscreen-chrome-smoke.cjs",
+    "tests/window-startup-smoke.cjs",
+    "tests/settings-startup-smoke.cjs",
+    "tests/ui-motion-smoke.cjs"
+  ],
+  "packaged": [
+    "tests/markdown-presentation-smoke.cjs",
+    "tests/pdf-toolbar-smoke.cjs",
+    "tests/session-startup-smoke.cjs",
+    "tests/fullscreen-chrome-smoke.cjs",
+    "tests/window-startup-smoke.cjs",
+    "tests/settings-startup-smoke.cjs",
+    "tests/ui-motion-smoke.cjs"
+  ]
+}
