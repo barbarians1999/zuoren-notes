@@ -199,7 +199,8 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
     await waitForAnchor(beforeSize, 'the mid-chapter text anchor is visible before resizing');
     await page.getByRole('button', { name: '设置', exact: true }).click();
     const slider = page.getByRole('slider', { name: '正文字体大小', exact: true });
-    await slider.focus(); await slider.press('End');
+    // Return native keyboard input from the EPUB iframe to the settings widget.
+    await slider.click(); await slider.press('End');
     for (let i = 0; i < 6; i++) await slider.press('ArrowLeft');
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => document.querySelector('.epub-pane')?.dataset.reflowing === 'false');
