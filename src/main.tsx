@@ -129,6 +129,7 @@ function App() {
   const activePdf = readerSnapshot.pdf, activeEpub = readerSnapshot.epub;
   const page = readerSnapshot.page, scale = readerSnapshot.scale;
   const activeDoc = workspace.currentDocument();
+  const noteSplit = layout === 'note' && workspace.groups.secondary.tabs.length > 0;
   const epubVisible = !!activeEpub && layout !== 'note';
 
   const secondNote = workspace.currentDocument('secondary')?.note || null;
@@ -736,10 +737,11 @@ function App() {
             <div className="note-controls-slot" ref={setNoteControlsTarget}/>
           </div>
         </div>
-        <div ref={panesRef} className={'panes ' + layout + (layout === 'note' && workspace.groups.secondary.tabs.length ? ' dual-notes' : '')} style={{ '--split-at': `${splitAt}%` } as React.CSSProperties}>
+        <div ref={panesRef} className={'panes ' + layout + (noteSplit ? ' dual-notes' : '')} style={{ '--split-at': `${splitAt}%` } as React.CSSProperties}>
           {(layout === 'read' || layout === 'split') && (activeEpub ? <EpubPane key={activeEpub.path} epub={activeEpub} theme={resolvedTheme} noteBodyFont={noteBodyFont} readingSize={readingSize} headerTarget={readerHeaderTarget} active={activeSurface === 'reader'} closing={readerClosing} onActivate={() => setActiveSurface('reader')} onClose={() => void closeEpub()} onMeta={change => readerSession.updateEpub(change, activeEpub)} onMessage={setMessage} onExcerpt={insertEpubExcerpt} onSelectionAction={saveEpubSelection} excerptTarget={activeDoc ? (workspace.activeGroup === 'secondary' ? '摘录到右栏' : '摘录到当前笔记') : null} target={isEpubAnchor(target) ? target : null}/> : <PdfPane dark={THEMES[resolvedTheme].colorScheme === 'dark'} pdf={activePdf} page={page} setPage={value => readerSession.setPage(value)} scale={scale} setScale={value => readerSession.setScale(value)} fullscreen={windowState.fullscreen} onToggleFullscreen={() => { void reader().windowControl('fullscreen'); }} onMeta={change => activePdf ? readerSession.updatePdf(change, activePdf) : Promise.resolve(false)} captureExcerpt={capturePdfExcerpt} onTextAction={onPdfTextAction} canExcerpt={!!activeDoc && !activeDoc.blocked()} target={target && 'pdfId' in target ? target : null} onMessage={setMessage}/>)}
           {layout === 'split' && <PaneSplitter key={'splitter:' + (activeEpub?.path || activePdf?.path || 'reader')} container={panesRef} ratio={splitAt} onChange={setSplitAt} deferred={!!activeEpub}/>}
           {(['primary', 'secondary'] as const).map(group => <NoteGroupPane key={group} workspace={workspace} group={group}
+            split={noteSplit}
             tabsTarget={noteTabsTarget} controlsTarget={noteControlsTarget}
             foreground={!epubVisible || activeSurface === 'note'} onFocus={() => setActiveSurface('note')}
             hidden={layout === 'read' || (layout === 'split' ? workspace.activeGroup !== group : group === 'secondary' && !workspace.groups.secondary.tabs.length)}
@@ -748,7 +750,15 @@ function App() {
             scrollMemory={scrollMemory} rememberScroll={rememberScroll} onOpen={() => void openFiles(group)}
             onNew={() => { workspace.activate(group); beginInline('note'); }}
             onRight={path => void openNoteInSecondary({ path, name: path.split(/[\\/]/).pop() || path, relative: path, type: 'md' })}
-            onSplit={() => { const doc = workspace.currentDocument(group); if (doc) void openNoteInSecondary({ path: doc.note.path, name: '', relative: '', type: 'md' }); else workspace.blank('secondary'); }}/>)}
+            onSplit={() => {
+              if (noteSplit) {
+                const primary = workspace.current('primary');
+                if (primary) workspace.activate('primary', primary.id);
+                workspace.merge(); return;
+              }
+              const doc = workspace.currentDocument(group);
+              if (doc) void openNoteInSecondary({ path: doc.note.path, name: '', relative: '', type: 'md' }); else workspace.blank('secondary');
+            }}/>)}
         </div>
       </main>
     </div>

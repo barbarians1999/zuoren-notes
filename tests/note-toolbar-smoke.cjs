@@ -112,6 +112,30 @@ test('single-row chrome routes to the focused view and stays usable across width
   await left.locator('.note-outline').waitFor();
   await left.getByRole('button', { name: '收起大纲', exact: true }).click();
   await left.locator('.note-outline').waitFor({ state: 'hidden' });
+  await t.test('split button returns to the original single view and keeps right-hand notes and undo', async () => {
+    const toggle = page.getByRole('button', { name: '左右分屏笔记', exact: true });
+    const source = '# Left\n\nleft body\n';
+    const editor = left.locator('.cm-content');
+    assert.equal(await toggle.getAttribute('aria-pressed'), 'false');
+    await editor.evaluate(element => { window.__splitOriginalEditor = element; });
+    await editor.press('Control+End'); await page.keyboard.insertText('split-toggle-edit');
+    await toggle.click(); await right.locator('.cm-content').waitFor();
+    assert.equal(await toggle.getAttribute('aria-pressed'), 'true');
+    assert.equal(await toggle.getAttribute('title'), '恢复单栏（保留全部标签）');
+    await toggle.click(); await page.locator('[data-note-group="secondary"]').waitFor({ state: 'hidden' });
+    assert.equal(await toggle.getAttribute('aria-pressed'), 'false');
+    assert.equal(await editor.evaluate(element => element === window.__splitOriginalEditor), true);
+    assert.match(await left.locator('.cm-activeLine').innerText(), /split-toggle-edit/, 'the original left cursor is restored');
+    await editor.press('Control+z'); await waitForFile(a, text => text === source);
+    await toggle.click(); await right.locator('.cm-content').waitFor();
+    await row('b.md').click({ button: 'right' }); await page.getByRole('menuitem', { name: '在右侧打开', exact: true }).click();
+    await right.getByRole('tab', { name: 'b.md', exact: true }).waitFor();
+    await toggle.click(); await page.locator('[data-note-group="secondary"]').waitFor({ state: 'hidden' });
+    assert.equal(await left.getByRole('tab', { name: 'b.md', exact: true }).count(), 1, 'another right-hand note remains available as a tab');
+    assert.equal(await left.getByRole('tab', { name: 'a.md', exact: true }).getAttribute('aria-selected'), 'true');
+    assert.equal(await fs.readFile(a, 'utf8'), source);
+    assert.equal(await fs.readFile(b, 'utf8'), '# Right\n\nright body\n');
+  });
   await row('b.md').click({ button: 'right' }); await page.getByRole('menuitem', { name: '在右侧打开', exact: true }).click();
   await right.locator('.cm-content').waitFor();
   await t.test('one bar, independent modes, toolbar Find and keyboard target the exact pane', async () => {

@@ -7,11 +7,11 @@ import { createPortal } from 'react-dom';
 import type { NoteWorkspace, NoteGroupId } from './noteWorkspace';
 import { ContextMenu } from '../ui/overlays';
 
-export function NoteGroupPane({ workspace, group, findCommand, onJump, insertRegister, scrollMemory, rememberScroll, onOpen, onNew, onRight, onSplit, hidden = false, tabsTarget, controlsTarget, foreground = true, onFocus }: {
+export function NoteGroupPane({ workspace, group, findCommand, onJump, insertRegister, scrollMemory, rememberScroll, onOpen, onNew, onRight, onSplit, split, hidden = false, tabsTarget, controlsTarget, foreground = true, onFocus }: {
   workspace: NoteWorkspace; group: NoteGroupId; findCommand: FindCommand | null;
   onJump: (anchor: ReaderAnchor, path?: string) => void; insertRegister: MutableRefObject<(block: string) => boolean>;
   scrollMemory: MarkdownScrollMemory[]; rememberScroll: (entry: MarkdownScrollMemory) => void;
-  onOpen: () => void; onNew: () => void; onRight: (path: string) => void; onSplit: () => void; hidden?: boolean;
+  onOpen: () => void; onNew: () => void; onRight: (path: string) => void; onSplit: () => void; split: boolean; hidden?: boolean;
   tabsTarget: HTMLElement | null; controlsTarget: HTMLElement | null;
   foreground?: boolean; onFocus?: () => void;
 }) {
@@ -79,7 +79,7 @@ export function NoteGroupPane({ workspace, group, findCommand, onJump, insertReg
       sharedDocument={doc} tab={tab} scrollMemory={scrollMemory} onScrollMemory={scroll} hidden={hidden}
       unifiedHeader headerTarget={!hidden && workspace.activeGroup === group ? controlsTarget : null}
       headerControls={<><button className="workspace-icon-action" aria-label="新建空白标签" title="新标签" onClick={() => workspace.blank(group)}><Plus size={16}/></button>
-        <button className="workspace-icon-action" aria-label="左右分屏笔记" title="在右侧打开当前笔记" onClick={onSplit}><Columns2 size={17}/></button></>}/>
+        <button className={'workspace-icon-action' + (split ? ' active' : '')} aria-label="左右分屏笔记" aria-pressed={split} title={split ? '恢复单栏（保留全部标签）' : '在右侧打开当前笔记'} onClick={onSplit}><Columns2 size={17}/></button></>}/>
     {!doc && <div className="empty-tab-actions"><button onClick={onOpen}>打开笔记</button><button onClick={onNew}>新建笔记</button></div>}
     {selected && menu && <ContextMenu x={menu.x} y={menu.y} returnFocus={menu.trigger} label="标签操作" onClose={() => setMenu(null)}>
       {selected.document && <button role="menuitem" onClick={() => { setMenu(null); onRight(selected.document!.note.path); }}>在右侧打开</button>}

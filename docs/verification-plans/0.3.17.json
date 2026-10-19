@@ -1,0 +1,9 @@
+{
+  "reason": "0.3.17 targeted delivery verifies that the note toolbar split button opens the current note on the right and toggles back to the original left view, preserving its cursor, undo history, and other right-side note tabs. Includes the directed profile's document lifecycle/source-editor baseline and packaged platform baseline; NOT full release regression.",
+  "source": [
+    "tests/note-toolbar-smoke.cjs"
+  ],
+  "packaged": [
+    "tests/note-toolbar-smoke.cjs"
+  ]
+}
