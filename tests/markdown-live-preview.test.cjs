@@ -166,7 +166,7 @@ test('Tab width and ordered-marker width choose one guide per level, including q
  }
 });
 
-test('bullet display keeps the source marker width so continuation text can align', async () => {
+test('bullet display retains source-prefix metadata while layout uses a shared visual gutter', async () => {
  const { result } = await plan('cursor\n\n  - first\n    continued\n\n  +   spaced\n      continued');
  const markers = result.filter(x => x.spec.widget?.constructor.name === 'MarkerWidget');
  assert.deepEqual(markers.map(x => x.spec.widget.columns), [2, 4]);

@@ -37,7 +37,7 @@ pnpm release --profile full --cleanup
 pnpm release --profile directed --plan docs/verification-plans/0.3.12.json --cleanup
 ```
 
-当前 0.3.12 将此前未提交的 0.3.10／0.3.11 窗口、主题、共享交互、迁移路径及 0.3.12 Markdown 修复一并纳入源码提交，使用上述组合计划；不借用旧报告冒充本次验证。
+0.3.12 当时将此前未提交的 0.3.10／0.3.11 窗口、主题、共享交互、迁移路径及 0.3.12 Markdown 修复一并纳入源码提交，并使用定向验证计划；不借用旧报告冒充本次验证。
 
 开发时单独运行测试：
 
@@ -133,3 +133,9 @@ pnpm release:github --receipt C:/项目/releases/版本/VALIDATION.json
 远端入口不构建、不安装、不处理本地清理；只推送回执对应提交，核对版本／依赖锁和不可变包哈希后上传。Mac 构建仅显式 `--with-mac` 触发。最终成功条件同时要求 Release ID、`tag_name`、解析后的标签提交、非草稿／非 prerelease、latest 的 ID 与标签、每项资产大小及 SHA256 一致；错误 `untagged-*` 必须报错，不能凭 Git tag 或一次上传成功宣称发布完成。
 
 网络错误最多一次等效重试；仍失败就报告外部阻塞，不无限轮询重试。Windows 包与本地回收状态独立保留，失败从对应阶段恢复。
+
+## 7. 测试临时目录
+
+原生 UI 测试经 scripts/test-ui.cjs 统一设置测试临时目录，工作区由 tests/smokeWorkspace.cjs 分配。在 Windows 上使用 D:\C盘分担\左人笔记临时，并要求 D 盘至少有 9 GiB 空闲，以保留用户要求的 8 GiB 备份空间和 1 GiB 测试余量；低于门槛时停止测试并提示。用户显式指定 ZUOREN_TEST_TEMP_ROOT 后，先检查该卷至少有 1 GiB 空闲。其他平台使用系统临时目录，并要求至少有 1 GiB 空闲。
+
+受管目录总预算为 1 GiB，单个工作区最多 512 MiB。UI 测试子进程退出后，统一入口再删除成功工作区；失败时保留测试资料和设置，移除浏览器缓存和临时截图，失败复现最多保留 256 MiB。清理若仍被进程占用则保留原件并记下错误，不强制关闭用户应用。目录预算不足时停止启动新的工作区并报告保留路径。安装包校验产生的 app.asar 解包副本在 finally 中删除，只留下比较报告和发布日志。

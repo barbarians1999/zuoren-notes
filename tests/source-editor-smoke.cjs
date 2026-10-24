@@ -1,13 +1,14 @@
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
-const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { _electron: electron } = require('./electronHarness.cjs');
+const { createSmokeWorkspace, cleanupSmokeWorkspace } = require('./smokeWorkspace.cjs');
+const { waitForFile } = require('./waitForFile.cjs');
 
 const appRoot = path.resolve(__dirname, '..');
-let testRoot;
+let workspace;
 let fixtureRoot;
 let userData;
 let notePath;
@@ -18,13 +19,13 @@ after(async () => {
   const pid = process?.pid;
   try { await application?.close(); } catch { /* already closed */ }
   if (pid && process?.exitCode === null) spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
-  if (testRoot) await fs.rm(testRoot, { recursive: true, force: true });
+  if (workspace) await cleanupSmokeWorkspace(workspace);
 });
 
 test('Markdown editing keeps continuous source text like Obsidian', { timeout: 90000 }, async () => {
-  testRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zuoren-source-editor-smoke-'));
-  fixtureRoot = path.join(testRoot, 'fixture');
-  userData = path.join(testRoot, 'user-data');
+  workspace = await createSmokeWorkspace('source-editor-smoke');
+  fixtureRoot = workspace.fixture;
+  userData = workspace.userData;
   notePath = path.join(fixtureRoot, '源码笔记.md');
   await fs.mkdir(fixtureRoot, { recursive: true });
   await fs.mkdir(userData, { recursive: true });
@@ -68,7 +69,7 @@ test('Markdown editing keeps continuous source text like Obsidian', { timeout: 9
   const parentLine = page.locator('.markdown-source-editor .cm-line').filter({ hasText: '缩进父项' });
   const childLine = page.locator('.markdown-source-editor .cm-line').filter({ hasText: '缩进子项' });
   await childLine.click(); await page.keyboard.press('Home'); await page.keyboard.press('Tab');
-  await page.waitForTimeout(1800);
+  await waitForFile(notePath, value => /- 缩进父项\n\t- 缩进子项/.test(value));
   assert.match(await fs.readFile(notePath, 'utf8'), /- 缩进父项\n\t- 缩进子项/, 'Tab stores a tab character and Markdown parses it as four-column indentation');
   assert.equal(await page.locator('.cm-md-code-preview').count(), 0, 'nested list indentation must not become a code block');
   assert.equal(await childLine.getAttribute('data-list-guides'), '2', 'one structural guide represents this Tab-indented level');
@@ -78,7 +79,7 @@ test('Markdown editing keeps continuous source text like Obsidian', { timeout: 9
   assert.ok(parentMarker && childMarker && childMarker.x > parentMarker.x, 'nested list marker is visibly indented');
   const spaceChild = page.locator('.markdown-source-editor .cm-line').filter({ hasText: '空格子项' });
   await spaceChild.click(); await page.keyboard.press('Home'); await page.keyboard.insertText('  ');
-  await page.waitForTimeout(1800);
+  await waitForFile(notePath, value => /- 空格父项\n  - 空格子项/.test(value));
   assert.match(await fs.readFile(notePath, 'utf8'), /- 空格父项\n  - 空格子项/, 'typed spaces remain literal spaces');
   assert.equal(await spaceChild.getAttribute('data-list-guides'), '1', 'two spaces form one structural guide');
   assert.equal(await spaceChild.getAttribute('data-list-guide-active'), '1', 'the current item highlights its own level');
@@ -177,8 +178,12 @@ test('Markdown editing keeps continuous source text like Obsidian', { timeout: 9
   await page.waitForTimeout(100);
   assert.equal(await block.count(), 1, 'dragging across rendered code does not turn the whole source block into a selection');
   assert.equal(await page.getByRole('toolbar', { name: '选中文本格式' }).count(), 0, 'a native selection in a rendered code widget must not be mistaken for a Markdown source selection');
-  const blockStyle = await block.evaluate(el => ({ background: getComputedStyle(el).backgroundColor, border: getComputedStyle(el).borderTopWidth }));
-  assert.notEqual(blockStyle.background, 'rgba(0, 0, 0, 0)'); assert.equal(blockStyle.border, '1px');
+  const blockStyle = await block.evaluate(el => {
+    const probe = document.createElement('span'); probe.style.borderTop = '1px solid'; el.append(probe);
+    const result = { background: getComputedStyle(el).backgroundColor, border: getComputedStyle(el).borderTopWidth, expectedBorder: getComputedStyle(probe).borderTopWidth };
+    probe.remove(); return result;
+  });
+  assert.notEqual(blockStyle.background, 'rgba(0, 0, 0, 0)'); assert.equal(blockStyle.border, blockStyle.expectedBorder, 'one CSS pixel border follows the current display pixel grid');
   await page.waitForTimeout(1400);
   const codeSaved = await fs.readFile(notePath, 'utf8');
   assert.ok(codeSaved.endsWith(codeSource), 'decorations do not rewrite Markdown');

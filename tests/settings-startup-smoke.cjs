@@ -1,15 +1,15 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
-const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { _electron: electron } = require('./electronHarness.cjs');
+const { createSmokeWorkspace, cleanupSmokeWorkspace } = require('./smokeWorkspace.cjs');
 
 test('damaged settings are backed up and visibly reported at startup', { timeout: 30000 }, async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'zhaoye-settings-ui-'));
-  const userData = path.join(root, 'profile');
-  await fs.mkdir(userData);
+  const workspace = await createSmokeWorkspace('settings-startup');
+  const userData = workspace.userData;
+  await fs.mkdir(userData, { recursive: true });
   const original = '{"session":';
   await fs.writeFile(path.join(userData, 'settings.json'), original);
   let application;
@@ -34,6 +34,6 @@ test('damaged settings are backed up and visibly reported at startup', { timeout
       try { await Promise.race([application.close(), new Promise(resolve => setTimeout(resolve, 2500))]); } catch { /* already closed */ }
     }
     if (child?.exitCode === null) spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-    await fs.rm(root, { recursive: true, force: true });
+    await cleanupSmokeWorkspace(workspace);
   }
 });

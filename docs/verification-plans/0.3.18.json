@@ -1,0 +1,13 @@
+{
+  "reason": "0.3.18 combines Markdown list-gutter alignment with Windows UI-test workspace retention. Run all unit tests, the required source-editor and document-lifecycle baselines, and source/package smoke for list geometry and source preservation, startup recovery, damaged-settings preservation, and the packaged platform baseline. This is targeted validation, not the full PDF/EPUB reader regression set.",
+  "source": [
+    "tests/list-alignment-smoke.cjs",
+    "tests/startup-preservation-smoke.cjs",
+    "tests/settings-startup-smoke.cjs"
+  ],
+  "packaged": [
+    "tests/list-alignment-smoke.cjs",
+    "tests/startup-preservation-smoke.cjs",
+    "tests/settings-startup-smoke.cjs"
+  ]
+}

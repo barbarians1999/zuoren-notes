@@ -5,8 +5,19 @@ import { renderMarkdown } from './markdownRendering';
 import { isResolvedMarkdownLink } from './markdownLinks';
 import { decodeMarkdownEntity, projectCodeBlock, projectTable, projectedSourcePosition, type BlockProjection, type CodeProjection, type TableProjection, type TextProjection, type MarkdownNode } from './markdownProjection';
 
-type ListGuide = { column: number; active: boolean };
-const sameGuides = (left: ListGuide[], right: ListGuide[]) => left.length === right.length && left.every((guide, index) => guide.column === right[index].column && guide.active === right[index].active);
+// Compensate source prefix widths in layout while preserving every document position.
+function listPrefixes(state: EditorState, node: MarkdownNode) {
+  const prefixes: { line: number; columns: number }[] = [];
+  for (let item: MarkdownNode | null = node; item; item = item.parent) if (item.name === 'ListItem') {
+    const marker = item.getChild('ListMark'); if (!marker) continue;
+    const line = state.doc.lineAt(marker.from);
+    let end = marker.to; while (end < line.to && /[\t ]/.test(state.sliceDoc(end, end + 1))) end++;
+    prefixes.unshift({ line: line.number, columns: countColumn(state.sliceDoc(line.from, end), state.tabSize) - countColumn(state.sliceDoc(line.from, marker.from), state.tabSize) });
+  }
+  return prefixes;
+}
+type ListGuide = { column: number; active: boolean; offsetSteps: number; offsetColumns: number };
+const sameGuides = (left: ListGuide[], right: ListGuide[]) => left.length === right.length && left.every((guide, index) => guide.column === right[index].column && guide.active === right[index].active && guide.offsetSteps === right[index].offsetSteps && guide.offsetColumns === right[index].offsetColumns);
 function listGuides(state: EditorState, node: MarkdownNode, activeItems: Set<number>): ListGuide[] {
   const items: MarkdownNode[] = [], guides: ListGuide[] = [];
   for (let parent: MarkdownNode | null = node; parent; parent = parent.parent) if (parent.name === 'ListItem') items.unshift(parent);
@@ -16,14 +27,18 @@ function listGuides(state: EditorState, node: MarkdownNode, activeItems: Set<num
     if (!marker) continue;
     const line = state.doc.lineAt(marker.from);
     const column = countColumn(state.sliceDoc(line.from, marker.from).replace(/>[\t ]?/g, ''), state.tabSize);
-    if (column > previousColumn) guides.push({ column: (previousColumn + column) / 2, active: activeItems.has(item.from) });
+    if (column > previousColumn) {
+      const parents = item.parent ? listPrefixes(state, item.parent) : [];
+      guides.push({ column: (previousColumn + column) / 2, active: activeItems.has(item.from),
+        offsetSteps: Math.max(0, parents.length - .5), offsetColumns: parents.reduce((sum, parent) => sum + parent.columns, 0) - (parents.at(-1)?.columns || 0) / 2 });
+    }
     previousColumn = column;
   }
   return guides;
 }
 function guideAttributes(guides: ListGuide[]) {
   const background = guides.map(guide => {
-    const left = `var(--md-quote-depth, 0) * var(--md-quote-step) + ${guide.column} * var(--md-list-space-width, .5ch)`;
+    const left = `var(--md-quote-depth, 0) * var(--md-quote-step) + ${guide.column - guide.offsetColumns} * var(--md-list-space-width, .5ch) + ${guide.offsetSteps} * var(--md-list-gutter, 2em)`;
     const color = `var(--md-list-guide-${guide.active ? 'active' : 'color'})`;
     return `linear-gradient(to right, transparent calc(${left} - .5px), ${color} calc(${left} - .5px) calc(${left} + .5px), transparent calc(${left} + .5px))`;
   }).join(', ');
@@ -64,7 +79,8 @@ function wrapBlock(view: EditorView, element: HTMLElement, projection: BlockProj
   }
   wrapper.dataset.quoteDepth = String(context.quoteDepth);
   wrapper.style.setProperty('--md-quote-depth', String(context.quoteDepth));
-  wrapper.style.setProperty('--md-list-indent', `${context.indentColumns}ch`);
+  const prefixes = listPrefixes(view.state, syntaxTree(view.state).resolveInner(projection.content.anchor, 1));
+  wrapper.style.setProperty('--md-list-indent', `calc(${context.indentColumns - prefixes.reduce((sum, prefix) => sum + prefix.columns, 0)} * var(--md-list-space-width, .5ch) + ${prefixes.length} * var(--md-list-gutter, 2em))`);
   for (const marker of context.markers) {
     const label = document.createElement('span'); label.className = 'cm-md-container-marker'; label.textContent = marker.label;
     label.style.left = `calc(var(--md-quote-depth) * var(--md-quote-step) + ${marker.column}ch)`;
@@ -88,7 +104,7 @@ class MarkerWidget extends WidgetType {
   eq(other: MarkerWidget) { return other.label === this.label && other.columns === this.columns; }
   toDOM() {
     const el = document.createElement('span'); el.className = 'cm-md-list-marker'; el.textContent = this.label;
-    if (this.columns) { el.dataset.sourceColumns = String(this.columns); el.style.setProperty('--md-list-marker-columns', String(this.columns)); }
+    if (this.columns) el.dataset.sourceColumns = String(this.columns);
     return el;
   }
 }
@@ -213,6 +229,7 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
   const blocks: ReturnType<Decoration['range']>[] = [];
   const quoteDepths = new Map<number, number>();
   const guideLines = new Map<number, ListGuide[]>(), codeLines = new Set<number>();
+  const listLines = new Map<number, { steps: number; columns: number; markers: number }>();
   // Initial hydration may parse briefly. Typing has a smaller budget and
   // selection-only updates never force a synchronous full-document parse.
   // Language-worker tree updates finish the remaining decorations safely.
@@ -294,6 +311,11 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
       if (name === 'InlineCode') return false;
     }
     if (name === 'ListItem') {
+      const prefixes = listPrefixes(state, node);
+      for (let number = state.doc.lineAt(from).number; number <= state.doc.lineAt(Math.max(from, to - 1)).number; number++) {
+        const earlier = prefixes.filter(prefix => prefix.line < number);
+        listLines.set(number, { steps: earlier.length, columns: earlier.reduce((sum, prefix) => sum + prefix.columns, 0), markers: prefixes.filter(prefix => prefix.line === number).length });
+      }
       const guides = listGuides(state, node, activeItems);
       if (guides.length) {
         const last = state.doc.lineAt(Math.max(from, to - 1)).number;
@@ -306,11 +328,12 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
       const marker = node.getChild('ListMark'), task = node.getChild('Task')?.getChild('TaskMarker');
       if (marker) {
         const line = state.doc.lineAt(marker.from);
-        mark(marker.to, line.to, 'cm-md-list');
+        let end = marker.to; while (end < line.to && /[\t ]/.test(state.sliceDoc(end, end + 1))) end++;
+        mark(end, line.to, 'cm-md-list');
+        if (!task && active(line.from, line.to)) mark(marker.from, end, 'cm-md-list-prefix');
         if (!active(line.from, line.to)) {
           if (task) hide(marker.from, task.to, new TaskWidget(task.from + 1, /x/i.test(state.sliceDoc(task.from, task.to))));
           else {
-            let end = marker.to; while (end < line.to && state.sliceDoc(end, end + 1) === ' ') end++;
             const label = node.parent?.name === 'OrderedList' ? state.sliceDoc(marker.from, marker.to) : '•';
             hide(marker.from, end, new MarkerWidget(label, label === '•' ? end - marker.from : 0));
           }
@@ -332,9 +355,13 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
   } });
   for (const [number, guides] of guideLines) if (!codeLines.has(number)) {
     const line = state.doc.line(number), attributes = guideAttributes(guides);
+    ranges.push(Decoration.line({ class: 'cm-md-list-guides', attributes }).range(line.from));
+  }
+  for (const [number, layout] of listLines) if (!codeLines.has(number)) {
+    const line = state.doc.line(number);
     const indent = countColumn((line.text.match(/^[\t >]*/)?.[0] || '').replace(/>[\t ]?/g, ''), state.tabSize);
-    ranges.push(Decoration.line({ class: 'cm-md-list-guides', attributes: {
-      ...attributes, style: attributes.style + `; --md-list-wrap-indent: calc(${indent} * var(--md-list-space-width, .5ch))`,
+    ranges.push(Decoration.line({ class: 'cm-md-list-layout', attributes: { style:
+      `--md-list-offset: calc(${layout.steps} * var(--md-list-gutter, 2em) - ${layout.columns} * var(--md-list-space-width, .5ch)); --md-list-wrap-indent: calc(${indent} * var(--md-list-space-width, .5ch) + ${layout.markers} * var(--md-list-gutter, 2em))`,
     } }).range(line.from));
   }
   for (const [number, depth] of quoteDepths) ranges.push(Decoration.line({ class: 'cm-md-quote', attributes: {

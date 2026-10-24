@@ -5,22 +5,29 @@ const path = require('node:path');
 const { createRequire } = require('node:module');
 const { randomUUID } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
+const { createSmokeWorkspace, cleanupSmokeWorkspace } = require('./smokeWorkspace.cjs');
+const { waitForFile } = require('./waitForFile.cjs');
 const appRoot = process.env.READER_APP_ROOT || path.resolve(__dirname, '..');
 const localRequire = createRequire(path.join(appRoot, 'package.json'));
 const { _electron: electron } = require('./electronHarness.cjs');
 const { FileStore } = localRequire('./electron/storage.cjs');
 const original = '# Startup preservation\n\nNever lose this body.\n\n- [ ] task\n';
-
-for (const { scenario, pane } of [
+const scenarios = [
   ...['none', 'already-saved', 'corrupt', 'read-error', 'conflict', 'recoverable', 'empty-draft'].map(scenario => ({ scenario, pane: 'primary' })),
   { scenario: 'conflict', pane: 'secondary' }, { scenario: 'recoverable', pane: 'secondary' },
-]) {
+];
+const requestedScenario = process.env.ZUOREN_STARTUP_PRESERVATION_CASE;
+if (requestedScenario && !scenarios.some(item => `${item.pane} ${item.scenario}` === requestedScenario)) {
+  throw new Error('Unknown ZUOREN_STARTUP_PRESERVATION_CASE: ' + requestedScenario);
+}
+
+for (const { scenario, pane } of scenarios.filter(item => !requestedScenario || `${item.pane} ${item.scenario}` === requestedScenario)) {
   test('startup preserves disk and draft: ' + pane + ' ' + scenario, { timeout: 40000 }, async () => {
-    const fixture = await fs.mkdtemp(path.join(process.env.READER_FIXTURE_ROOT || path.join(appRoot, 'work'), 'startup-preservation-'));
-    const profile = path.join(fixture, 'profile'), note = path.join(fixture, 'note.md');
+    const workspace = await createSmokeWorkspace('startup-preservation');
+    const fixture = workspace.fixture, profile = workspace.userData, note = path.join(fixture, 'note.md');
     const recoveryId = randomUUID(), recoveryDir = path.join(fixture, '.reader', 'recovery');
     const recoveryFile = path.join(recoveryDir, recoveryId + '.json');
-    await fs.mkdir(profile);
+    await fs.mkdir(fixture, { recursive: true }); await fs.mkdir(profile, { recursive: true });
     await fs.writeFile(note, original);
     const store = new FileStore(); await store.grantRoot(fixture);
     const loaded = await store.readNote(note);
@@ -53,9 +60,13 @@ for (const { scenario, pane } of [
         await page.locator('.toast').filter({hasText:'恢复稿保留'}).waitFor();
         assert.equal(await editor.count(),0,'an unreadable recovery must not expose an autosaving editor');
       } else await editor.waitFor();
-      // Exceed recovery (400 ms), autosave (900 ms), and disk polling (3 s).
-      await page.waitForTimeout(3800);
       const expected = ['recoverable', 'empty-draft'].includes(scenario) ? draft : disk;
+      if (['recoverable', 'empty-draft'].includes(scenario)) {
+        await waitForFile(note, content => content === expected, 12000);
+      } else {
+        // Cross the disk polling gate for conflict-preservation checks.
+        await page.waitForTimeout(3300);
+      }
       assert.equal(await fs.readFile(note, 'utf8'), expected, 'startup must not silently replace disk with an uninitialized empty editor');
       const text = scenario === 'read-error' ? '' : await editor.innerText();
       if (expected && scenario !== 'read-error') assert.ok(text.includes('Never lose this body.'), 'the editor must display the loaded body');
@@ -78,12 +89,22 @@ for (const { scenario, pane } of [
       }
     } finally {
       if (app) {
-        const child = app.process(), pid = child.pid;
-        // Unresolved recovery must block normal close/save. Terminate only
-        // this isolated fixture process after its preservation assertions.
-        if (child.exitCode === null) spawnSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
-        try { await app.close(); } catch {}
+        let child = app.process();
+        if (child?.exitCode === null && scenario !== 'conflict') {
+          try {
+            const closed = app.waitForEvent('close', { timeout: 12000 });
+            await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+            await closed; app = null;
+          } catch {}
+        }
+        if (app) {
+          child = app.process();
+          // Conflicts require an explicit decision; terminate only this isolated fixture process.
+          if (child?.exitCode === null) spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+          try { await app.close(); } catch {}
+        }
       }
+      await cleanupSmokeWorkspace(workspace);
     }
   });
 }

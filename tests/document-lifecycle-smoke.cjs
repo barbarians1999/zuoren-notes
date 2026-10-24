@@ -5,14 +5,17 @@ const path=require('node:path');
 const {spawnSync}=require('node:child_process');
 const {_electron:electron}=require('./electronHarness.cjs');
 const {waitForFile}=require('./waitForFile.cjs');
+const {createSmokeWorkspace,cleanupSmokeWorkspace}=require('./smokeWorkspace.cjs');
 const appRoot=path.resolve(__dirname,'..');
-let application;
+let application, workspace;
 after(async()=>{
  const child=application?.process();
  if(child) { try{await Promise.race([application.close(),new Promise(r=>setTimeout(r,2500))]);}catch{} if(child.exitCode===null)spawnSync('taskkill',['/PID',String(child.pid),'/T','/F'],{stdio:'ignore'}); }
+ if(workspace) await cleanupSmokeWorkspace(workspace);
 });
 test('table editing, source clipboard, undo, reload, conflict and close save', {timeout:90000}, async()=>{
- const fixture=await fs.mkdtemp(path.join(appRoot,'work','lifecycle-')),userData=path.join(fixture,'profile');
+ workspace=await createSmokeWorkspace('lifecycle'); const fixture=workspace.fixture,userData=workspace.userData;
+ await fs.mkdir(fixture,{recursive:true});await fs.mkdir(userData,{recursive:true});
  const note=path.join(fixture,'table.md'),other=path.join(fixture,'other.md');
  const original='# Title\n\n| Left | Right |\n| :--- | ---: |\n| **bold** | value |\n\n~~~md\n# literal\n- [ ] literal\n~~~\n\n`<br />` and \\~~literal~~\n';
  await fs.writeFile(note,original);await fs.writeFile(other,'# Other\n\nsecond\n');
