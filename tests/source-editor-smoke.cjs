@@ -93,7 +93,7 @@ test('Markdown editing keeps continuous source text like Obsidian', { timeout: 9
     const sourceLine = page.locator('.markdown-source-editor .cm-line').filter({ hasText: item.text });
     await sourceLine.click(); await page.keyboard.press('End'); await page.keyboard.press('Enter');
     assert.ok((await editor.innerText()).includes(item.continuationPreview), `first Enter continues the format for ${item.text}`);
-    await page.keyboard.press('Enter'); await page.waitForTimeout(1800);
+    await page.keyboard.press('Enter'); await waitForFile(notePath, value => value.includes(item.exited));
     const afterSecondEnter = await fs.readFile(notePath, 'utf8');
     assert.ok(afterSecondEnter.includes(item.exited), `second Enter exits the empty formatted line for ${item.text}: ${JSON.stringify(afterSecondEnter.slice(-180))}`);
   }
@@ -103,7 +103,7 @@ test('Markdown editing keeps continuous source text like Obsidian', { timeout: 9
   const orderedSecond = page.locator('.markdown-source-editor .cm-line').filter({ hasText: '有序列表第二项' });
   assert.equal((await orderedSecond.locator('.cm-md-list-marker').innerText()).trim(), '2.', 'continued ordered item renders its incremented number after editing');
   await page.locator('.markdown-source-editor .cm-md-task-checkbox').first().click();
-  await page.waitForTimeout(1800);
+  await waitForFile(notePath, value => /- \[x\] 待办事项/.test(value));
   assert.match(await fs.readFile(notePath, 'utf8'), /- \[x\] 待办事项/);
   assert.equal(await page.locator('.markdown-source-editor .cm-line').count() >= 7, true);
   const table = page.locator('.cm-md-table');
@@ -125,7 +125,7 @@ test('Markdown editing keeps continuous source text like Obsidian', { timeout: 9
   await page.keyboard.press('Control+End');
   await page.keyboard.press('Enter');
   await page.keyboard.insertText('源码编辑不会拆成段落');
-  await page.waitForTimeout(1800);
+  await waitForFile(notePath, value => value.includes('源码编辑不会拆成段落'));
   await page.locator('.markdown-source-editor .cm-md-heading').first().waitFor();
   assert.match(await fs.readFile(notePath, 'utf8'), /源码编辑不会拆成段落/);
 
@@ -184,7 +184,7 @@ test('Markdown editing keeps continuous source text like Obsidian', { timeout: 9
     probe.remove(); return result;
   });
   assert.notEqual(blockStyle.background, 'rgba(0, 0, 0, 0)'); assert.equal(blockStyle.border, blockStyle.expectedBorder, 'one CSS pixel border follows the current display pixel grid');
-  await page.waitForTimeout(1400);
+  await waitForFile(notePath, value => value.endsWith(codeSource));
   const codeSaved = await fs.readFile(notePath, 'utf8');
   assert.ok(codeSaved.endsWith(codeSource), 'decorations do not rewrite Markdown');
   await block.scrollIntoViewIfNeeded();
@@ -215,7 +215,7 @@ test('Markdown editing keeps continuous source text like Obsidian', { timeout: 9
   await page.keyboard.press('Enter');
   assert.equal(await editor.locator('.cm-line').last().locator('.cm-tab').count(), 0, 'second Enter leaves no invisible Tab');
   await page.keyboard.insertText('Back at column zero');
-  await page.waitForTimeout(1800);
+  await waitForFile(notePath, value => value.endsWith('\tTab double Enter regression\n\nBack at column zero'));
   const exitedIndent = await fs.readFile(notePath, 'utf8');
   assert.ok(exitedIndent.endsWith('\tTab double Enter regression\n\nBack at column zero'), 'double Enter removes the actual whitespace, not just its Live Preview guide');
   await page.getByRole('button', { name: '切换到预览' }).click();
