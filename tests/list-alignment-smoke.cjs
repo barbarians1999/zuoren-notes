@@ -49,7 +49,15 @@ test('ordered and bullet list text, wrapping and continuations align without cha
       const first = token => geometry(token, selector).then(rects => rects[0].x);
       for (const [left, right] of [['ORDERED ', 'BULLET '], ['ORDERED ', 'NUMBERED '], ['BULLET ', 'CONTINUED '], ['CHILD_ORDERED ', 'CHILD_BULLET '], ['CHILD_ORDERED ', 'ORDERED_CONTINUED '], ['CHILD_BULLET ', 'BULLET_CONTINUED '], ['QUOTE_ORDERED ', 'QUOTE_BULLET ']]) {
         const positions = [await first(left), await first(right)];
-        assert.ok(Math.abs(positions[0] - positions[1]) < 1.5, `${left}/${right} share one text edge: ${positions}`);
+        if (Math.abs(positions[0] - positions[1]) >= 1.5) {
+          const detail = await page.evaluate(() => {
+            const editor = document.querySelector('.cm-editor'), content = document.querySelector('.cm-content');
+            const canvas = document.createElement('canvas').getContext('2d'); canvas.font = getComputedStyle(content).font;
+            return { font: getComputedStyle(content).font, spaceWidth: getComputedStyle(editor).getPropertyValue('--md-list-space-width'),
+              measured: canvas.measureText(' ').width, canvasFont: canvas.font, fontStatus: document.fonts.status, ratio: devicePixelRatio };
+          });
+          assert.fail(`${left}/${right} share one text edge: ${positions}; ${JSON.stringify(detail)}`);
+        }
       }
       for (const token of ['ORDERED ', 'BULLET ', 'CHILD_ORDERED ', 'CHILD_BULLET ']) {
         const rects = await geometry(token, selector);
@@ -61,6 +69,14 @@ test('ordered and bullet list text, wrapping and continuations align without cha
       await page.getByRole('button', { name: '设置', exact: true }).click();
       await page.getByRole('combobox', { name: 'Markdown 正文字体' }).selectOption(font); await page.keyboard.press('Escape');
       await page.evaluate(() => document.fonts.ready);
+      await page.waitForFunction(() => {
+        const editor = document.querySelector('.cm-editor'), content = document.querySelector('.cm-content');
+        if (!editor || !content) return false;
+        const style = getComputedStyle(content), canvas = document.createElement('canvas').getContext('2d');
+        canvas.font = style.font;
+        const expected = canvas.measureText(' ').width + (parseFloat(style.letterSpacing) || 0);
+        return Math.abs(parseFloat(getComputedStyle(editor).getPropertyValue('--md-list-space-width')) - expected) < .01;
+      });
       await check('.cm-line');
       await screenshot(font + '-edit', '.cm-scroller');
       await page.getByRole('button', { name: '切换到预览', exact: true }).click();
