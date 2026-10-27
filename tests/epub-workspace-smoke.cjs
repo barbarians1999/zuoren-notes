@@ -106,7 +106,13 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
         } else visibleSince = 0;
         await page.waitForTimeout(50);
       }
-      assert.fail(message);
+      const detail = await page.locator('.epub-viewer').evaluate((viewer, cfi) => ({
+        cfi, bounds: viewer.getBoundingClientRect().toJSON(), reflowing: viewer.closest('.epub-pane')?.dataset.reflowing,
+        frames: [...viewer.querySelectorAll('iframe')].map(frame => ({ bounds: frame.getBoundingClientRect().toJSON(),
+          scrollX: frame.contentWindow?.scrollX, scrollY: frame.contentWindow?.scrollY,
+          text: frame.contentDocument?.body?.textContent?.slice(0, 120) }))
+      }), cfi);
+      assert.fail(message + ': ' + JSON.stringify(detail));
     };
     assert.equal(await paragraphSize(), '18px', 'legacy book percentage does not override the global size');
     const headingFonts = await page.frameLocator('.epub-viewer iframe').first().locator('body').evaluate(async body => {
