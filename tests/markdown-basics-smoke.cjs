@@ -67,12 +67,19 @@ test('basic Markdown live display, local activation, tasks and table navigation 
       assert.equal(await copied(), source);
     });
     await t.test('dragging from rendered inline code selects text instead of the whole source construct', async () => {
+      for (let attempt = 0; attempt < 5; attempt++) {
       await home();
       const code = content.locator('.cm-md-inline-code-content').filter({ hasText: 'x😀y' });
       await code.scrollIntoViewIfNeeded();
       const start = await code.evaluate(el => {
         const range = document.createRange(); range.setStart(el.firstChild, 0); range.setEnd(el.firstChild, 1);
         const box = range.getBoundingClientRect(); return { x: box.left + 1, y: box.top + box.height / 2 };
+      });
+      await page.evaluate(() => {
+        window.__inlineDragTrace = [];
+        window.__inlineDragObserve = event => window.__inlineDragTrace.push({ type: event.type, buttons: event.buttons,
+          x: event.clientX, selected: window.getSelection()?.toString(), active: !!document.querySelector('.cm-md-inline-code') });
+        for (const type of ['mousemove', 'mouseup']) window.addEventListener(type, window.__inlineDragObserve);
       });
       await page.mouse.move(start.x, start.y); await page.mouse.down();
       const end = await content.locator('.cm-md-inline-code').filter({ hasText: 'x😀y' }).evaluate(el => {
@@ -90,8 +97,13 @@ test('basic Markdown live display, local activation, tasks and table navigation 
         el.dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }));
         return data.getData('text/markdown');
       });
-      assert.equal(selected, 'x😀y');
+      const trace = await page.evaluate(() => {
+        for (const type of ['mousemove', 'mouseup']) window.removeEventListener(type, window.__inlineDragObserve);
+        return window.__inlineDragTrace;
+      });
+      assert.equal(selected, 'x😀y', JSON.stringify({ start, end, trace }));
       assert.equal(await copied(), source);
+      }
     });
     await t.test('task bodies retain checkboxes and prefix source remains reachable', async () => {
       const task = content.locator('.cm-line').filter({ hasText: 'Task body' });
