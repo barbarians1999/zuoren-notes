@@ -74,10 +74,17 @@ test('PDF zoom, annotations and EPUB navigation survive module migration and clo
  assert.equal(await page.locator('[data-pdf-page="2"] .annotation.note').count(),0,'failed write must not display an annotation');
  await page.getByRole('button',{name:'保存批注',exact:true}).click();
  await page.getByPlaceholder('写下批注').waitFor({state:'hidden'});
+ if (await page.getByRole('button',{name:'关闭提示',exact:true}).count()) await page.getByRole('button',{name:'关闭提示',exact:true}).click();
  await page.getByRole('button',{name:'框选',exact:true}).click();
- const region=await page.locator('[data-pdf-page="2"] .canvas-holder').boundingBox();
- const regionY=Math.max(350,region.y+160);
- await page.mouse.move(region.x+150,regionY);await page.mouse.down();await page.mouse.move(region.x+240,regionY+50);await page.mouse.up();
+ const holder=page.locator('[data-pdf-page="2"] .canvas-holder'); await holder.scrollIntoViewIfNeeded();
+ const region=await holder.evaluate(element=>{
+   const page=element.getBoundingClientRect(), scroll=element.closest('.pdf-canvas-wrap').getBoundingClientRect();
+   const left=Math.max(page.left,scroll.left,0)+12, top=Math.max(page.top,scroll.top,0)+12;
+   const right=Math.min(page.right,scroll.right,innerWidth)-12, bottom=Math.min(page.bottom,scroll.bottom,innerHeight)-12;
+   return {left,top,right,bottom};
+ });
+ assert.ok(region.right-region.left>90 && region.bottom-region.top>50, 'visible PDF page has room for the crop');
+ await page.mouse.move(region.left+10,region.top+10);await page.mouse.down();await page.mouse.move(region.left+90,region.top+50,{steps:5});await page.mouse.up();
  await page.getByRole('button',{name:'保存图片摘录',exact:true}).click();
  await page.waitForFunction(()=>document.querySelector('.cm-content')?.textContent?.includes('回到原文'));
  await editor.click();await page.keyboard.press('Control+z');
