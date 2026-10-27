@@ -38,6 +38,96 @@ test('Enter continues lists and immediately exits an empty item, including the s
   assert.equal(quote.state.doc.toString(), '> > quoted\n');
 });
 
+test('Backspace on an empty list item exits the top level cleanly and outdents nested task markers', async () => {
+  const { exitEmptyListItem } = await import('../src/editor/markdownCommands.ts');
+  for (const [doc, expected] of [
+    ['- parent\n- ', '- parent\n'], ['  - ', ''], ['>   - ', '> '],
+    ['- parent\n    - ', '- parent\n- '], ['12. parent\n    3. ', '12. parent\n3. '],
+    ['- parent\n \t- child\n \t  - ', '- parent\n \t- child\n \t- '],
+    ['  - parent\n      - ', '  - parent\n  - '],
+    ['- parent\n  - [x] \t', '- parent\n- [x] \t'], ['1. parent\n    2) [ ] ', '1. parent\n2) [ ] '], ['> - ', '> ']
+  ]) {
+    const v = await view(doc, { anchor: doc.length });
+    assert.equal(exitEmptyListItem(v), true, doc);
+    assert.equal(v.state.doc.toString(), expected, doc);
+  }
+  const ordinary = await view('- text', { anchor: 2 });
+  assert.equal(exitEmptyListItem(ordinary), false);
+});
+
+test('table Tab walks header/body cells, consumes the first Shift-Tab, and appends a row once', async () => {
+  const { tableNextCell, tablePreviousCell } = await import('../src/editor/markdownTableNavigation.ts');
+  const doc = '| A | B |\n| --- | --- |\n| x | y |';
+  const v = await view(doc, { anchor: doc.indexOf('A') });
+  assert.equal(tablePreviousCell(v), true); assert.equal(v.state.selection.main.head, doc.indexOf('A'));
+  for (const text of ['B', 'x', 'y']) { assert.equal(tableNextCell(v), true); assert.equal(v.state.selection.main.head, v.state.doc.toString().indexOf(text)); }
+  assert.equal(tableNextCell(v), true);
+  assert.equal(v.state.doc.toString(), doc + '\n|  |  |');
+  assert.equal(v.state.selection.main.head, v.state.doc.toString().indexOf('|  |  |') + 2);
+  const { history, undo } = await import('@codemirror/commands');
+  const { EditorState } = await import('@codemirror/state');
+  const { ensureSyntaxTree } = await import('@codemirror/language');
+  const { projectTable } = await import('../src/editor/markdownProjection.ts');
+  const { markdownSyntax } = await import('../src/editor/markdownLanguage.ts');
+  const parsed = await view(doc), baseTree = ensureSyntaxTree(parsed.state, doc.length, 500), tableNode = (() => { let found; baseTree.iterate({ enter(ref) { if (ref.name === 'Table') found = ref.node; } }); return found; })();
+  const lastTable = projectTable(parsed.state, tableNode, baseTree), lastRow = (() => { let found; for (let child = tableNode.firstChild; child; child = child.nextSibling) if (child.name === 'TableRow') found = child; return found; })();
+  for (const boundary of [lastTable.cells.at(-1).to, lastRow.to, parsed.state.doc.lineAt(lastRow.to).to]) {
+    const atEnd = await view(doc, { anchor: boundary });
+    atEnd.state = EditorState.create({ doc, selection: { anchor: boundary }, extensions: [markdownSyntax(), history()] });
+    assert.equal(tableNextCell(atEnd), true, 'last cell/row/line end belongs to the final table row');
+    assert.equal(atEnd.state.doc.toString(), doc + '\n|  |  |');
+    assert.equal(undo(atEnd), true);
+    assert.equal(atEnd.state.doc.toString(), doc, 'boundary row append undoes once');
+  }
+  const nextLine = await view(doc + '\n', { anchor: doc.length + 1 });
+  assert.equal(tableNextCell(nextLine), false, 'the empty line after a table is outside it');
+  const empty = '| A |\n| --- |', q = await view(empty, { anchor: empty.indexOf('A') });
+  q.state = EditorState.create({ doc: empty, selection: { anchor: empty.indexOf('A') }, extensions: [(await import('../src/editor/markdownLanguage.ts')).markdownSyntax(), history()] });
+  assert.equal(tableNextCell(q), true);
+  assert.equal(q.state.doc.toString(), empty + '\n|  |');
+  assert.equal(undo(q), true);
+  assert.equal(q.state.doc.toString(), empty, 'row creation is one undo event');
+  const ordered = '12. | A |\n    | --- |', orderedView = await view(ordered, { anchor: ordered.indexOf('A') });
+  assert.equal(tableNextCell(orderedView), true);
+  assert.equal(orderedView.state.doc.toString(), ordered + '\n    |  |', 'continuation indent matches the full ordered marker width');
+  const quote = '> | A |\n> | --- |\n> | x |', quoted = await view(quote, { anchor: quote.indexOf('x') });
+  assert.equal(tableNextCell(quoted), true);
+  assert.equal(quoted.state.doc.toString(), quote + '\n> |  |');
+  const separator = '| A | B |\n| --- | --- |\n| x | y |', middle = separator.indexOf('---'), onSeparator = await view(separator, { anchor: middle });
+  assert.equal(tableNextCell(onSeparator), true); assert.equal(onSeparator.state.selection.main.head, separator.indexOf('x'));
+  const backward = await view(separator, { anchor: middle });
+  assert.equal(tablePreviousCell(backward), true); assert.equal(backward.state.selection.main.head, separator.indexOf('B'));
+  const composing = await view(doc, { anchor: doc.indexOf('A') }); composing.composing = true;
+  assert.equal(tableNextCell(composing), false, 'IME composition remains native');
+  const readonly = await view(doc, { anchor: doc.indexOf('A') });
+  readonly.state = EditorState.create({ doc, selection: { anchor: doc.indexOf('A') }, extensions: [(await import('../src/editor/markdownLanguage.ts')).markdownSyntax(), EditorState.readOnly.of(true)] });
+  assert.equal(tableNextCell(readonly), false, 'read-only state is never changed');
+  const nested = '- item\n\n  | a | b |\n  | --- | --- |\n  | x | y |', nestedView = await view(nested, { anchor: nested.indexOf('y') });
+  assert.equal(tableNextCell(nestedView), true);
+  assert.equal(nestedView.state.doc.toString(), nested + '\n  |  |  |');
+  let tree = ensureSyntaxTree(nestedView.state, nestedView.state.doc.length, 500), listOwned = false;
+  tree.iterate({ enter(ref) { if (ref.name === 'Table') for (let parent = ref.node.parent; parent; parent = parent.parent) if (parent.name === 'ListItem') listOwned = true; } });
+  assert.equal(listOwned, true, 'appended row remains in its list item');
+  const tabQuote = '>\t| a | b |\n>\t| --- | --- |\n>\t| x | y |', tabView = await view(tabQuote, { anchor: tabQuote.indexOf('y') });
+  assert.equal(tableNextCell(tabView), true);
+  assert.equal(tabView.state.doc.toString(), tabQuote + '\n>\t|  |  |', 'literal tab quote continuation survives');
+  for (const [source, anchor, expected] of [
+    ['a | b\n--- | ---\nx | y', 'y', 'a | b\n--- | ---\nx | y\n|  |  |'],
+    ['a | b\n--- | ---\nx \\| y | z', 'z', 'a | b\n--- | ---\nx \\| y | z\n|  |  |'],
+    ['> a | b\n> --- | ---\n> x | y', 'y', '> a | b\n> --- | ---\n> x | y\n> |  |  |'],
+    ['- item\n\n  a | b\n  --- | ---\n  x | y', 'y', '- item\n\n  a | b\n  --- | ---\n  x | y\n  |  |  |']
+  ]) {
+    const sample = await view(source, { anchor: source.lastIndexOf(anchor) });
+    assert.equal(tableNextCell(sample), true, source);
+    assert.equal(sample.state.doc.toString(), expected);
+    tree = ensureSyntaxTree(sample.state, sample.state.doc.length, 500);
+    const tables = []; tree.iterate({ enter(ref) { if (ref.name === 'Table') tables.push(ref.node); } });
+    assert.equal(tables.length, 1, 'appended row stays in the original table');
+    const projection = projectTable(sample.state, tables[0], tree);
+    assert.deepEqual(projection.cells.slice(0, 4).map(cell => cell.text), source.includes('\\|') ? ['a', 'b', 'x | y', 'z'] : ['a', 'b', 'x', 'y']);
+  }
+});
+
 test('formatting plain brackets as a link never removes brackets as an unresolved reference', async () => {
   const { formatSourceSelection } = await import('../src/editor/markdownCommands.ts');
   const v = await view('[ordinary]', { anchor: 4 });

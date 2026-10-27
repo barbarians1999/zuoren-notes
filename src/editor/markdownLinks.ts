@@ -28,3 +28,22 @@ export function isResolvedMarkdownLink(state: EditorState, tree: MarkdownTree, n
   const explicit = label && state.sliceDoc(label.from + 1, label.to - 1);
   return references.has(labelKey(explicit || state.sliceDoc(first.to, close.from)));
 }
+
+// Return the destination associated with the same direct/reference syntax the
+// reading view resolves, including collapsed and shortcut reference labels.
+export function markdownLinkURL(state: EditorState, tree: MarkdownTree, node: MarkdownNode) {
+  const direct = node.getChild('URL');
+  if (direct) return state.sliceDoc(direct.from, direct.to);
+  if (!isResolvedMarkdownLink(state, tree, node)) return undefined;
+  const marks = node.getChildren('LinkMark'), first = marks[0], close = marks.find(mark => state.sliceDoc(mark.from, mark.to) === ']');
+  if (!first || !close) return undefined;
+  const explicit = node.getChild('LinkLabel'), explicitLabel = explicit && state.sliceDoc(explicit.from + 1, explicit.to - 1);
+  const label = labelKey(explicitLabel || state.sliceDoc(first.to, close.from));
+  let destination: string | undefined;
+  tree.iterate({ enter(ref) {
+    if (ref.name !== 'LinkReference') return;
+    const candidate = ref.node.getChild('LinkLabel'), url = ref.node.getChild('URL');
+    if (candidate && url && destination === undefined && labelKey(state.sliceDoc(candidate.from + 1, candidate.to - 1)) === label) destination = state.sliceDoc(url.from, url.to);
+  } });
+  return destination;
+}

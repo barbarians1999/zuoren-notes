@@ -36,6 +36,30 @@ test('temporary replacement, pinning, and same-file deduplication are per group'
   await ws.open(a, 'secondary', true); assert.equal(ws.currentDocument('primary'), ws.currentDocument('secondary')); assert.equal(ws.documents.size, 2);
 });
 
+test('temporary image failures retain a visible original tab and retry target', async () => {
+  const { ws, api } = fixture(), tab = await ws.open(a), doc = tab.document;
+  let release, started; const entered = new Promise(resolve => started = resolve);
+  api.saveAttachment = async () => { started(); await new Promise(resolve => release = resolve); throw Error('attachment failed'); };
+  doc.enqueueImagePaste({ name: 'image.png', size: 1, read: async () => new Uint8Array([1]), selection: { from: 0, to: 0 } });
+  await entered; await ws.open(b); release();
+  assert.equal(await doc.drainImagePastes(), false);
+  assert.ok(ws.groups.primary.tabs.includes(tab)); assert.equal(tab.preview, false);
+  assert.match(doc.pendingImagePastes[0].error, /attachment failed/);
+  assert.equal(doc.views.size, 1);
+});
+
+test('canceled running image writes cannot be released by temporary tab replacement', async () => {
+  const { ws, api } = fixture(), tab = await ws.open(a), doc = tab.document;
+  let release, started; const entered = new Promise(resolve => started = resolve);
+  api.saveAttachment = async () => { started(); await new Promise(resolve => release = resolve); return 'assets/canceled.png'; };
+  const id = doc.enqueueImagePaste({ name: 'image.png', size: 1, read: async () => new Uint8Array([1]), selection: { from: 0, to: 0 } });
+  await entered; assert.equal(doc.cancelImagePaste(id), true); await ws.open(b);
+  assert.equal(doc.disposed, false); assert.equal(ws.documents.get(documentKey(a)), doc);
+  let completed = false; const saving = ws.saveAll().then(value => { completed = true; return value; });
+  await new Promise(setImmediate); assert.equal(completed, false);
+  release(); assert.equal(await saving, true);
+});
+
 test('slow preparation belongs to each note group and a selection in the same group cancels it', async () => {
   const { ws } = fixture(); let release;
   const gate = new Promise(resolve => release = resolve);
@@ -291,4 +315,166 @@ test('restored file grants include qualified old sources and accept legacy refer
   assert.deepEqual(sessionFilePaths(legacy), [a]);
   const invalid = structuredClone(session); invalid.noteDocuments[0].retainedRecoveries[0].sourcePath = 'relative.md';
   assert.deepEqual(sessionFilePaths(invalid), []);
+});
+
+test('image queue maps a background cursor past later typing and inserts without a mounted view', async () => {
+  const { ws, api } = fixture(), tab = await ws.open(a, 'primary', true), doc = tab.document;
+  const saved = [];
+  api.saveAttachment = async input => { saved.push(input); return 'assets/picture one).png'; };
+  const anchor = doc.captureImagePaste({ from: 0, to: 0 });
+  doc.enqueueImagePaste({ name: 'picture.png', size: 1, read: async () => new Uint8Array([1]), anchor });
+  const view = mount(tab); edit(tab, view, 0, 0, 'new ');
+  assert.equal(await doc.drainImagePastes(), true);
+  assert.equal(doc.text, 'new ![图片](assets/picture%20one).png)- [ ] task\n');
+  assert.equal(saved[0].sourcePath, a); assert.equal(saved[0].purpose, 'note-image');
+});
+
+test('image queue preserves paste order, pauses after failure, and retry does not duplicate the reference', async () => {
+  const { ws, api } = fixture(), tab = await ws.open(a, 'primary', true), doc = tab.document;
+  let fail = true, sequence = 0;
+  api.saveAttachment = async () => `assets/${++sequence}.png`;
+  const write = api.saveNote;
+  api.saveNote = async input => { if (fail) { fail = false; throw Error('offline'); } return write(input); };
+  const image = { size: 1, read: async () => new Uint8Array([1]) };
+  const one = doc.enqueueImagePaste({ name: 'one.png', ...image, selection: { from: 0, to: 0 } });
+  const two = doc.enqueueImagePaste({ name: 'two.png', ...image, selection: { from: 0, to: 0 } });
+  assert.equal(await doc.drainImagePastes(), false);
+  assert.equal(doc.pendingImagePastes[0].id, one); assert.equal(doc.pendingImagePastes[0].phase, 'body');
+  assert.equal(sequence, 1); assert.equal(doc.text.split('![图片]').length - 1, 1);
+  doc.runHistory(undo, mount(tab));
+  assert.equal(doc.text.split('![图片]').length - 1, 0);
+  assert.equal(doc.retryImagePaste(one), true);
+  assert.equal(await doc.drainImagePastes(), true);
+  assert.equal(sequence, 2); assert.equal(doc.text.split('![图片]').length - 1, 1);
+  assert.ok(doc.text.includes('![图片](assets/2.png)'));
+  assert.equal(doc.pendingImagePastes.length, 0);
+  assert.notEqual(one, two);
+});
+
+test('selection edits permanently change image replacement to mapped end insertion', async () => {
+  const { ws, api } = fixture(), tab = await ws.open(a, 'primary', true), view = mount(tab), doc = tab.document;
+  api.saveAttachment = async () => 'assets/selected.png';
+  const from = doc.text.indexOf('task'), to = from + 4;
+  const id = doc.enqueueImagePaste({ name: 'selected.png', size: 1, read: async () => new Uint8Array([1]), selection: { from, to } });
+  edit(tab, view, from, to, 'mine');
+  assert.equal(await doc.drainImagePastes(), true);
+  assert.ok(doc.text.includes('mine![图片](assets/selected.png)'));
+  assert.equal(doc.pendingImagePastes.length, 0); assert.ok(id);
+});
+
+test('last-view close drains image work before saving and commit blocks new queue items', async () => {
+  const { ws, api, disk } = fixture(), tab = await ws.open(a, 'primary', true), doc = tab.document;
+  api.saveAttachment = async () => 'assets/close.png';
+  doc.enqueueImagePaste({ name: 'close.png', size: 1, read: async () => new Uint8Array([1]), selection: { from: 0, to: 0 } });
+  assert.equal(await ws.close('primary', tab), true);
+  assert.ok(disk.get(documentKey(a)).content.includes('assets/close.png'));
+  const next = await ws.open(a, 'primary', true), release = ws.beginCommit();
+  assert.throws(() => next.document.enqueueImagePaste({ name: 'x.png', size: 1, read: async () => new Uint8Array([1]), selection: { from: 0, to: 0 } }), /不能接收图片/);
+  release();
+});
+
+test('relocation never rebinds an in-flight image and retains its saved attachment for resolution', async () => {
+  const { ws, api } = fixture(), tab = await ws.open(a, 'primary', true), doc = tab.document;
+  let release, entered, count = 0;
+  const started = new Promise(resolve => entered = resolve);
+  api.saveAttachment = async () => { count++; entered(); await new Promise(resolve => release = resolve); return 'assets/orphan.png'; };
+  const id = doc.enqueueImagePaste({ name: 'orphan.png', size: 1, read: async () => new Uint8Array([1]), selection: { from: 0, to: 0 } });
+  await started; doc.relocate({ ...doc.note, path: b }); release();
+  assert.equal(await doc.drainImagePastes(), false);
+  assert.equal(doc.pendingImagePastes[0].phase, 'identity'); assert.equal(doc.pendingImagePastes[0].savedPath, 'assets/orphan.png');
+  assert.equal(doc.pendingImagePastes[0].retryAllowed, false); assert.equal(doc.retryImagePaste(id), false); assert.equal(count, 1);
+  assert.equal(doc.cancelImagePaste(id), true); assert.equal(doc.pendingImagePastes.length, 0);
+});
+
+test('reserved image reads are visible to close and run in paste order', async () => {
+  const { ws, api } = fixture(), tab = await ws.open(a, 'primary', true), doc = tab.document;
+  let finishRead, entered;
+  const readStarted = new Promise(resolve => entered = resolve), order = [];
+  api.saveAttachment = async ({ data }) => { order.push(data[0]); return `assets/${data[0]}.png`; };
+  const first = doc.enqueueImagePaste({ name: '1.png', size: 1, read: async () => { entered(); return new Promise(resolve => finishRead = () => resolve(new Uint8Array([1]))); }, selection: { from: 0, to: 0 } });
+  const second = doc.enqueueImagePaste({ name: '2.png', size: 1, read: async () => { order.push('read-2'); return new Uint8Array([2]); }, selection: { from: 0, to: 0 } });
+  await readStarted; const closing = ws.close('primary', tab);
+  assert.equal(ws.current(), tab); finishRead(); assert.equal(await closing, true);
+  assert.deepEqual(order, [1, 'read-2', 2]); assert.notEqual(first, second);
+});
+
+test('conflict before insertion pauses at reference and retry reuses the saved attachment', async () => {
+  const { ws, api } = fixture(), tab = await ws.open(a, 'primary', true), doc = tab.document;
+  let releaseAttachment, attachmentCount = 0, entered;
+  const attachmentStarted = new Promise(resolve => entered = resolve);
+  api.saveAttachment = async () => { attachmentCount++; entered(); await new Promise(resolve => releaseAttachment = resolve); return 'assets/conflict.png'; };
+  const id = doc.enqueueImagePaste({ name: 'conflict.png', size: 1, read: async () => new Uint8Array([1]), selection: { from: 0, to: 0 } });
+  await attachmentStarted; doc.setConflict({ conflict: true }); releaseAttachment();
+  assert.equal(await doc.drainImagePastes(), false); assert.equal(doc.pendingImagePastes[0].phase, 'reference');
+  doc.setConflict(null); assert.equal(doc.retryImagePaste(id), true);
+  assert.equal(await doc.drainImagePastes(), true); assert.equal(attachmentCount, 1);
+});
+
+test('conflict during image reading pauses before attachment write and retry continues the same reservation', async () => {
+  const { ws, api } = fixture(), tab = await ws.open(a, 'primary', true), doc = tab.document;
+  let finishRead, entered, writes = 0;
+  const readStarted = new Promise(resolve => entered = resolve);
+  api.saveAttachment = async () => { writes++; return 'assets/read-conflict.png'; };
+  const id = doc.enqueueImagePaste({ name: 'read-conflict.png', size: 1,
+    read: async () => { entered(); return new Promise(resolve => finishRead = () => resolve(new Uint8Array([1]))); }, selection: { from: 0, to: 0 } });
+  await readStarted; doc.setConflict({ conflict: true }); finishRead();
+  assert.equal(await doc.drainImagePastes(), false); assert.equal(writes, 0);
+  assert.equal(doc.pendingImagePastes[0].phase, 'attachment'); assert.equal(doc.pendingImagePastes[0].retryAllowed, true);
+  doc.setConflict(null); assert.equal(doc.retryImagePaste(id), true);
+  assert.equal(await doc.drainImagePastes(), true); assert.equal(writes, 1);
+});
+
+test('identity reset during image reading prevents attachment writes and cannot retry', async () => {
+  const { ws, api } = fixture(), tab = await ws.open(a, 'primary', true), doc = tab.document;
+  let finishRead, entered, writes = 0;
+  const readStarted = new Promise(resolve => entered = resolve);
+  api.saveAttachment = async () => { writes++; return 'assets/stale.png'; };
+  const id = doc.enqueueImagePaste({ name: 'stale.png', size: 1,
+    read: async () => { entered(); return new Promise(resolve => finishRead = () => resolve(new Uint8Array([1]))); }, selection: { from: 0, to: 0 } });
+  await readStarted; doc.replaceText('replacement'); finishRead();
+  assert.equal(await doc.drainImagePastes(), false); assert.equal(writes, 0);
+  assert.equal(doc.pendingImagePastes[0].phase, 'identity'); assert.equal(doc.pendingImagePastes[0].retryAllowed, false);
+  assert.equal(doc.retryImagePaste(id), false);
+});
+
+test('canceled attachment side effects still drain and report the retained file path', async () => {
+  const { ws, api, messages } = fixture(), tab = await ws.open(a, 'primary', true), doc = tab.document;
+  let release, entered;
+  const attachmentStarted = new Promise(resolve => entered = resolve);
+  api.saveAttachment = async () => { entered(); await new Promise(resolve => release = resolve); return 'assets/canceled.png'; };
+  const id = doc.enqueueImagePaste({ name: 'canceled.png', size: 1, read: async () => new Uint8Array([1]), selection: { from: 0, to: 0 } });
+  await attachmentStarted; assert.equal(doc.cancelImagePaste(id), true);
+  let drained = false; const drain = doc.drainImagePastes(1000).then(value => { drained = true; return value; });
+  await new Promise(setImmediate); assert.equal(drained, false, 'cancel does not report drain while the attachment write is active');
+  release(); assert.equal(await drain, true); assert.equal(doc.text, doc.note.content);
+  assert.match(messages.at(-1), /assets\/canceled\.png/);
+});
+
+test('closing waits for canceled body save side effects to finish', async () => {
+  const { ws, api, disk } = fixture(), tab = await ws.open(a, 'primary', true), doc = tab.document;
+  let release, entered;
+  const bodySaveStarted = new Promise(resolve => entered = resolve), save = api.saveNote;
+  api.saveAttachment = async () => 'assets/body-gate.png';
+  api.saveNote = async input => { entered(); await new Promise(resolve => release = resolve); return save(input); };
+  const id = doc.enqueueImagePaste({ name: 'body-gate.png', size: 1, read: async () => new Uint8Array([1]), selection: { from: 0, to: 0 } });
+  await bodySaveStarted; assert.ok(doc.text.includes('assets/body-gate.png')); assert.equal(doc.cancelImagePaste(id), true);
+  let closed = false; const closing = ws.close('primary', tab).then(value => { closed = value; return value; });
+  await new Promise(setImmediate); assert.equal(closed, false, 'close waits while the canceled body save is in flight');
+  release(); assert.equal(await closing, true); assert.ok(disk.get(documentKey(a)).content.includes('assets/body-gate.png'));
+});
+
+test('a view opened during last-view draining can still accept subsequent image pastes', async () => {
+  const { ws, api } = fixture(), tab = await ws.open(a, 'primary', true), doc = tab.document;
+  let release, entered;
+  const started = new Promise(resolve => entered = resolve);
+  api.saveAttachment = async () => 'assets/late-view.png';
+  doc.enqueueImagePaste({ name: 'first.png', size: 1, selection: { from: 0, to: 0 },
+    read: async () => { entered(); return new Promise(resolve => release = resolve); } });
+  await started;
+  const closing = ws.close('primary', tab);
+  const second = await ws.open(a, 'secondary', true);
+  release(new Uint8Array([1])); assert.equal(await closing, true);
+  assert.equal(second.document, doc); assert.equal(doc.disposed, false);
+  doc.enqueueImagePaste({ name: 'second.png', size: 1, read: async () => new Uint8Array([2]), selection: { from: 0, to: 0 } });
+  assert.equal(await doc.drainImagePastes(), true);
 });

@@ -1,4 +1,4 @@
-import type { EditorState } from '@codemirror/state';
+import { countColumn, type EditorState } from '@codemirror/state';
 import { syntaxTree } from '@codemirror/language';
 import { decodeHTMLStrict } from 'entities';
 import { isResolvedMarkdownLink } from './markdownLinks';
@@ -10,7 +10,8 @@ export type TextProjection = { text: string; segments: Segment[]; anchor: number
 export type BlockContext = { quoteDepth: number; indentColumns: number; markers: { column: number; label: string; source: number }[] };
 export type BlockProjection = { from: number; to: number; content: TextProjection; context: BlockContext };
 export type CodeProjection = BlockProjection & { language: string };
-export type TableProjection = BlockProjection & { cells: TextProjection[]; references: string };
+export type TableCellProjection = TextProjection & { from: number; to: number; row: number; column: number };
+export type TableProjection = BlockProjection & { cells: TableCellProjection[]; references: string };
 
 class ProjectionBuilder {
   text = '';
@@ -62,14 +63,66 @@ export function projectInlineText(state: EditorState, node: MarkdownNode, tree: 
     if (item.name === 'Entity') { result.append(decodeMarkdownEntity(state.sliceDoc(item.from, item.to)), item.from, item.to); return; }
     if (item.name === 'InlineCode') {
       const marks = item.getChildren('CodeMark');
-      let from = marks[0]?.to ?? item.from, to = marks.at(-1)?.from ?? item.to;
-      const body = state.sliceDoc(from, to).replace(/\n/g, ' ');
-      if (body.startsWith(' ') && body.endsWith(' ') && /\S/.test(body)) { from++; to--; }
-      const raw = state.sliceDoc(from, to);
-      for (const part of raw.matchAll(/[^\n]+|\n/g)) {
-        const start = from + part.index!;
-        result.append(part[0] === '\n' ? ' ' : part[0], start, start + part[0].length);
+      const from = marks[0]?.to ?? item.from, to = marks.at(-1)?.from ?? item.to;
+      const raw = state.sliceDoc(from, to), pieces: { value: string; from: number; to: number }[] = [];
+      const list = (() => { for (let parent = item.parent; parent; parent = parent.parent) if (parent.name === 'ListItem') return parent; return null; })();
+      let listIndent = 0;
+      if (list) {
+        const marker = list.getChild('ListMark');
+        if (marker) {
+          const line = state.doc.lineAt(marker.from); let end = marker.to;
+          while (end < line.to && /[\t ]/.test(state.sliceDoc(end, end + 1))) end++;
+          listIndent = countColumn(state.sliceDoc(line.from, end).replace(/>[\t ]?/g, ''), state.tabSize);
+        }
       }
+      const quoteMarks = item.getChildren('QuoteMark').sort((left, right) => left.from - right.from);
+      const append = (value: string, sourceFrom: number, sourceTo: number) => {
+        if (!value) return;
+        const previous = pieces.at(-1);
+        if (previous && previous.to === sourceFrom && previous.to - previous.from === previous.value.length && sourceTo - sourceFrom === value.length) {
+          previous.value += value; previous.to = sourceTo;
+        } else pieces.push({ value, from: sourceFrom, to: sourceTo });
+      };
+      const skipListIndent = (offset: number) => {
+        let columns = 0;
+        while (offset < raw.length && /[\t ]/.test(raw[offset]) && columns < listIndent) {
+          const width = raw[offset] === '\t' ? state.tabSize - columns % state.tabSize : 1;
+          offset++;
+          if (columns + width > listIndent) append(' '.repeat(columns + width - listIndent), from + offset - 1, from + offset);
+          columns += width;
+        }
+        return offset;
+      };
+      let offset = 0;
+      let copiedTo = 0;
+      while (offset < raw.length) {
+        if (raw[offset] === '\n') {
+          append(raw.slice(copiedTo, offset), from + copiedTo, from + offset);
+          append(' ', from + offset, from + offset + 1); offset++; copiedTo = offset;
+          const line = state.doc.lineAt(from + offset), lineFrom = line.from;
+          for (const quote of quoteMarks) {
+            if (quote.from < lineFrom || quote.from >= line.to || quote.from < from + offset) continue;
+            const localFrom = quote.from - from, localTo = quote.to - from;
+            if (localFrom > offset && !/^[\t ]*$/.test(raw.slice(offset, localFrom))) break;
+            offset = localTo;
+            if (/[\t ]/.test(raw[offset] || '')) offset++;
+            copiedTo = offset;
+          }
+          if (list) { offset = skipListIndent(offset); copiedTo = offset; }
+        } else {
+          offset++;
+        }
+      }
+      append(raw.slice(copiedTo), from + copiedTo, to);
+      if (pieces[0]?.value.startsWith(' ') && pieces.at(-1)?.value.endsWith(' ') && pieces.some(piece => /\S/.test(piece.value))) {
+        const first = pieces[0]; first.value = first.value.slice(1);
+        if (first.to - first.from === first.value.length + 1) first.from++;
+        if (!pieces[0].value) pieces.shift();
+        const last = pieces.at(-1)!; last.value = last.value.slice(0, -1);
+        if (last.to - last.from === last.value.length + 1) last.to--;
+        if (!last.value) pieces.pop();
+      }
+      for (const piece of pieces) result.append(piece.value, piece.from, piece.to);
       return;
     }
     if ((item.name === 'Link' || item.name === 'Image') && isResolvedMarkdownLink(state, tree, item)) {
@@ -152,7 +205,7 @@ function referenceSource(state: EditorState, tree: MarkdownTree) {
 }
 
 export function projectTable(state: EditorState, node: MarkdownNode, tree: MarkdownTree = syntaxTree(state)): TableProjection {
-  const result = new ProjectionBuilder(), cells: TextProjection[] = [];
+  const result = new ProjectionBuilder(), cells: TableCellProjection[] = [];
   const rowCells = (row: MarkdownNode) => {
     const delimiters = row.getChildren('TableDelimiter'), parsed = row.getChildren('TableCell');
     const intervals: { from: number; to: number }[] = [];
@@ -164,22 +217,31 @@ export function projectTable(state: EditorState, node: MarkdownNode, tree: Markd
     }
     if (!delimiters.length || state.sliceDoc(delimiters.at(-1)!.to, row.to).trim()) intervals.push({ from, to: row.to });
     let parsedIndex = 0;
-    return intervals.map(interval => {
+    return intervals.map((interval, column) => {
       while (parsedIndex < parsed.length && parsed[parsedIndex].from < interval.from) parsedIndex++;
       const candidate = parsed[parsedIndex], cell = candidate && candidate.to <= interval.to ? candidate : undefined;
       if (cell) parsedIndex++;
-      return cell ? projectInlineText(state, cell, tree) : { text: '', segments: [], anchor: interval.to };
+      const text = cell ? projectInlineText(state, cell, tree) : { text: '', segments: [], anchor: interval.to };
+      const raw = state.sliceDoc(interval.from, interval.to), leading = raw.match(/^[\t ]*/)?.[0].length ?? 0;
+      const trailing = raw.match(/[\t ]*$/)?.[0].length ?? 0;
+      const from = Math.min(interval.to, interval.from + leading), to = Math.max(from, interval.to - trailing);
+      return { ...text, from, to, row: -1, column };
     });
   };
   const header = node.getChild('TableHeader');
   const width = header ? rowCells(header).length : 0;
+  let rowIndex = 0;
   for (let row = node.firstChild; row; row = row.nextSibling) {
     if (!['TableHeader', 'TableDelimiter', 'TableRow'].includes(row.name)) continue;
     if (result.text) result.append('\n', state.doc.lineAt(row.from).from - 1, state.doc.lineAt(row.from).from);
     result.copy(state, row.from, row.to);
     if (row.name === 'TableDelimiter') continue;
     const projected = rowCells(row);
-    for (let index = 0; index < width; index++) cells.push(projected[index] ?? { text: '', segments: [], anchor: row.to });
+    for (let index = 0; index < width; index++) {
+      const cell = projected[index] ?? { text: '', segments: [], anchor: row.to, from: row.to, to: row.to, row: -1, column: index };
+      cells.push({ ...cell, row: rowIndex, column: index });
+    }
+    rowIndex++;
   }
   return { ...blockRange(state, node), content: result.finish(node.from), context: blockContext(state, node), cells, references: referenceSource(state, tree) };
 }

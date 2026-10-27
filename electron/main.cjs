@@ -2,12 +2,13 @@ const { app, BrowserWindow, dialog, ipcMain, protocol, Menu, shell, screen } = r
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { FileStore, digest } = require('./storage.cjs');
+const { FileStore, digest, inside } = require('./storage.cjs');
 const { recoveryIdPattern, validateSession, sessionFilePaths } = require('./session.cjs');
 const { SettingsStore } = require('./settings.cjs');
 const { readSettingsFile } = require('./settings-file.cjs');
 const { saveNoteAndCleanup } = require('./note-service.cjs');
 const { installWindowFocus } = require('./window-focus.cjs');
+const { noteImageBytes, openImage } = require('./note-image.cjs');
 
 if (process.env.ZHAOYE_TEST_USER_DATA) app.setPath('userData', process.env.ZHAOYE_TEST_USER_DATA);
 else app.setPath('userData', path.join(app.getPath('appData'), '照页'));
@@ -296,13 +297,18 @@ function installHandlers() {
   handle('save-attachment', async (_event, input) => {
     const source = await store.checked(input.sourcePath);
     if (!/\.(pdf|md|markdown)$/i.test(source)) throw new Error('附件必须关联 PDF 或 Markdown');
+    if (input.purpose !== undefined && input.purpose !== 'note-image') throw new Error('附件用途无效');
+    if (input.purpose === 'note-image' && !/\.(md|markdown)$/i.test(source)) throw new Error('粘贴图片必须关联 Markdown 笔记');
+    const image = input.purpose === 'note-image' ? noteImageBytes(input) : null;
     const attach = path.join(path.dirname(source), 'attachments');
     await fs.mkdir(attach, { recursive: true });
-    const extension = String(input.extension || 'png').replace(/[^a-z0-9]/gi, '').toLowerCase() || 'png';
+    if (image && !inside(path.dirname(source), await fs.realpath(attach))) throw new Error('附件文件夹指向笔记目录以外，已停止写入');
+    const extension = image?.extension || String(input.extension || 'png').replace(/[^a-z0-9]/gi, '').toLowerCase() || 'png';
     const target = path.join(attach, `${Date.now()}-${crypto.randomUUID()}.${extension}`);
-    await fs.writeFile(target, Buffer.from(input.data));
+    await fs.writeFile(target, image?.bytes || Buffer.from(input.data), { flag: 'wx' });
     return path.relative(path.dirname(source), target).replace(/\\/g, '/');
   });
+  handle('open-image', (_event, file) => openImage(store, shell, file));
   handle('asset-url', async (_event, file) => {
     const checked = await store.checked(file, { asset: true });
     return `reader-asset://local/${encodeURIComponent(checked)}`;

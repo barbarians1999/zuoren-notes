@@ -94,11 +94,13 @@ export class NoteWorkspace {
     const existing = target.tabs.find(tab => tab.document === doc);
     if (existing) { if (pinned) existing.preview = false; this.completeOpen(group, existing, interaction); return existing; }
     const empty = this.current(group); let replace = empty && !empty.document ? empty : !pinned ? target.tabs.find(tab => tab.preview) : undefined;
+    if (replace?.document?.hasImageWork) { replace.preview = false; replace = undefined; }
     if (!replace && this.groups.primary.tabs.length + this.groups.secondary.tabs.length >= 100) { this.releaseUnused(doc); this.message('最多可打开 100 个标签，请先关闭一些标签。'); return null; }
     if (replace?.document && replace.document.views.size === 1 && !(await replace.document.save())) {
       this.blockingDocument = replace.document; this.message('原临时笔记未保存成功，已保留。'); this.notify(); return null;
     }
     if (request !== this.requests[group]) return null;
+    if (replace?.document?.hasImageWork) { replace.preview = false; replace = undefined; }
     if (replace?.document && !replace.preview) replace = undefined;
     if (!replace && this.groups.primary.tabs.length + this.groups.secondary.tabs.length >= 100) { this.message('最多可打开 100 个标签，请先关闭一些标签。'); return null; }
     const tab = this.newTab(doc, !pinned);
@@ -112,7 +114,7 @@ export class NoteWorkspace {
   }
   invalidate(group: NoteGroupId) { this.requests[group]++; }
   private releaseUnused(doc: NoteDocument) {
-    if (doc.views.size || !sameNoteContent(doc.text, doc.note.content) || doc.conflict || doc.recoveryConflict) return;
+    if (doc.views.size || doc.hasImageWork || !sameNoteContent(doc.text, doc.note.content) || doc.conflict || doc.recoveryConflict) return;
     doc.dispose(); this.documents.delete(documentKey(doc.note.path));
   }
   private normalizeGroups() {
@@ -132,10 +134,16 @@ export class NoteWorkspace {
     if (this.committing) return false;
     this.invalidate(group);
     const doc = tab.document;
-    if (doc && doc.views.size === 1 && !(await doc.save())) {
-      this.pendingClose = { group, tab }; this.blockingDocument = doc; this.notify(); return false;
+    if (doc && doc.views.size === 1) {
+      doc.stopImagePastes();
+      if (!(await doc.drainImagePastes()) || !(await doc.save())) {
+        doc.resumeImagePastes(); this.pendingClose = { group, tab }; this.blockingDocument = doc; this.notify(); return false;
+      }
     }
-    this.remove(group, tab); this.normalizeGroups(); this.notify(); return true;
+    this.remove(group, tab);
+    // Another view may have opened while the last-view save was waiting.
+    if (doc && !doc.disposed && !this.committing) doc.resumeImagePastes();
+    this.normalizeGroups(); this.notify(); return true;
   }
   async finishPendingClose(discard = false) {
     const item = this.pendingClose; if (!item) return;
@@ -181,8 +189,15 @@ export class NoteWorkspace {
     this.activate(group, value.tabs[(index + direction + value.tabs.length) % value.tabs.length].id);
   }
   async saveAll() {
-    while (true) {
+    const held = new Set<NoteDocument>(), temporaryStop = !this.committing;
+    const hold = (doc: NoteDocument) => { if (!held.has(doc)) { held.add(doc); doc.stopImagePastes(); } };
+    for (const doc of this.documents.values()) hold(doc);
+    try {
+      while (true) {
       await Promise.allSettled([...this.loads.values()]);
+      for (const doc of this.documents.values()) { hold(doc); if (!(await doc.drainImagePastes())) {
+        this.blockingDocument = doc; this.notify(); return false;
+      } }
       const revisions = new Map([...this.documents.values()].map(doc => [doc, doc.revision]));
       for (const doc of revisions.keys()) {
         if (!(await doc.save())) { this.blockingDocument = doc;
@@ -191,14 +206,18 @@ export class NoteWorkspace {
         }
       }
       if (!this.loads.size && revisions.size === this.documents.size && [...this.documents.values()].every(doc => revisions.get(doc) === doc.revision)) return true;
+      }
+    } finally {
+      if (temporaryStop) for (const doc of held) doc.resumeImagePastes();
     }
   }
   beginCommit() {
     if (this.committing) return null;
     this.committing = true;
+    for (const doc of this.documents.values()) doc.stopImagePastes();
     this.invalidate('primary'); this.invalidate('secondary'); this.notify();
     let released = false;
-    return () => { if (!released) { released = true; this.committing = false; this.notify(); } };
+    return () => { if (!released) { released = true; this.committing = false; for (const doc of this.documents.values()) doc.resumeImagePastes(); this.notify(); } };
   }
   tick() {
     if (!this.ready) return;
@@ -225,17 +244,22 @@ export class NoteWorkspace {
     this.normalizeGroups(); this.notify();
   }
   async saveAs(doc: NoteDocument) {
-    const recovering = doc.recoveryConflict;
-    const submitted = recovering ? recovering.recovery.content : doc.text;
-    const submittedRevision = doc.revision;
-    const oldKey = documentKey(doc.note.path);
-    const note = await this.api().saveAs({ sourcePath: doc.note.path, suggestedName: doc.note.path.split(/[\\/]/).pop(), content: submitted });
-    if (!note) return false;
-    const existing = this.documents.get(documentKey(note.path));
-    if (existing && existing !== doc) { this.message('副本已保存，但该路径已在另一标签打开；原笔记和草稿仍保留。'); return false; }
-    try { await doc.completeSaveAs(note, submitted, submittedRevision, !!recovering); }
-    catch (error) { this.message(`副本已保存，但恢复稿迁移未完成；原笔记会话和恢复稿仍保留：${error instanceof Error ? error.message : String(error)}`); return false; }
-    this.documents.delete(oldKey); this.documents.set(documentKey(note.path), doc); this.notify(); return true;
+    const temporaryStop = !this.committing;
+    doc.stopImagePastes();
+    try {
+      if (!(await doc.drainImagePastes())) { this.blockingDocument = doc; this.notify(); return false; }
+      const recovering = doc.recoveryConflict;
+      const submitted = recovering ? recovering.recovery.content : doc.text;
+      const submittedRevision = doc.revision;
+      const oldKey = documentKey(doc.note.path);
+      const note = await this.api().saveAs({ sourcePath: doc.note.path, suggestedName: doc.note.path.split(/[\\/]/).pop(), content: submitted });
+      if (!note) return false;
+      const existing = this.documents.get(documentKey(note.path));
+      if (existing && existing !== doc) { this.message('副本已保存，但该路径已在另一标签打开；原笔记和草稿仍保留。'); return false; }
+      try { await doc.completeSaveAs(note, submitted, submittedRevision, !!recovering); }
+      catch (error) { this.message(`副本已保存，但恢复稿迁移未完成；原笔记会话和恢复稿仍保留：${error instanceof Error ? error.message : String(error)}`); return false; }
+      this.documents.delete(oldKey); this.documents.set(documentKey(note.path), doc); this.notify(); return true;
+    } finally { if (temporaryStop) doc.resumeImagePastes(); }
   }
   sessionFields(): Pick<ReaderSessionV3, 'noteGroups' | 'activeNoteGroup' | 'noteDocuments' | 'noteTabs' | 'primaryNote' | 'secondaryNote'> {
     const group = (id: NoteGroupId): NoteSessionGroup => ({ activeId: this.groups[id].activeId, tabs: this.groups[id].tabs.map(tab => ({

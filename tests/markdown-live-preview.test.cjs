@@ -70,7 +70,7 @@ test('ordered list items can contain multi-line blockquotes in live preview', as
  assert.deepEqual(inactive.result.filter(x => x.source === '>' && !x.spec.class).map(x => x.source), ['>', '>'], 'quote syntax is hidden while the item is inactive');
 
  const active = await plan(text, { anchor: text.indexOf('first quoted line') });
- assert.equal(active.result.some(x => x.spec.widget?.constructor.name === 'MarkerWidget'), false, 'the Markdown marker reappears while editing its list item');
+ assert.equal(active.result.some(x => x.spec.widget?.constructor.name === 'MarkerWidget'), true, 'the list marker stays in live preview while editing item text');
  assert.equal(active.result.filter(x => x.spec.class === 'cm-md-quote').length, 2, 'live preview styling remains while the caret is inside the item');
  assert.equal(active.result.some(x => x.source === '>' && !x.spec.class), true, 'the quote marker is editable while the item is active');
 });
@@ -112,6 +112,122 @@ test('moving the caret within the same active line reuses decorations; crossing 
  assert.equal(state.field(livePreview), before);
  state = state.update({ selection: { anchor: state.doc.length - 2 } }).state;
  assert.notEqual(state.field(livePreview), before);
+});
+
+test('inline constructs activate only under the caret, selections expose touched syntax, and task bodies keep checkboxes', async () => {
+ const text = '**one** and *two*\n\n- [ ] task';
+ const first = await plan(text, { anchor: text.indexOf('one') + 1 });
+ assert.equal(first.result.some(x => x.spec.class === 'cm-md-strong'), true);
+ assert.equal(first.result.some(x => x.from === text.indexOf('**') && x.to === text.indexOf('**') + 2 && !x.spec.class), false);
+ const second = await plan(text, { anchor: text.indexOf('two') + 1 });
+ assert.equal(second.result.some(x => x.from === text.indexOf('**') && x.to === text.indexOf('**') + 2 && !x.spec.class), true);
+ assert.equal(second.result.some(x => x.from === text.indexOf('*two*') && x.to === text.indexOf('*two*') + 1 && !x.spec.class), false);
+ const selected = await plan(text, { anchor: text.indexOf('one'), head: text.indexOf('one') + 3 });
+ assert.equal(selected.result.some(x => x.from === text.indexOf('**') && x.to === text.indexOf('**') + 2 && !x.spec.class), false);
+ const body = await plan(text, { anchor: text.indexOf('task') + 1 });
+ assert.equal(body.result.some(x => x.spec.widget?.constructor.name === 'TaskWidget'), true);
+ assert.equal(body.result.some(x => x.source === '- '), false);
+});
+
+test('task prefix activation changes independently from the item body', async () => {
+ const { EditorState } = await import('@codemirror/state');
+ const { markdownSyntax } = await import('../src/editor/markdownLanguage.ts');
+ const { livePreview } = await import('../src/editor/markdownLivePreview.ts');
+ const text = '- [ ] task';
+ let state = EditorState.create({ doc: text, selection: { anchor: text.indexOf('task') + 1 }, extensions: [markdownSyntax(), livePreview] });
+ const body = state.field(livePreview);
+ assert.ok(hasWidget(body, 'TaskWidget'));
+ state = state.update({ selection: { anchor: text.indexOf('task') } }).state;
+ assert.ok(hasWidget(state.field(livePreview), 'TaskWidget'), 'the first body position is outside the half-open prefix range');
+ state = state.update({ selection: { anchor: 5 } }).state;
+ assert.notEqual(state.field(livePreview), body);
+ assert.equal(hasWidget(state.field(livePreview), 'TaskWidget'), false);
+ function hasWidget(decorations, name) {
+  let found = false; decorations.between(0, text.length, (_from, _to, value) => { if (value.spec.widget?.constructor.name === name) found = true; });
+  return found;
+ }
+});
+
+test('hard break marker previews as a line break, and is source when selected', async () => {
+ const text = 'a\\\nb';
+ const inactive = await plan(text);
+ assert.equal(inactive.result.some(x => x.from === text.indexOf('\\') && x.to === text.indexOf('\\') + 1), true);
+ const active = await plan(text, { anchor: text.indexOf('\\') });
+ assert.equal(active.result.some(x => x.from === text.indexOf('\\') && x.to === text.indexOf('\\') + 1), false);
+ assert.equal(active.state.doc.toString(), text);
+});
+
+test('same-line cursor moves refresh quote, escape, entity, autolink and hard-break disclosure', async () => {
+ const { EditorState } = await import('@codemirror/state');
+ const { markdownSyntax } = await import('../src/editor/markdownLanguage.ts');
+ const { livePreview } = await import('../src/editor/markdownLivePreview.ts');
+ for (const [text, outside, inside] of [
+  ['> quoted', 5, 0], ['text \\*literal', 0, 5], ['text &amp;', 0, 6],
+  ['text <https://example.test>', 0, 8], ['a\\\nb', 0, 1],
+ ]) {
+  let state = EditorState.create({ doc: text, selection: { anchor: outside }, extensions: [markdownSyntax(), livePreview] });
+  const before = state.field(livePreview);
+  state = state.update({ selection: { anchor: inside } }).state;
+  assert.notEqual(state.field(livePreview), before, text);
+  const hidden = [];
+  state.field(livePreview).between(0, text.length, (from, to, value) => { if (value.spec.class === undefined) hidden.push({ from, to }); });
+  assert.equal(hidden.some(range => range.from <= inside && range.to > inside), false, 'the active syntax is accessible');
+ }
+});
+
+test('images become widgets only with the configured source context and activate at alt text', async () => {
+ const { EditorState } = await import('@codemirror/state');
+ const { markdownSyntax } = await import('../src/editor/markdownLanguage.ts');
+ const { buildMarkdownLivePreview, markdownLivePreviewConfig } = await import('../src/editor/markdownLivePreview.ts');
+ const config = { notePath: 'C:/notes/page.md', openImage: async () => {} };
+ for (const [text, url] of [
+  ['intro\n\n![alt](<space file.png> "title")', 'space file.png'],
+  ['intro\n\n![alt](a\\(b\\).png)', 'a(b).png'],
+  ['intro\n\n![alt][]\n\n[alt]: pixel.png', 'pixel.png'],
+  ['intro\n\n![alt]\n\n[alt]: pixel.png', 'pixel.png'],
+ ]) {
+  const state = EditorState.create({ doc: text, selection: { anchor: 0 }, extensions: [markdownSyntax(), markdownLivePreviewConfig.of(config)] });
+  const ranges = []; buildMarkdownLivePreview(state).between(0, text.length, (from, to, value) => ranges.push({ from, to, value }));
+  const image = ranges.find(range => range.value.spec.widget?.constructor.name === 'ImageWidget');
+  assert.ok(image); assert.equal(image.value.spec.widget.source, url);
+  assert.equal(image.value.spec.widget.alt, 'alt'); assert.equal(image.value.spec.widget.position, text.indexOf('![') + 2);
+  const active = EditorState.create({ doc: text, selection: { anchor: text.indexOf('alt') + 1 }, extensions: [markdownSyntax(), markdownLivePreviewConfig.of(config)] });
+  const activeRanges = []; buildMarkdownLivePreview(active).between(0, text.length, (from, to, value) => activeRanges.push(value));
+  assert.equal(activeRanges.some(value => value.spec.widget?.constructor.name === 'ImageWidget'), false);
+  const noConfig = await plan(text);
+  assert.equal(noConfig.result.some(value => value.spec.widget?.constructor.name === 'ImageWidget'), false);
+ }
+ for (const text of ['intro\n\n![alt]', 'intro\n\n![alt](javascript:alert(1))']) {
+  const state = EditorState.create({ doc: text, selection: { anchor: 0 }, extensions: [markdownSyntax(), markdownLivePreviewConfig.of(config)] });
+  const ranges = []; buildMarkdownLivePreview(state).between(0, text.length, (from, to, value) => ranges.push(value));
+  assert.equal(ranges.some(value => value.spec.widget?.constructor.name === 'ImageWidget'), false, text);
+ }
+});
+
+test('inactive inline code uses reading projection and maps clicks back to its source', async () => {
+ const { EditorState } = await import('@codemirror/state');
+ const { markdownSyntax } = await import('../src/editor/markdownLanguage.ts');
+ const { buildMarkdownLivePreview } = await import('../src/editor/markdownLivePreview.ts');
+ const { projectedSourcePosition } = await import('../src/editor/markdownProjection.ts');
+ for (const [source, expected] of [['`  x  `', ' x '], ['`a\nb`', 'a b']]) {
+  const text = 'intro\n\n' + source, state = EditorState.create({ doc: text, selection: { anchor: 0 }, extensions: [markdownSyntax()] });
+  let widget;
+  buildMarkdownLivePreview(state).between(0, text.length, (_from, _to, value) => { if (value.spec.widget?.constructor.name === 'InlineCodeWidget') widget = value.spec.widget; });
+  assert.ok(widget); assert.equal(widget.projection.text, expected);
+  const character = expected.includes('x') ? 'x' : 'b';
+  assert.equal(projectedSourcePosition(widget.projection, expected.indexOf(character)), text.indexOf(character));
+  assert.equal(widget.ignoreEvent(), true, 'the widget owns primary mousedown so CodeMirror cannot place a competing edge cursor');
+ }
+});
+
+test('multi-line inline code owns nested container syntax without overlapping decorations', async () => {
+ for (const source of ['> `a\n> b`', '- `a\n  b`']) {
+  const text = 'intro\n\n' + source, { result } = await plan(text);
+  const widget = result.find(item => item.spec.widget?.constructor.name === 'InlineCodeWidget');
+  assert.ok(widget, source);
+  assert.equal(widget.spec.widget.projection.text, 'a b', source);
+  assert.equal(result.some(item => item.from > widget.from && item.from < widget.to && item.spec.widget), false, source);
+ }
 });
 
 test('unresolved bracket text stays literal while defined reference links and autolinks preview', async () => {

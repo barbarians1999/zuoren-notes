@@ -1,4 +1,5 @@
 import { EditorView } from '@codemirror/view';
+import { Transaction, type EditorState, type TransactionSpec } from '@codemirror/state';
 import { insertNewlineContinueMarkupCommand, markdownLanguage } from '@codemirror/lang-markdown';
 import { ensureSyntaxTree, syntaxTree } from '@codemirror/language';
 import { isResolvedMarkdownLink } from './markdownLinks';
@@ -9,6 +10,42 @@ export type MarkdownBlockFormat = 'heading' | 'quote' | 'bullet' | 'ordered' | '
 
 // Empty list items exit one level immediately instead of becoming a loose list.
 export const continueMarkdown = insertNewlineContinueMarkupCommand({ nonTightLists: false });
+
+export function exitEmptyListItem(view: EditorView) {
+  const { state } = view, selection = state.selection.main;
+  if (state.selection.ranges.length !== 1 || !selection.empty) return false;
+  const line = state.doc.lineAt(selection.head), text = line.text;
+  const prefix = /^(?:[\t ]*>[\t ]?)*/.exec(text)![0], remainder = text.slice(prefix.length);
+  const match = /^([\t ]*)([-+*]|\d+([.)]))([\t ]+)(?:\[([ xX])\]([\t ]+))?([\t ]*)$/.exec(remainder);
+  if (!match) return false;
+  const bodyStart = line.from + prefix.length + match[1].length + match[2].length + match[4].length + (match[5] === undefined ? 0 : match[5].length + 2 + match[6].length);
+  if (selection.head !== bodyStart && selection.head !== line.to || /\S/.test(state.sliceDoc(bodyStart, line.to))) return false;
+  const tree = ensureSyntaxTree(state, line.to, 100);
+  if (!tree) return false;
+  let item: ReturnType<typeof tree.resolveInner> | null = tree.resolveInner(Math.max(line.from, bodyStart - 1), -1);
+  for (; item && item.name !== 'ListItem'; item = item.parent) {}
+  if (!item) return false;
+  const mark = item.getChild('ListMark');
+  if (!mark || mark.from < line.from || mark.to > line.to) return false;
+  let parentItem: ReturnType<typeof tree.resolveInner> | null = item.parent;
+  for (; parentItem && parentItem.name !== 'ListItem'; parentItem = parentItem.parent) {}
+  const parentMark = parentItem?.getChild('ListMark');
+  const quotePrefix = /^(?:[\t ]{0,3}>[\t ]?)+/.exec(text)?.[0] ?? '';
+  const columns = (value: string) => Array.from(value).reduce((column, character) => character === '\t' ? column + state.tabSize - column % state.tabSize : column + 1, 0);
+  const targetColumn = parentMark ? columns(state.sliceDoc(state.doc.lineAt(parentMark.from).from, parentMark.from)) : columns(quotePrefix);
+  const sourcePrefix = state.sliceDoc(line.from, mark.from);
+  let prefixEnd = 0, prefixColumn = 0;
+  for (const character of sourcePrefix) {
+    const next = character === '\t' ? prefixColumn + state.tabSize - prefixColumn % state.tabSize : prefixColumn + 1;
+    if (next > targetColumn) break;
+    prefixEnd += character.length; prefixColumn = next;
+  }
+  const replacementPrefix = sourcePrefix.slice(0, prefixEnd) + ' '.repeat(Math.max(0, targetColumn - prefixColumn));
+  const from = line.from;
+  const insert = parentItem ? replacementPrefix + state.sliceDoc(mark.from, line.to) : quotePrefix;
+  view.dispatch({ changes: { from, to: line.to, insert }, selection: { anchor: from + insert.length }, userEvent: 'input' });
+  return true;
+}
 
 export function exitEmptyIndent(view: EditorView) {
   const { state } = view, selection = state.selection.main;
@@ -60,18 +97,32 @@ export function exitEmptyBlockquote(view: EditorView) {
 }
 
 export function formatSourceSelection(view: EditorView, format: MarkdownInlineFormat) {
-  const { state } = view;
+  const spec = formatSelection(view.state, format);
+  if (spec) view.dispatch({ ...spec, annotations: Transaction.userEvent.of('input.format') });
+  view.focus(); return true;
+}
+
+export function crossesCodeBlock(tree: ReturnType<typeof syntaxTree>, from: number, to: number) {
+  let crosses = false;
+  tree.iterate({ from, to, enter(node) {
+    if (['FencedCode', 'CodeBlock'].includes(node.name) && node.from < to && node.to > from && (from < node.from || to > node.to)) crosses = true;
+  } });
+  return crosses;
+}
+
+export function formatSelection(state: EditorState, format: MarkdownInlineFormat): TransactionSpec | null {
   const range = state.selection.main;
   const { from, to } = range;
-  const selected = view.state.sliceDoc(from, to);
+  const selected = state.sliceDoc(from, to);
   const wrapper = { bold: '**', italic: '*', code: '`', highlight: '==', strike: '~~', link: '' }[format];
   const nodeName = { bold: 'StrongEmphasis', italic: 'Emphasis', code: 'InlineCode', highlight: 'Highlight', strike: 'Strikethrough', link: 'Link' }[format];
   // Ask the parser, not a delimiter search: literal stars in code/escaped text
   // and nested bold/italic must not be mistaken for the requested style.
   const tree = ensureSyntaxTree(state, to + (to < state.doc.length ? 1 : 0), 100) || syntaxTree(state);
+  if (from < to && crossesCodeBlock(tree, from, to)) return null;
   if (format !== 'code') {
     for (let node: ReturnType<typeof tree.resolveInner> | null = tree.resolveInner(from, 1); node; node = node.parent) {
-      if (['InlineCode', 'FencedCode', 'CodeBlock'].includes(node.name) && to <= node.to) { view.focus(); return true; }
+      if (['InlineCode', 'FencedCode', 'CodeBlock'].includes(node.name) && to <= node.to) return null;
     }
   }
   const matching: ReturnType<typeof tree.resolveInner>[] = [];
@@ -103,7 +154,7 @@ export function formatSourceSelection(view: EditorView, format: MarkdownInlineFo
   if (!remove && outside && exactRun && (range.empty || tree.topNode.name !== 'Document')) remove = [{ from: from - wrapper.length, to: from, insert: '' }, { from: to, to: to + wrapper.length, insert: '' }];
   if (remove) {
     const changes = state.changes(remove);
-    view.dispatch({ changes, selection: { anchor: changes.mapPos(range.anchor), head: changes.mapPos(range.head) }, userEvent: 'input.format' });
+    return { changes, selection: { anchor: changes.mapPos(range.anchor), head: changes.mapPos(range.head) } };
   } else {
     let before = wrapper || '[', after = wrapper || '](https://)';
     if (format === 'code') {
@@ -111,12 +162,11 @@ export function formatSourceSelection(view: EditorView, format: MarkdownInlineFo
       before = after = '`'.repeat(longest + 1);
       if (/^`|`$/.test(selected) || /^ .* $/.test(selected) && /\S/.test(selected)) { before += ' '; after = ' ' + after; }
     }
-    view.dispatch({ changes: { from, to, insert: before + selected + after }, selection: {
+    return { changes: { from, to, insert: before + selected + after }, selection: {
       anchor: (range.anchor === from ? from : to) + before.length,
       head: (range.head === to ? to : from) + before.length,
-    }, userEvent: 'input.format' });
+    } };
   }
-  view.focus(); return true;
 }
 
 export function formatSourceBlock(view: EditorView, format: MarkdownBlockFormat) {

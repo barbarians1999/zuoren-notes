@@ -1090,7 +1090,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .markdown-source-editor .cm-md-list-marker[data-source-columns] {
   font-family: system-ui, sans-serif;
 }
-.markdown-source-editor .cm-md-task-checkbox { width: 1em; height: 1em; margin: 0 .38em .08em 0; accent-color: var(--accent); vertical-align: middle; cursor: pointer; }
+.markdown-source-editor .cm-md-task-checkbox { width: 1em; height: 1em; margin: 0 max(0px, calc(1em - var(--md-list-space-width, .5ch))) .08em 0; accent-color: var(--accent); vertical-align: middle; cursor: pointer; }
 
 .markdown-preview {
   flex: 1;
@@ -1144,6 +1144,17 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 
 .markdown-preview li p { margin-top: 0; margin-bottom: 0; }
 .markdown-preview li :is(ol, ul) { margin: .3em 0; }
+.markdown-preview li:has(> input[data-task-position]),
+.markdown-preview li:has(> p > input[data-task-position]) { position: relative; list-style: none; }
+.markdown-preview li:has(> input[data-task-position]) > input[data-task-position],
+.markdown-preview li:has(> p > input[data-task-position]) > p > input[data-task-position] {
+  position: absolute;
+  top: .45em;
+  left: calc(0px - var(--md-list-gutter) + .5em);
+  width: 1em;
+  height: 1em;
+  margin: 0;
+}
 
 .markdown-preview blockquote {
   margin: 1.2em 0;
@@ -1368,6 +1379,10 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .note-caption { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 11px; }
 .note-toolbar button { min-height: 28px; height: 28px; padding: 4px 6px; }
 .note-body { flex: 1; min-height: 0; display: flex; overflow: hidden; }
+.note-image-paste-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 7px 14px; font-size: 12px; border-bottom: 1px solid var(--line); color: var(--text); }
+.note-image-paste-status > span { flex: 1 1 220px; overflow-wrap: anywhere; }
+.note-image-paste-status code { max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-image-paste-status button { flex: none; color: var(--accent); }
 .note-content { min-width: 0; }
 .markdown-workspace { background: var(--surface); }
 .markdown-workspace-head {
@@ -1666,3 +1681,6 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .app[data-motion="reduced"], .app[data-motion="reduced"] *, .app[data-motion="reduced"] *::before, .app[data-motion="reduced"] *::after {
   scroll-behavior: auto !important; animation: none !important; transition: none !important;
 }
+.cm-md-image { display: inline-block; max-width: min(100%, 42rem); max-height: 32rem; object-fit: contain; vertical-align: middle; cursor: pointer; }
+.cm-md-image-error { outline: 1px dashed var(--muted); }
+.cm-md-inline-code-content { border-radius: 3px; padding: .06em .28em; background: color-mix(in srgb, var(--accent) 9%, var(--surface)); color: var(--accent); white-space: pre-wrap; }

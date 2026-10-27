@@ -1,8 +1,17 @@
 import DOMPurify from 'dompurify';
 import { EditorView } from '@codemirror/view';
 import { isolateHistory } from '@codemirror/commands';
+import { markdownListPaste } from './markdownListPaste';
 
 const escape = (text: string) => text.replace(/([\\`*_[\]~])/g, '\\$1');
+export function clipboardSource({ markdown, text, html, vscode, rich, convertHtml }: {
+  markdown: string; text: string; html: string; vscode: boolean; rich: boolean; convertHtml: (html: string) => string;
+}) {
+  const useMarkdown = !!markdown;
+  const useHtml = !useMarkdown && !!html && !vscode && (rich || !text);
+  return { source: markdown || (useHtml ? convertHtml(html) : text), kind: useMarkdown || useHtml ? 'markdown' as const : 'plain' as const };
+}
+
 export function htmlToMarkdown(html: string): string {
   const root = document.createElement('template');
   root.innerHTML = DOMPurify.sanitize(html, { FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'form'] });
@@ -73,13 +82,20 @@ export const markdownClipboard = EditorView.domEventHandlers({
     const markdown = data.getData('text/markdown');
     const text = data.getData('text/plain');
     const html = data.getData('text/html');
-    if (!markdown && !html) return false; // CodeMirror preserves plain text itself.
     const wrapper = document.createElement('template');
     wrapper.innerHTML = DOMPurify.sanitize(html);
-    const rich = wrapper.content.querySelector('strong,b,em,i,del,s,mark,a,img,table,ul,ol,pre,code,blockquote,h1,h2,h3,h4,h5,h6,input') ||
+    const rich = !!wrapper.content.querySelector('strong,b,em,i,del,s,mark,a,img,table,ul,ol,pre,code,blockquote,h1,h2,h3,h4,h5,h6,input') ||
       Array.from(wrapper.content.querySelectorAll<HTMLElement>('[style]')).some(el => /bold|bolder|[6-9]00/.test(el.style.fontWeight) || /italic|oblique/.test(el.style.fontStyle));
-    const source = markdown || (html && !data.getData('vscode-editor-data') && (rich || !text) ? htmlToMarkdown(html) : text);
-    if (!source) return false;
+    const { source } = clipboardSource({ markdown, text, html, vscode: !!data.getData('vscode-editor-data'), rich, convertHtml: htmlToMarkdown });
+    if (!source) return false; // CodeMirror preserves plain text and empty clipboard data itself.
+    const listPaste = view.composing ? null : markdownListPaste(view.state, source);
+    if (listPaste) {
+      event.preventDefault();
+      view.dispatch({ changes: listPaste.changes, selection: { anchor: listPaste.cursor }, userEvent: 'input.paste',
+        scrollIntoView: true, annotations: isolateHistory.of('full') });
+      return true;
+    }
+    if (!markdown && !html) return false; // Non-list plain text stays on CodeMirror's native paste path.
     event.preventDefault();
     view.dispatch(view.state.replaceSelection(source), { userEvent: 'input.paste', scrollIntoView: true, annotations: isolateHistory.of('full') });
     return true;

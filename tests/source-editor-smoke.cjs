@@ -86,13 +86,21 @@ test('Markdown editing keeps continuous source text like Obsidian', { timeout: 9
   assert.notEqual(await spaceChild.evaluate(el => getComputedStyle(el).backgroundImage), 'none', 'the list guide is visibly drawn');
   assert.equal(await childLine.getAttribute('data-list-guide-active'), '', 'another item keeps its neutral guide');
   for (const item of [
-    { text: '无序回车测试', continuationPreview: '•无序回车测试\n- ', exited: '- 无序回车测试\n\n' },
-    { text: '有序回车测试', continuationPreview: '1.有序回车测试\n2. ', exited: '1. 有序回车测试\n\n' },
-    { text: '引用回车测试', continuationPreview: '引用回车测试\n> ', exited: '> 引用回车测试\n\n' },
+    { text: '无序回车测试', continued: '- 无序回车测试\n- ', marker: '•', exited: '- 无序回车测试\n\n' },
+    { text: '有序回车测试', continued: '1. 有序回车测试\n2. ', marker: '2.', exited: '1. 有序回车测试\n\n' },
+    { text: '引用回车测试', continued: '> 引用回车测试\n> ', quote: true, exited: '> 引用回车测试\n\n' },
   ]) {
     const sourceLine = page.locator('.markdown-source-editor .cm-line').filter({ hasText: item.text });
     await sourceLine.click(); await page.keyboard.press('End'); await page.keyboard.press('Enter');
-    assert.ok((await editor.innerText()).includes(item.continuationPreview), `first Enter continues the format for ${item.text}`);
+    // Prefixes now stay rendered outside their source range. Check the saved
+    // syntax and the next line's actual marker instead of obsolete DOM text.
+    await waitForFile(notePath, value => value.includes(item.continued));
+    const nextLine = await sourceLine.evaluate(element => ({
+      marker: element.nextElementSibling?.querySelector('.cm-md-list-marker')?.textContent,
+      quote: element.nextElementSibling?.classList.contains('cm-md-quote'),
+    }));
+    if (item.quote) assert.equal(nextLine.quote, true, 'the continued quote retains its visual guide');
+    else assert.equal(nextLine.marker, item.marker, `first Enter renders the continuation marker for ${item.text}`);
     await page.keyboard.press('Enter'); await waitForFile(notePath, value => value.includes(item.exited));
     const afterSecondEnter = await fs.readFile(notePath, 'utf8');
     assert.ok(afterSecondEnter.includes(item.exited), `second Enter exits the empty formatted line for ${item.text}: ${JSON.stringify(afterSecondEnter.slice(-180))}`);

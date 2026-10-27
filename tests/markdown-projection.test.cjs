@@ -79,6 +79,15 @@ test('empty table cells retain their column when header and body omit parsed tex
   }
 });
 
+test('table cell source targets trim padding and keep UTF-16 row and column identities', async () => {
+  const { projectTable } = await import('../src/editor/markdownProjection.ts');
+  const doc = '| A | 😀 |\n| --- | --- |\n|  | x |';
+  const { state, nodes } = await fixture(doc), table = projectTable(state, nodes('Table')[0]);
+  assert.deepEqual(table.cells.map(({ row, column }) => [row, column]), [[0,0],[0,1],[1,0],[1,1]]);
+  assert.equal(doc.slice(table.cells[1].from, table.cells[1].to), '😀');
+  assert.equal(doc.slice(table.cells[2].from, table.cells[2].to), '');
+});
+
 test('table reference link titles omit quote syntax on continuation lines', async () => {
   const { projectTable } = await import('../src/editor/markdownProjection.ts');
   const { parseMarkdown } = await import('../src/editor/markdownParser.ts');
@@ -97,6 +106,27 @@ test('inline text projection keeps unresolved punctuation and literal code conte
   const emoji = text.text.indexOf('😀');
   assert.equal(projectedSourcePosition(text, emoji), doc.indexOf('&#x1F600;'));
   assert.equal(projectedSourcePosition(text, emoji + 2), doc.indexOf('&#x1F600;') + 9);
+});
+
+test('inline code projection matches CommonMark padding and continuation-container rendering', async () => {
+  const { projectInlineText, projectedSourcePosition } = await import('../src/editor/markdownProjection.ts');
+  const { parseMarkdown } = await import('../src/editor/markdownParser.ts');
+  for (const [doc, expected] of [
+    ['> > `a\n> > b`', 'a b'],
+    ['  > `a\n  > b`', 'a b'],
+    ['- root\n  - `a\n    b`', 'a b'],
+    ['> - `a\n>   b`', 'a b'],
+    ['- `a\n\tb`', 'a   b'],
+    ['- `  a  `', ' a '],
+  ]) {
+    const { state, nodes } = await fixture(doc);
+    const projection = projectInlineText(state, nodes('InlineCode')[0]);
+    assert.equal(projection.text, expected, doc);
+    const html = parseMarkdown(doc), start = html.indexOf('<code>'), end = html.indexOf('</code>', start);
+    assert.equal(html.slice(start + '<code>'.length, end), expected, doc);
+    const anchor = expected.indexOf(doc.includes('x') ? 'x' : 'b');
+    if (anchor >= 0) assert.equal(projectedSourcePosition(projection, anchor), doc.indexOf(doc.includes('x') ? 'x' : 'b'), doc);
+  }
 });
 
 test('quote depth is explicit once per line and block replacements own their container prefixes', async () => {

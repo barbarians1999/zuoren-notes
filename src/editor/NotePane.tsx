@@ -30,6 +30,9 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
   const [currentIndex, setCurrentIndex] = useState(-1);
   const [replacing, setReplacing] = useState(false);
   const [sourceView, setSourceView] = useState<CodeMirrorView | null>(null);
+  const [imageMessage, setImageMessage] = useState('');
+  useEffect(() => setImageMessage(''), [note?.path]);
+  const pendingImage = sharedDocument?.pendingImagePastes[0];
   const liveNotePath = useRef(note?.path); liveNotePath.current = note?.path;
   useEffect(() => {
     if (!excerptRegister) return;
@@ -309,8 +312,15 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
         : <><button type="button" className="find-replace-action" disabled={!activeMatch || replacing} onClick={replaceCurrent}>替换</button><button type="button" className="find-replace-action" disabled={!matches.length || replacing} onClick={replaceAll}>全部替换</button></>)}
       <button type="button" aria-label="关闭查找" title="关闭（Esc）" onClick={closeFind}>×</button>
     </div>}
+    {(imageMessage || pendingImage?.error) && <div className="note-image-paste-status" role="status">
+      {imageMessage && <span>{imageMessage}</span>}
+      {pendingImage?.error && <span>{`${pendingImage.phase === 'body' ? '图片引用已插入，正文尚未保存' : pendingImage.savedPath ? '图片已保存，引用尚未插入' : '图片尚未插入'}：${pendingImage.error}`}</span>}
+      {pendingImage?.savedPath && <code title={pendingImage.notePath}>{pendingImage.savedPath}</code>}
+      {pendingImage?.error && <>{pendingImage.retryAllowed && <button onClick={() => sharedDocument?.retryImagePaste(pendingImage.id)}>重试</button>}<button onClick={() => sharedDocument?.cancelImagePaste(pendingImage.id)}>取消此项</button></>}
+      {imageMessage && <button aria-label="关闭编辑提示" onClick={() => setImageMessage('')}>×</button>}
+    </div>}
     <div className="note-body" ref={host}>
-      {!note ? <div className="empty-state"><FileText size={28}/><p>打开或新建 Markdown 笔记</p><small>编辑后自动保存</small></div> : <div className="note-content"><div className="note-editor-surface" style={{ display: mode === 'preview' ? 'none' : 'flex' }}><MarkdownSourceEditor notePath={note.path} onView={setSourceView} onSelectionChange={setSourceSelection} sharedDocument={sharedDocument!} tab={tab!}/></div>{mode === 'preview' && <MarkdownPreview notePath={note.path} text={text} headings={sourceView ? markdownOutline(sourceView) : []} onJump={stableJump} onToggleTask={toggleTask}/>}</div>}
+      {!note ? <div className="empty-state"><FileText size={28}/><p>打开或新建 Markdown 笔记</p><small>编辑后自动保存</small></div> : <div className="note-content"><div className="note-editor-surface" style={{ display: mode === 'preview' ? 'none' : 'flex' }}><MarkdownSourceEditor notePath={note.path} onView={setSourceView} onSelectionChange={setSourceSelection} onMessage={setImageMessage} sharedDocument={sharedDocument!} tab={tab!}/></div>{mode === 'preview' && <MarkdownPreview notePath={note.path} text={text} headings={sourceView ? markdownOutline(sourceView) : []} onJump={stableJump} onToggleTask={toggleTask}/>}</div>}
       <OutlinePanel open={outline} label="Markdown 大纲" emptyText="使用标题组织笔记后，目录会出现在这里。"
         returnFocus={() => document.querySelector(`[data-note-controls="${paneId}"] [data-outline-toggle]`) || host.current?.querySelector('[data-outline-toggle]') || null}
         items={headings.map((item, index) => ({ id: String(index), label: item.text, depth: item.level - 1, indicator: String(item.level) }))}

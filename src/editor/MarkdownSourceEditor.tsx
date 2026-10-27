@@ -1,14 +1,19 @@
 import { useEffect, useRef } from 'react';
-import { EditorState, Prec, type Extension } from '@codemirror/state';
+import { Compartment, EditorState, Prec, type Extension } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { indentWithTab, historyField } from '@codemirror/commands';
 import { basicSetup } from 'codemirror';
 import { defaultHighlightStyle, HighlightStyle, indentUnit, syntaxHighlighting } from '@codemirror/language';
 import { markdownSyntax } from './markdownLanguage';
-import { livePreview } from './markdownLivePreview';
+import { livePreview, markdownLivePreviewConfig } from './markdownLivePreview';
 import { markdownClipboard } from './markdownClipboard';
+import { markdownImagePaste } from './markdownImagePaste';
+import { markdownTypedFormat } from './markdownTypedFormat';
+import { reader } from '../readerContext';
+import { tableNextCell, tablePreviousCell } from './markdownTableNavigation';
+import { keyHabitsEnter, keyHabitsNonemptyListBackspace, keyHabitsShiftEnter, keyHabitsTab } from './markdownKeyHabits';
 import { markdownTextSelection } from './markdownSelection';
-import { continueMarkdown, exitEmptyBlockquote, exitEmptyIndent, formatSourceSelection } from './markdownCommands';
+import { continueMarkdown, exitEmptyBlockquote, exitEmptyIndent, exitEmptyListItem, formatSourceSelection } from './markdownCommands';
 import { undoNoteView, redoNoteView, type NoteDocument, type NoteViewState } from '../workspace/noteDocument';
 
 // Keep the existing editing setup, but store undo data only in the document.
@@ -23,10 +28,12 @@ const proseHighlighting = syntaxHighlighting(HighlightStyle.define(defaultHighli
   spec.textDecoration === 'underline' && spec.fontWeight === 'bold' ? { ...spec, textDecoration: 'none' } : spec
 )));
 
-export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, sharedDocument, tab }: { notePath: string; onView: (view: EditorView | null) => void; onSelectionChange: (selection: { from: number; to: number; left: number; top: number; width: number; height: number } | null) => void; sharedDocument: NoteDocument; tab: NoteViewState }) {
+export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, onMessage, sharedDocument, tab }: { notePath: string; onView: (view: EditorView | null) => void; onSelectionChange: (selection: { from: number; to: number; left: number; top: number; width: number; height: number } | null) => void; onMessage: (text: string) => void; sharedDocument: NoteDocument; tab: NoteViewState }) {
   const root = useRef<HTMLDivElement>(null), viewRef = useRef<EditorView | null>(null);
   const callback = useRef(onView); callback.current = onView;
   const selectionCallback = useRef(onSelectionChange); selectionCallback.current = onSelectionChange;
+  const messageCallback = useRef(onMessage); messageCallback.current = onMessage;
+  const previewConfig = useRef(new Compartment());
   const extensionsRef = useRef<Extension[]>([]);
   const shared = useRef({ document: sharedDocument, tab }); shared.current = { document: sharedDocument, tab };
   useEffect(() => {
@@ -40,8 +47,20 @@ export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, shar
       view.dom.style.setProperty('--md-list-space-width', `${width}px`);
     };
     const extensions: Extension[] = [
-        markdownClipboard, documentViewSetup, markdownSyntax(), proseHighlighting, livePreview, markdownTextSelection, indentUnit.of('\t'), EditorState.tabSize.of(4),
-        Prec.highest(keymap.of([{ key: 'Enter', run: exitEmptyIndent }, { key: 'Enter', run: exitEmptyBlockquote }, { key: 'Enter', run: continueMarkdown }, { key: 'Mod-z', run: undoNoteView }, { key: 'Mod-Shift-z', run: redoNoteView }, { key: 'Mod-y', run: redoNoteView }])),
+        Prec.highest(markdownTypedFormat(() => `${shared.current.document.documentId.current}:${shared.current.tab.id}`,
+          message => messageCallback.current(message))),
+        markdownImagePaste(() => shared.current.document, message => messageCallback.current(message)),
+        markdownClipboard, documentViewSetup, markdownSyntax(), proseHighlighting, livePreview,
+        previewConfig.current.of(markdownLivePreviewConfig.of({ notePath, openImage: path => reader().openImage(path), onError: error => messageCallback.current(error instanceof Error ? error.message : String(error)) })),
+        markdownTextSelection, indentUnit.of('\t'), EditorState.tabSize.of(4),
+        Prec.highest(keymap.of([{ key: 'Tab', run: tableNextCell }, { key: 'Tab', run: keyHabitsTab(1, message => messageCallback.current(message)) },
+          { key: 'Shift-Tab', run: tablePreviousCell }, { key: 'Shift-Tab', run: keyHabitsTab(-1, message => messageCallback.current(message)) },
+          { key: 'Backspace', run: exitEmptyListItem },
+          { key: 'Backspace', run: view => keyHabitsNonemptyListBackspace(view, message => messageCallback.current(message)) },
+          { key: 'Enter', run: keyHabitsEnter },
+          { key: 'Enter', run: exitEmptyIndent }, { key: 'Enter', run: exitEmptyBlockquote },
+          { key: 'Enter', run: continueMarkdown }, { key: 'Shift-Enter', run: keyHabitsShiftEnter },
+          { key: 'Mod-z', run: undoNoteView }, { key: 'Mod-Shift-z', run: redoNoteView }, { key: 'Mod-y', run: redoNoteView }])),
         keymap.of([indentWithTab]),
         Prec.highest(keymap.of([{ key: 'Mod-b', run: view => formatSourceSelection(view, 'bold') }, { key: 'Mod-i', run: view => formatSourceSelection(view, 'italic') }, { key: 'Mod-Shift-x', run: view => formatSourceSelection(view, 'strike') }])),
         EditorView.lineWrapping,
@@ -93,5 +112,10 @@ export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, shar
     view.setState(EditorState.create({ doc: sharedDocument.state.doc, selection: tab.selection, extensions: extensionsRef.current }));
     return sharedDocument.attach(view, tab);
   }, [sharedDocument, tab]);
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: previewConfig.current.reconfigure(markdownLivePreviewConfig.of({
+      notePath, openImage: path => reader().openImage(path), onError: error => messageCallback.current(error instanceof Error ? error.message : String(error)),
+    })) });
+  }, [notePath, sharedDocument, tab]);
   return <div className="markdown-source-editor" data-note-path={notePath} ref={root} aria-label="Markdown 源码编辑器"/>;
 }
