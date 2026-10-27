@@ -19,7 +19,7 @@ module.exports = [
   { name: 'ordered-parenthesis', source: '1) one\n2) two', live: '.cm-md-list-marker', read: 'ol li', count: 2 },
   { name: 'star-and-underscore-rules', source: '* * *\n\n_ _ _', live: '.cm-md-horizontal-rule', read: 'hr', count: 2 },
   { name: 'table-short-divider', source: 'A | B\n:-- | --:\nx | y', live: '.cm-md-table table', read: 'table', text: 'A' },
-  { name: 'inline-backticks', source: '``code with ` inside``', live: '.cm-md-inline-code', read: 'code', text: 'code with ` inside' },
+  { name: 'inline-backticks', source: '``code with ` inside``', live: '.cm-md-inline-code-content', read: 'code', text: 'code with ` inside' },
   { name: 'autolink', source: '<https://example.com>', live: '.cm-md-link', read: 'a', text: 'https://example.com' },
   { name: 'reference-link', source: '[linked][ID]\n\n[id]: https://example.com', live: '.cm-md-link', read: 'a', text: 'linked' },
   { name: 'quote-fenced-code', source: '> ~~~text\n> first\n> second\n> ~~~', live: '.cm-md-code-preview code', read: 'blockquote pre code', text: 'second' },
