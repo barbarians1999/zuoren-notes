@@ -17,11 +17,13 @@ async function assertQuietPaneChrome(page) {
   assert.equal(await page.locator('.foreground-tab').evaluate(tab => getComputedStyle(tab).borderTopColor), 'rgba(0, 0, 0, 0)', 'selected tabs have no card outline');
   const chrome = await page.locator('.note-group:visible').evaluateAll(groups => groups.map((group, index) => {
     const css = getComputedStyle(group);
+    const reference = document.createElement('span'); reference.style.borderLeft = '1px solid'; group.append(reference);
+    const onePixel = getComputedStyle(reference).borderLeftWidth; reference.remove();
     return { index, edges: [css.borderTopWidth, css.borderRightWidth, css.borderBottomWidth, css.borderLeftWidth],
-      outline: css.outlineStyle, shadow: css.boxShadow };
+      onePixel, outline: css.outlineStyle, shadow: css.boxShadow };
   }));
   for (const pane of chrome) {
-    assert.deepEqual(pane.edges, ['0px', '0px', '0px', pane.index ? '1px' : '0px'], 'no themed frame around note content');
+    assert.deepEqual(pane.edges, ['0px', '0px', '0px', pane.index ? pane.onePixel : '0px'], 'no themed frame around note content');
     assert.equal(pane.outline, 'none'); assert.equal(pane.shadow, 'none');
   }
   if (chrome.length > 1) assert.equal(await page.locator('.note-group:visible').last().evaluate(group => {
