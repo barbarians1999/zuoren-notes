@@ -276,6 +276,7 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
     assert.equal(await paragraphSize(), '22px');
     assert.equal(await page.locator('.epub-pane').getAttribute('data-current-chapter'), '第二章', 'reopen restores the saved chapter');
     await waitForAnchor(savedAnchor, 'reopen restores the exact saved text, not just its chapter');
+    assert.equal(JSON.parse(await fs.readFile(metaPath, 'utf8')).cfi, savedAnchor, 'reopening must retain the saved semantic anchor for the next layout change');
     await page.locator('.layout-tabs').getByRole('button', { name: '阅读', exact: true }).click();
     assert.equal(await readerTab.getAttribute('aria-selected'), 'true');
     assert.equal(await bar.boundingBox().then(rect => rect.height), 40);

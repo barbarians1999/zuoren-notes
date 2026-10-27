@@ -198,6 +198,8 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
     if (!element) return;
     let disposed = false;
     const generation = ++generationRef.current;
+    const initialTarget = target?.epubId === epub.meta.id ? target.cfiRange : epub.meta.cfi || undefined;
+    positionAnchor.current = initialTarget && initialTarget === epub.meta.cfi ? initialTarget : null;
     let locationsReady = false;
     let locationGeneration: Promise<unknown> | undefined;
     let resizeRestoreToken = 0;
@@ -353,7 +355,6 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
           void metaWriter.current(current => ({ ...current, ...position }));
         };
         rendition.on('relocated', relocated);
-        const initialTarget = target?.epubId === epub.meta.id ? target.cfiRange : epub.meta.cfi || undefined;
         let usedFallback = false;
         try { await displayLocation(rendition, initialTarget, () => !disposed && generationRef.current === generation); }
         catch (error) {
@@ -361,6 +362,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
           if (!initialTarget) throw error;
           // A stale CFI or deleted chapter must not make an intact book blank.
           // Only persist the fallback after display succeeds and relocates.
+          positionAnchor.current = null;
           await rendition.display();
           usedFallback = true;
         }
