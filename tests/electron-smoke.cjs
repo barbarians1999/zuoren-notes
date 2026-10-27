@@ -120,9 +120,13 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   assert.equal(await page.title(), '左人笔记 · 阅读与思考');
   assert.equal(await page.locator('.window-controls button').count(), 3);
   const windowControlSize = await page.getByRole('button', { name: '最小化窗口' }).evaluate(element => {
-    const bounds = element.getBoundingClientRect(); return { width: bounds.width, height: bounds.height };
+    const bounds = element.getBoundingClientRect(), bar = element.closest('.topbar');
+    return { width: bounds.width, height: bounds.height, gap: bar.getBoundingClientRect().bottom - bounds.bottom,
+      border: parseFloat(getComputedStyle(bar).borderBottomWidth), pixel: 1 / window.devicePixelRatio };
   });
-  assert.deepEqual(windowControlSize, { width: 44, height: 47 }); // Leave the bottom separator unobstructed.
+  assert.ok(Math.abs(windowControlSize.width - 44) <= windowControlSize.pixel);
+  assert.ok(Math.abs(windowControlSize.height - 47) <= windowControlSize.pixel);
+  assert.ok(windowControlSize.gap >= windowControlSize.border - 0.01, 'window controls must leave the bottom separator unobstructed');
   await page.getByRole('button', { name: '还原窗口' }).waitFor(); // Startup is maximized.
   await page.getByRole('button', { name: '还原窗口' }).click();
   await page.getByRole('button', { name: '最大化窗口' }).waitFor();
