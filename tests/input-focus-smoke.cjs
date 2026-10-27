@@ -30,6 +30,12 @@ test('body clicks and font controls recover content focus without recreating the
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     await page.locator('.file-row').filter({ hasText: 'focus.md' }).dblclick();
     const editor = page.locator('[data-pane-id="primary"] .cm-content'); await editor.waitFor();
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+      await Promise.all(document.querySelector('.app').getAnimations({ subtree: true })
+        .filter(animation => Number.isFinite(animation.effect?.getTiming().iterations))
+        .map(animation => animation.finished.catch(() => {})));
+    });
     await editor.evaluate(element => { window.__focusEditor = element; });
     async function clickMiddle() {
       const line = editor.locator('.cm-line').filter({ hasText: 'Plain body text' });
@@ -42,7 +48,8 @@ test('body clicks and font controls recover content focus without recreating the
     await page.mouse.move(box.x + 20, box.y + box.height / 2); await page.mouse.down();
     await page.mouse.move(box.x + 160, box.y + box.height / 2, { steps: 5 }); await page.mouse.up();
     const selected = await page.evaluate(() => window.getSelection().toString());
-    assert.ok(selected.length > 0 && selected.length < 'Plain body text for placing the cursor in the middle.'.length, 'drag selects only the requested characters, not the whole paragraph');
+    assert.ok(selected.length > 0 && selected.length < 'Plain body text for placing the cursor in the middle.'.length,
+      'drag selects only the requested characters, not the whole paragraph: ' + JSON.stringify({ selected, box, focus: await page.evaluate(() => ({ active: document.activeElement?.className, selection: window.getSelection()?.toString() })) }));
     await clickMiddle();
 
     // Exercise actual window deactivate/reactivate, without touching user apps.
