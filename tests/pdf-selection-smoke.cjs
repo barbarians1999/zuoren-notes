@@ -155,6 +155,8 @@ test('PDF native dragging, page geometry, safe text actions, copy and menu delet
     await toolbar.getByRole('button', { name: '高亮', exact: true }).click(); await toolbar.waitFor({ state: 'hidden' });
     const meta = await readMeta(++count), mark = meta.annotations.at(-1);
     assert.equal(mark.anchor.rects.length, 3); assert.equal(mark.anchor.quote.split('\n').length, 3);
+    await page.getByRole('status').filter({ hasText: '高亮已保存' }).waitFor();
+    await page.getByRole('button', { name: '关闭提示', exact: true }).click();
     for (let i = 1; i < 3; i++) assert.ok(mark.anchor.rects[i].y >= mark.anchor.rects[i - 1].y + mark.anchor.rects[i - 1].h);
     await drag(); assert.equal(await page.locator('.pdf-text-selection').count(), 3); assert.equal((await readMeta(count)).annotations.length, count); await cancel();
     const at = await point(1, 0, 5, false); await page.mouse.click(at.x, at.y);
