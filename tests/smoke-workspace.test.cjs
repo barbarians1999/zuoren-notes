@@ -4,7 +4,17 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { createSmokeWorkspace, cleanupSmokeWorkspace, finalizeSmokeWorkspaces, selectSmokeTempRoot, assertManagedBudget, MAX_WORKSPACE_BYTES, MAX_MANAGED_BYTES } = require('./smokeWorkspace.cjs');
+const { createSmokeWorkspace, cleanupSmokeWorkspace, finalizeSmokeWorkspaces, selectSmokeTempRoot, assertManagedBudget, directoryBytes, MAX_WORKSPACE_BYTES, MAX_MANAGED_BYTES } = require('./smokeWorkspace.cjs');
+
+test('workspace sizing tolerates an application lockfile disappearing between directory read and stat', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'zuoren-size-race-'));
+  const file = path.join(root, 'lockfile'); await fs.writeFile(file, 'x');
+  const stat = fs.lstat;
+  try {
+    fs.lstat = async target => { if (target === file) { await fs.unlink(file); } return stat(target); };
+    assert.equal(await directoryBytes(root), 0);
+  } finally { fs.lstat = stat; await fs.rm(root, { recursive: true, force: true }); }
+});
 
 test('Windows UI tests stop when D: is below reserve unless another root is explicitly selected', () => {
   const gib = 1024 ** 3, dRoot = 'D:/C盘分担/左人笔记临时';

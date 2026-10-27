@@ -103,7 +103,7 @@ test('PDF native dragging, page geometry, safe text actions, copy and menu delet
     }
     await page.mouse.up();
     try { await toolbar.waitFor(); } catch (error) {
-      console.error('drag diagnostic', { from, to, a, b }, await page.evaluate(number => ({ selection: window.getSelection()?.toString(), tool: document.querySelector('.pdf-tools [aria-pressed="true"]')?.getAttribute('aria-label'), focus: document.activeElement?.className, viewport: document.querySelector('.pdf-canvas-wrap')?.getBoundingClientRect().toJSON(), holder: document.querySelector(`[data-pdf-page="${number}"] .canvas-holder`)?.getBoundingClientRect().toJSON(), layer: document.querySelector(`[data-pdf-page="${number}"] .textLayer`)?.outerHTML, html: document.querySelector('.pdf-text-actions')?.outerHTML }), from[0]));
+      console.error('drag diagnostic', { from, to, a, b }, await page.evaluate(({ number, a, b }) => ({ selection: window.getSelection()?.toString(), tool: document.querySelector('.pdf-tools [aria-pressed="true"]')?.getAttribute('aria-label'), focus: document.activeElement?.className, focused: document.hasFocus(), toast: document.querySelector('.toast')?.textContent, startTarget: document.elementFromPoint(a.x, a.y)?.outerHTML.slice(0, 300), endTarget: document.elementFromPoint(b.x, b.y)?.outerHTML.slice(0, 300), viewport: document.querySelector('.pdf-canvas-wrap')?.getBoundingClientRect().toJSON(), holder: document.querySelector(`[data-pdf-page="${number}"] .canvas-holder`)?.getBoundingClientRect().toJSON(), layer: document.querySelector(`[data-pdf-page="${number}"] .textLayer`)?.outerHTML, html: document.querySelector('.pdf-text-actions')?.outerHTML }), { number: from[0], a, b }));
       throw error;
     }
   };
@@ -259,7 +259,15 @@ test('PDF native dragging, page geometry, safe text actions, copy and menu delet
   await t.test('normalized overlays survive zoom; narrow and light/dark popovers stay inside the reading pane', async () => {
     if (await page.locator('.toast button').count()) await page.locator('.toast button').click();
     await jump(1); await drag();
-    assert.equal(await page.locator('[data-pdf-page="1"] .pdf-saved-highlight').count(), 0, 'temporary blue selection has no yellow layer underneath');
+    const overlap = await page.locator('[data-pdf-page="1"]').evaluate(page => {
+      const saved = [...page.querySelectorAll('.pdf-saved-highlight')].map(element => element.getBoundingClientRect());
+      const selected = [...page.querySelectorAll('.pdf-text-selection')].map(element => element.getBoundingClientRect());
+      return saved.flatMap(yellow => selected.map(blue => ({
+        width: Math.min(yellow.right, blue.right) - Math.max(yellow.left, blue.left),
+        height: Math.min(yellow.bottom, blue.bottom) - Math.max(yellow.top, blue.top),
+      }))).filter(rect => rect.width > .1 && rect.height > .1);
+    });
+    assert.deepEqual(overlap, [], 'temporary blue selection has no yellow layer underneath');
     const normalized = await page.locator('.pdf-text-selection').first().evaluate(el => [el.style.left, el.style.top, el.style.width, el.style.height]);
     const revision = await layer(1).getAttribute('data-text-revision');
     await page.getByRole('button', { name: '放大', exact: true }).click();

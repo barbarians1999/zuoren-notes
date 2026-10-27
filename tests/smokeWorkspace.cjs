@@ -97,7 +97,9 @@ async function directoryBytes(directory) {
     try { entries = await fs.readdir(current, { withFileTypes: true }); }
     catch (error) { if (error.code === 'ENOENT') continue; throw error; }
     for (const entry of entries) {
-      const file = path.join(current, entry.name), stat = await fs.lstat(file);
+      const file = path.join(current, entry.name);
+      let stat;
+      try { stat = await fs.lstat(file); } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
       if (stat.isSymbolicLink()) continue;
       if (stat.isDirectory()) pending.push(file);
       else total += stat.size;
