@@ -112,8 +112,17 @@ test('shared chrome preserves focus, async failures and confirmed copy feedback'
       await page.waitForFunction(() => document.querySelector('.toast')?.textContent.includes('复制失败'));
       assert.equal(await copy.getAttribute('data-feedback'), 'ready');
       await page.getByRole('button', { name: '取消 PDF 文字选区', exact: true }).click();
-      await app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.unmaximize(); win.setSize(760, 650); });
+      const compactSize = await app.evaluate(async ({ BrowserWindow }) => {
+        const win = BrowserWindow.getAllWindows()[0];
+        if (win.isMaximized()) {
+          const restored = new Promise(resolve => win.once('unmaximize', resolve));
+          win.unmaximize(); await restored;
+        }
+        win.setSize(760, 650); return win.getContentSize();
+      });
+      await page.waitForFunction(([width, height]) => innerWidth === width && innerHeight === height, compactSize);
       await page.locator('.layout-tabs').getByRole('button', { name: '对照', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('.pdf-pane')?.clientWidth < 480);
       const tools = page.getByRole('button', { name: 'PDF 标记工具', exact: true }); await tools.waitFor();
       await tools.click(); const menu = page.getByRole('menu', { name: 'PDF 标记工具', exact: true }); await menu.waitFor();
       assert.equal(await menu.getByRole('menuitemcheckbox').count(), 4);
