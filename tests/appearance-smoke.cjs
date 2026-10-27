@@ -172,7 +172,7 @@ test('note font setting persists without rebuilding editors and context menus st
   assert.ok(Math.abs(uiWidths.narrow - uiWidths.wide) < .1, 'UI Latin glyphs must be monospaced');
   assert.match(await fontFamily(primaryHeading), /Zhaoye Heading/);
   const codeFont = await fontFamily(codeScroller);
-  const inlineCodeFont = await fontFamily(primary.locator('.cm-md-inline-code').first());
+  const inlineCodeFont = await fontFamily(primary.locator('.cm-md-inline-code-content').first());
   await primary.evaluate(element => { window.__appearanceEditor = element; });
   const beforeText = await primary.innerText();
 
@@ -222,7 +222,7 @@ test('note font setting persists without rebuilding editors and context menus st
   assert.equal(await page.evaluate(() => localStorage.getItem('zhaoye-note-font')), 'songti');
   assert.equal(await fontFamily(page.locator('.settings-popover')), interfaceFont);
   assert.equal(await fontFamily(codeScroller), codeFont);
-  assert.equal(await fontFamily(primary.locator('.cm-md-inline-code').first()), inlineCodeFont);
+  assert.equal(await fontFamily(primary.locator('.cm-md-inline-code-content').first()), inlineCodeFont);
   assert.match(beforeText, /正文不会因切换字体而变化/);
 
   await page.keyboard.press('Escape');
