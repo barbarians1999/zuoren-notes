@@ -30,12 +30,13 @@ test('startup maximizes even with a saved small restore size and window controls
       const geometry = await page.locator('.topbar').evaluate(bar => {
         const rect = bar.getBoundingClientRect(), controls = bar.querySelector('.window-controls'), area = controls.getBoundingClientRect();
         return { width: rect.width, height: rect.height, expected: getComputedStyle(bar).borderBottomColor,
+          separatorBottom: rect.height - parseFloat(getComputedStyle(bar).borderBottomWidth),
           border: getComputedStyle(controls).borderLeftWidth,
           bottoms: [...controls.querySelectorAll('button')].map(button => button.getBoundingClientRect().bottom - rect.top),
           samples: [5, area.left - rect.left - 2, area.left - rect.left + 2, ...[...controls.querySelectorAll('button')].map(button => { const box = button.getBoundingClientRect(); return (box.left + box.right) / 2 - rect.left; }), rect.width - 5] };
       });
       assert.equal(geometry.height, 48); assert.equal(geometry.border, '0px');
-      for (const bottom of geometry.bottoms) assert.equal(bottom, 47, 'window buttons end above the one-pixel bottom separator');
+      for (const bottom of geometry.bottoms) assert.ok(Math.abs(bottom - geometry.separatorBottom) < .02, 'window buttons end above the display-scaled bottom separator');
       const image = await page.screenshot({ scale: 'css', clip: { x: 0, y: 0, width: geometry.width, height: geometry.height } });
       const pixels = await page.evaluate(async ({ encoded, geometry }) => {
         const buffer = Uint8Array.from(atob(encoded), char => char.charCodeAt(0));
