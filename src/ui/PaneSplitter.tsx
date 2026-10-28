@@ -5,8 +5,8 @@ type Drag = { pointer: number; x: number; ratio: number; next: number; active: b
 
 // Live PDF/Markdown resizing changes only a CSS variable. EPUB previews the
 // divider until release, so its rendition receives one committed width change.
-export function PaneSplitter({ container, ratio, onChange, deferred = false }: {
-  container: RefObject<HTMLDivElement | null>; ratio: number; onChange: (ratio: number) => void; deferred?: boolean;
+export function PaneSplitter({ container, ratio, onChange, label, deferred = false }: {
+  container: RefObject<HTMLDivElement | null>; ratio: number; onChange: (ratio: number) => void; label: string; deferred?: boolean;
 }) {
   const handle = useRef<HTMLDivElement>(null), drag = useRef<Drag | null>(null), frame = useRef(0);
   const latest = useRef({ ratio, onChange, deferred }); latest.current = { ratio, onChange, deferred };
@@ -67,7 +67,7 @@ export function PaneSplitter({ container, ratio, onChange, deferred = false }: {
       handle.current?.setAttribute('aria-valuenow', String(Math.round(session.next)));
     });
   };
-  return <><div ref={handle} className="splitter" role="separator" tabIndex={0} aria-label="调整阅读与笔记宽度" aria-orientation="vertical"
+  return <><div ref={handle} className="splitter" role="separator" tabIndex={0} aria-label={label} aria-orientation="vertical"
     aria-valuemin={25} aria-valuemax={75} aria-valuenow={Math.round(ratio)} title="拖动调整宽度；双击均分；Esc 撤销拖动；左右键微调"
     onPointerDown={down} onPointerMove={move} onPointerUp={event => { if (event.pointerId === drag.current?.pointer) finish(true); }}
     onPointerCancel={() => finish(false)} onLostPointerCapture={() => finish(false)} onDoubleClick={() => { finish(false); onChange(clamp(50)); }}

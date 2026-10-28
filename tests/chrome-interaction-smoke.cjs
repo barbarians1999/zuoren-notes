@@ -67,7 +67,15 @@ test('shared chrome preserves focus, async failures and confirmed copy feedback'
         });
         globalThis.__restoreChromeTrash = () => { ipcMain.removeHandler('trash-entry'); ipcMain.handle('trash-entry', original); };
       });
-      await row('b.md').click({ button: 'right' }); await page.getByRole('menuitem', { name: '移到回收站', exact: true }).click();
+      await row('b.md').click({ button: 'right' });
+      const recycleItem = page.getByRole('menuitem', { name: '移到回收站', exact: true });
+      try { await recycleItem.click(); } catch (error) {
+        console.error('recycle menu diagnostic', await page.evaluate(() => ({ menus: [...document.querySelectorAll('[role="menu"]')].map(menu => ({ label: menu.getAttribute('aria-label'), connected: menu.isConnected, text: menu.innerText, bounds: menu.getBoundingClientRect().toJSON() })),
+          fileRows: [...document.querySelectorAll('.file-row')].map(row => ({ text: row.innerText, bounds: row.getBoundingClientRect().toJSON() })),
+          active: document.activeElement?.outerHTML.slice(0, 500), toast: document.querySelector('.toast')?.textContent,
+          width: innerWidth, height: innerHeight, animations: document.getAnimations().map(animation => ({ state: animation.playState, time: animation.currentTime })) })));
+        throw error;
+      }
       const dialog = page.getByRole('dialog', { name: '移到回收站', exact: true }); await dialog.waitFor();
       await page.keyboard.press('Shift+Tab'); assert.equal(await dialog.evaluate(el => el.contains(document.activeElement)), true);
       await dialog.getByRole('button', { name: '移到回收站', exact: true }).click();

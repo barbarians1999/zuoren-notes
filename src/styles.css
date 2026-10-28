@@ -1361,7 +1361,9 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .note-group { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; position: relative; border: 0; }
 .note-group > .note-pane { flex: 1; min-height: 0; }
 .note-group + .note-group { border-left: 1px solid var(--line-strong); }
-.panes.note.dual-notes > .note-group { flex: 1 1 0; }
+.panes.note.dual-notes > .note-group[data-note-group="primary"] { flex: 0 0 var(--split-at); }
+.panes.note.dual-notes > .note-group[data-note-group="secondary"] { flex: 1 1 0; }
+.panes.note.dual-notes > .splitter { position: absolute; z-index: 22; left: calc(var(--split-at) - 3px); top: 0; bottom: 0; height: auto; }
 .panes.split > .note-group { flex: 1 1 0; }
 .preview-tab [role="tab"] { font-style: italic; }
 .tab-status { color: var(--accent); }
