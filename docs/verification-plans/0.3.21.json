@@ -1,5 +1,5 @@
 {
-  "reason": "Official targeted release for Ctrl-click Markdown links. Verifies real source-editor and reading-preview clicks, allowed browser/mail/local destinations, rejection of unsafe schemes and unauthorized paths, plus the required editor/document-lifecycle and packaged-platform baselines. A Markdown-profile run stopped at the pre-existing intermittent rendered-inline-code drag assertion; its evidence is retained and the cause is unresolved. This is not a full release regression.",
+  "reason": "Official targeted release for Ctrl-click Markdown links. Verifies real source-editor and reading-preview clicks for browser links and local files/folders, rejection of unsafe protocols and unauthorized paths, with required source-editor/document-lifecycle and packaged platform baselines. The broader markdown profile stopped at an intermittent rendered-inline-code drag assertion; its failure is retained and the cause remains unresolved. This is not a full release regression.",
   "source": [
     "tests/markdown-link-smoke.cjs"
   ],
