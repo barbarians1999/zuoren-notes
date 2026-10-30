@@ -2,6 +2,7 @@ const { app, BrowserWindow, dialog, ipcMain, protocol, Menu, shell, screen } = r
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { fileURLToPath, pathToFileURL } = require('node:url');
 const { FileStore, digest, inside } = require('./storage.cjs');
 const { recoveryIdPattern, validateSession, sessionFilePaths } = require('./session.cjs');
 const { SettingsStore } = require('./settings.cjs');
@@ -309,6 +310,30 @@ function installHandlers() {
     return path.relative(path.dirname(source), target).replace(/\\/g, '/');
   });
   handle('open-image', (_event, file) => openImage(store, shell, file));
+  handle('open-markdown-link', async (_event, input) => {
+    const source = await store.checked(input?.sourcePath);
+    if (!/\.(md|markdown)$/i.test(source)) throw new Error('链接来源必须是 Markdown 笔记');
+    if (typeof input.href !== 'string' || !input.href.trim() || input.href.length > 4096) throw new Error('Markdown 链接无效');
+    const href = input.href.trim();
+    const scheme = /^([a-z][a-z\d+.-]*):/i.exec(href)?.[1]?.toLowerCase();
+    if (scheme && !/^[a-z]:[\\/]/i.test(href)) {
+      const url = new URL(href);
+      if (['http:', 'https:', 'mailto:'].includes(url.protocol)) {
+        if (url.username || url.password) throw new Error('不支持包含账号信息的外部链接');
+        await shell.openExternal(url.href);
+        return true;
+      }
+      if (url.protocol !== 'file:') throw new Error('只允许打开网页、邮件或本地文件链接');
+    }
+    let target;
+    if (scheme === 'file') target = fileURLToPath(new URL(href));
+    else if (path.isAbsolute(href)) target = path.resolve(decodeURIComponent(href));
+    else target = fileURLToPath(new URL(href, pathToFileURL(path.dirname(source) + path.sep)));
+    const checked = await store.checked(target, { asset: true });
+    const error = await shell.openPath(checked);
+    if (error) throw new Error(error);
+    return true;
+  });
   handle('asset-url', async (_event, file) => {
     const checked = await store.checked(file, { asset: true });
     return `reader-asset://local/${encodeURIComponent(checked)}`;

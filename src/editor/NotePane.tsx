@@ -3,7 +3,7 @@ import { ReducedMotionContext } from '../uiMotion';
 import { OutlinePanel } from '../OutlinePanel';
 import { FileText } from 'lucide-react';
 import type { MarkdownScrollMemory, NoteRead, ReaderAnchor } from '../types';
-import { type NoteMode, type FindCommand } from '../readerContext';
+import { reader, type NoteMode, type FindCommand } from '../readerContext';
 import { isolateHistory } from '@codemirror/commands';
 import { undoNoteView as cmUndo, redoNoteView as cmRedo, type NoteDocument, type NoteViewState } from '../workspace/noteDocument';
 import { Transaction } from '@codemirror/state';
@@ -34,6 +34,13 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
   useEffect(() => setImageMessage(''), [note?.path]);
   const pendingImage = sharedDocument?.pendingImagePastes[0];
   const liveNotePath = useRef(note?.path); liveNotePath.current = note?.path;
+  const openMarkdownLink = useCallback((href: string) => {
+    const sourcePath = note?.path;
+    if (!sourcePath) return;
+    void reader().openMarkdownLink({ sourcePath, href }).catch(error => {
+      if (liveNotePath.current === sourcePath) setImageMessage(error instanceof Error ? error.message : String(error));
+    });
+  }, [note?.path]);
   useEffect(() => {
     if (!excerptRegister) return;
     const append = (block: string) => {
@@ -320,7 +327,7 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
       {imageMessage && <button aria-label="关闭编辑提示" onClick={() => setImageMessage('')}>×</button>}
     </div>}
     <div className="note-body" ref={host}>
-      {!note ? <div className="empty-state"><FileText size={28}/><p>打开或新建 Markdown 笔记</p><small>编辑后自动保存</small></div> : <div className="note-content"><div className="note-editor-surface" style={{ display: mode === 'preview' ? 'none' : 'flex' }}><MarkdownSourceEditor notePath={note.path} onView={setSourceView} onSelectionChange={setSourceSelection} onMessage={setImageMessage} sharedDocument={sharedDocument!} tab={tab!}/></div>{mode === 'preview' && <MarkdownPreview notePath={note.path} text={text} headings={sourceView ? markdownOutline(sourceView) : []} onJump={stableJump} onToggleTask={toggleTask}/>}</div>}
+      {!note ? <div className="empty-state"><FileText size={28}/><p>打开或新建 Markdown 笔记</p><small>编辑后自动保存</small></div> : <div className="note-content"><div className="note-editor-surface" style={{ display: mode === 'preview' ? 'none' : 'flex' }}><MarkdownSourceEditor notePath={note.path} onView={setSourceView} onSelectionChange={setSourceSelection} onMessage={setImageMessage} sharedDocument={sharedDocument!} tab={tab!}/></div>{mode === 'preview' && <MarkdownPreview notePath={note.path} text={text} headings={sourceView ? markdownOutline(sourceView) : []} onJump={stableJump} onToggleTask={toggleTask} onOpenLink={openMarkdownLink}/>}</div>}
       <OutlinePanel open={outline} label="Markdown 大纲" emptyText="使用标题组织笔记后，目录会出现在这里。"
         returnFocus={() => document.querySelector(`[data-note-controls="${paneId}"] [data-outline-toggle]`) || host.current?.querySelector('[data-outline-toggle]') || null}
         items={headings.map((item, index) => ({ id: String(index), label: item.text, depth: item.level - 1, indicator: String(item.level) }))}

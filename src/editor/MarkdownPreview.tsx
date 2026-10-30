@@ -4,7 +4,7 @@ import { reader, resolveLocal } from '../readerContext';
 import { renderMarkdown } from './markdownRendering';
 import { decodeReaderAnchor } from '../readerAnchor.cjs';
 import { findMarkdownTasks, markdownPreviewSource } from './markdownTasks';
-export const MarkdownPreview = React.memo(function MarkdownPreview({ notePath, text, headings, onJump, onToggleTask }: { notePath: string; text: string; headings: readonly { line: number; previewAt: number }[]; onJump: (anchor: ReaderAnchor) => void; onToggleTask?: (position: number, checked: boolean, expectedSource: string) => boolean }) {
+export const MarkdownPreview = React.memo(function MarkdownPreview({ notePath, text, headings, onJump, onToggleTask, onOpenLink }: { notePath: string; text: string; headings: readonly { line: number; previewAt: number }[]; onJump: (anchor: ReaderAnchor) => void; onToggleTask?: (position: number, checked: boolean, expectedSource: string) => boolean; onOpenLink?: (href: string) => void }) {
   const [rendered, setRendered] = useState<{ notePath: string; source: string; html: string; taskNonce: string | null } | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const restoreScroll = useRef<{ notePath: string; top: number } | null>(null);
@@ -85,7 +85,11 @@ export const MarkdownPreview = React.memo(function MarkdownPreview({ notePath, t
       if (onToggleTask?.(Number(input.dataset.taskPosition), input.dataset.taskChecked !== 'true', rendered.source)) root.current?.focus({ preventScroll: true });
       return;
     }
-    const link = (event.target as Element).closest?.('a'); const anchor = link && decodeReaderAnchor(link.getAttribute('href') || '');
-    if (anchor) { event.preventDefault(); onJump(anchor); }
+    const link = (event.target as Element).closest?.('a'), href = link?.getAttribute('href') || '';
+    const anchor = link && decodeReaderAnchor(href);
+    if (anchor) { event.preventDefault(); onJump(anchor); return; }
+    if (link && !href.startsWith('#') && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault(); onOpenLink?.(href);
+    }
   }} dangerouslySetInnerHTML={{ __html: html ?? (text.trim() ? '正在排版…' : '') }}/>;
 });

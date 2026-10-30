@@ -250,6 +250,7 @@ export interface ReaderApi {
   saveEpubMeta(input: { path: string; meta: EpubMeta }): Promise<boolean>;
   saveAttachment(input: { sourcePath: string; data: Uint8Array; extension?: string; purpose?: 'note-image' }): Promise<string>;
   openImage(path: string): Promise<void>;
+  openMarkdownLink(input: { sourcePath: string; href: string }): Promise<boolean>;
   search(input: { root: string; query: string }): Promise<SearchResult[]>;
   getSettings(): Promise<Settings>;
   getWindowState(): Promise<{ maximized: boolean; fullscreen: boolean }>;

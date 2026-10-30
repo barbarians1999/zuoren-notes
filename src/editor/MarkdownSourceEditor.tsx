@@ -47,6 +47,18 @@ export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, onMe
       view.dom.style.setProperty('--md-list-space-width', `${width}px`);
     };
     const extensions: Extension[] = [
+        EditorView.domEventHandlers({
+          mousedown(event) {
+            if (event.button !== 0 || !(event.ctrlKey || event.metaKey)) return false;
+            const link = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-markdown-link]') : null;
+            const href = link?.dataset.markdownLink;
+            if (!href || href.startsWith('#')) return false;
+            event.preventDefault();
+            void reader().openMarkdownLink({ sourcePath: shared.current.document.note.path, href })
+              .catch(error => messageCallback.current(error instanceof Error ? error.message : String(error)));
+            return true;
+          },
+        }),
         Prec.highest(markdownTypedFormat(() => `${shared.current.document.documentId.current}:${shared.current.tab.id}`,
           message => messageCallback.current(message))),
         markdownImagePaste(() => shared.current.document, message => messageCallback.current(message)),

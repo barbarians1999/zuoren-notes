@@ -345,8 +345,8 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
       if (block) blocks.push(range);
     }
   };
-  const mark = (from: number, to: number, cls: string) => {
-    if (to > from) ranges.push(Decoration.mark({ class: cls }).range(from, to));
+  const mark = (from: number, to: number, cls: string, attributes?: Record<string, string>) => {
+    if (to > from) ranges.push(Decoration.mark({ class: cls, attributes }).range(from, to));
   };
   tree.iterate({ enter(ref) {
     const node = ref.node, { from, to, name } = node;
@@ -460,11 +460,13 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
       if (source.endsWith('\\\n')) hide(to - 2, to - 1);
     }
     if (name === 'Autolink') {
-      mark(from, to, 'cm-md-link');
+      const url = markdownLinkURL(state, tree, node);
+      mark(from, to, 'cm-md-link', url ? { 'data-markdown-link': url } : undefined);
       if (!active(from, to)) for (const delimiter of node.getChildren('LinkMark')) hide(delimiter.from, delimiter.to);
     }
     if (name === 'Link' && isResolvedMarkdownLink(state, tree, node)) {
-      mark(from, to, 'cm-md-link');
+      const url = markdownLinkURL(state, tree, node);
+      mark(from, to, 'cm-md-link', url ? { 'data-markdown-link': url } : undefined);
       if (!active(from, to)) {
         const marks = node.getChildren('LinkMark');
         if (marks.length >= 2) { hide(marks[0].from, marks[0].to); hide(marks[1].from, to); }

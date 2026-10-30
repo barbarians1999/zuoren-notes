@@ -34,6 +34,7 @@ const api = {
   saveEpubMeta: input => invoke('save-epub-meta', input),
   saveAttachment: input => invoke('save-attachment', input),
   openImage: file => invoke('open-image', file),
+  openMarkdownLink: input => invoke('open-markdown-link', input),
   search: input => invoke('search', input),
   getSettings: () => invoke('get-settings'),
   getWindowState: () => invoke('get-window-state'),
