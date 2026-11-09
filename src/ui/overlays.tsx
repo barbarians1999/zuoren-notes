@@ -1,5 +1,6 @@
-import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
+import { ReducedMotionContext, usePanelMotion } from '../uiMotion';
 
 // Only the foremost layer handles Escape/focus. No editor selection or document
 // state lives here; closing a layer must leave the underlying view intact.
@@ -69,26 +70,35 @@ export function useOverlayFocus(open: boolean, ref: RefObject<HTMLElement | null
   return restore;
 }
 
-export function ContextMenu({ x, y, children, onClose, returnFocus, label = '快捷菜单' }: {
-  x: number; y: number; children: ReactNode; onClose: () => void; returnFocus?: HTMLElement | null; label?: string;
+export function ContextMenu({ open, x, y, children, onClose, returnFocus, label = '快捷菜单' }: {
+  open: boolean; x: number; y: number; children: ReactNode; onClose: () => void; returnFocus?: HTMLElement | null; label?: string;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const restore = useOverlayFocus(true, ref, { kind: 'menu', onDismiss: onClose, returnFocus: () => returnFocus || null });
+  const reducedMotion = useContext(ReducedMotionContext);
+  const savedReturnFocus = useRef<HTMLElement | null>(returnFocus || null);
+  if (open && returnFocus) savedReturnFocus.current = returnFocus;
+  const motion = usePanelMotion(open, reducedMotion, '4px', () => savedReturnFocus.current, 'y', { enter: '--motion-overlay', exit: '--motion-exit' });
+  const ref = motion.ref as RefObject<HTMLDivElement | null>;
+  const restore = useOverlayFocus(open && motion.present, ref, { kind: 'menu', onDismiss: onClose, returnFocus: () => returnFocus || null });
+  const previousChildren = useRef(children); if (open) previousChildren.current = children;
   const [position, setPosition] = useState({ left: x, top: y });
   useLayoutEffect(() => {
+    if (!open || !motion.present) return;
     ref.current?.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]').forEach(item => { item.tabIndex = -1; });
     const box = ref.current?.getBoundingClientRect();
     if (box) setPosition({ left: Math.max(8, Math.min(x, innerWidth - box.width - 8)), top: Math.max(8, Math.min(y, innerHeight - box.height - 8)) });
-  }, [x, y]);
+  }, [x, y, open, motion.present]);
   useLayoutEffect(() => {
+    if (!open || !motion.present) return;
     const close = () => onClose();
     // Focus/scrollIntoView can emit scroll events while a keyboard menu opens.
     // Only an actual wheel gesture outside the menu dismisses it.
     const wheel = (event: WheelEvent) => { if (event.target instanceof Node && !ref.current?.contains(event.target)) onClose(); };
     window.addEventListener('blur', close); window.addEventListener('resize', close); window.addEventListener('wheel', wheel, { capture: true, passive: true });
     return () => { window.removeEventListener('blur', close); window.removeEventListener('resize', close); window.removeEventListener('wheel', wheel, true); };
-  }, [onClose]);
+  }, [open, motion.present, onClose]);
+  if (!motion.present) return null;
   return createPortal(<div ref={ref} className="file-context-menu" role="menu" aria-label={label} tabIndex={-1} style={position}
+    aria-hidden={!open}
     onClickCapture={event => { if ((event.target as Element).closest('button:not(:disabled)')) restore(); }}
     onKeyDown={event => {
       if (event.nativeEvent.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
@@ -97,7 +107,26 @@ export function ContextMenu({ x, y, children, onClose, returnFocus, label = '快
       const index = menuItems.indexOf(document.activeElement as HTMLButtonElement);
       const next = event.key === 'ArrowDown' ? (index + 1) % menuItems.length : event.key === 'ArrowUp' ? (index - 1 + menuItems.length) % menuItems.length : event.key === 'Home' ? 0 : event.key === 'End' ? menuItems.length - 1 : -1;
       if (next >= 0) { event.preventDefault(); event.stopPropagation(); menuItems[next]?.focus({ preventScroll: true }); }
-    }}>{children}</div>, document.querySelector('.app') || document.body);
+    }}>{open ? children : previousChildren.current}</div>, document.querySelector('.app') || document.body);
+}
+
+export function ToastMessage({ open, message, onDismiss }: { open: boolean; message: string; onDismiss: () => void }) {
+  const reducedMotion = useContext(ReducedMotionContext);
+  const lastMessage = useRef(''), returnFocus = useRef<HTMLElement | null>(null), previousOpen = useRef(false);
+  const motion = usePanelMotion(open, reducedMotion, '4px', () => returnFocus.current, 'y', { enter: '--motion-feedback', exit: '--motion-exit' });
+  if (open) {
+    if (!previousOpen.current && !motion.present) returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    lastMessage.current = message;
+  }
+  previousOpen.current = open;
+  useEffect(() => {
+    if (open || motion.present) return;
+    lastMessage.current = ''; returnFocus.current = null;
+  }, [open, motion.present]);
+  if (!motion.present) return null;
+  return <div ref={motion.ref as RefObject<HTMLDivElement | null>} className="toast" aria-hidden={!open}>
+    <span role="status">{message || lastMessage.current}</span><button aria-label="关闭提示" onClick={onDismiss}><span aria-hidden="true">×</span></button>
+  </div>;
 }
 
 export function DialogFrame({ children, labelledBy, describedBy, className = '', onCancel, busy = false, returnFocus }: {

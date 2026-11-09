@@ -82,6 +82,8 @@ test('Markdown editing keeps continuous source text like Obsidian', { timeout: 9
   await waitForFile(notePath, value => /- 空格父项\n  - 空格子项/.test(value));
   assert.match(await fs.readFile(notePath, 'utf8'), /- 空格父项\n  - 空格子项/, 'typed spaces remain literal spaces');
   assert.equal(await spaceChild.getAttribute('data-list-guides'), '1', 'two spaces form one structural guide');
+  await page.waitForFunction(() => [...document.querySelectorAll('.markdown-source-editor .cm-line')]
+    .find(line => line.textContent.includes('空格子项'))?.getAttribute('data-list-guide-active') === '1');
   assert.equal(await spaceChild.getAttribute('data-list-guide-active'), '1', 'the current item highlights its own level');
   assert.notEqual(await spaceChild.evaluate(el => getComputedStyle(el).backgroundImage), 'none', 'the list guide is visibly drawn');
   assert.equal(await childLine.getAttribute('data-list-guide-active'), '', 'another item keeps its neutral guide');

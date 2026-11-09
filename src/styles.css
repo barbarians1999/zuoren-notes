@@ -27,6 +27,20 @@
   color: var(--text, #202522);
   background: var(--surface-muted, #f1f3f1);
   font-size: 14px;
+  --motion-press: 80ms;
+  --motion-feedback: 140ms;
+  --motion-overlay: 150ms;
+  --motion-exit: 110ms;
+  --motion-panel: 200ms;
+  --motion-layout: 240ms;
+  --motion-mode: 180ms;
+  --motion-content: 160ms;
+  --motion-page: 120ms;
+  --motion-anchor: 280ms;
+  --motion-markdown: 120ms;
+  --motion-folder: 160ms;
+  --motion-ease-enter: cubic-bezier(.2,.75,.3,1);
+  --motion-ease-exit: cubic-bezier(.4,0,.6,1);
   --markdown-body-max-width: 880px;
   --md-heading-1-size: 1.9em;
   --md-heading-2-size: 1.55em;
@@ -80,7 +94,7 @@ button {
 .toast button {
   background: transparent;
   color: inherit;
-  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease, transform 80ms ease;
+  transition: background-color var(--motion-feedback) var(--motion-ease-enter), color var(--motion-feedback) var(--motion-ease-enter), border-color var(--motion-feedback) var(--motion-ease-enter);
 }
 
 .app > .topbar button:hover,
@@ -99,7 +113,7 @@ button {
 .selection-actions button:active,
 .annotation-list button:active,
 .modal-backdrop button:active,
-.toast button:active { transform: translateY(1px); }
+.toast button:active { transform: none; }
 
 .app > .topbar button:disabled,
 .app > .body > .sidebar button:disabled,
@@ -186,6 +200,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   border-radius: 6px;
   color: var(--text-muted);
   white-space: nowrap;
+  transition: color var(--motion-feedback) var(--motion-ease-enter);
 }
 
 .layout-tabs button:hover, .mode-tabs button:hover { color: var(--text); }
@@ -255,6 +270,11 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .settings-row > svg { color: var(--text-muted); }
 .settings-row > span { font-size: 12px; }
 .settings-row > small { color: var(--text-faint); font-size: 10px; }
+.settings-about summary { padding: 6px 7px; cursor: pointer; color: var(--text); font-size: 12px; }
+.settings-about summary:focus-visible, .settings-about a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.about-content { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 6px 7px 4px; color: var(--text-muted); font-size: 12px; }
+.about-content b { color: var(--text); }
+.about-content a { color: var(--accent); text-underline-offset: 3px; }
 
 .theme-options {
   display: grid;
@@ -483,6 +503,13 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .folder-icon { width: 34px; height: 24px; flex: none; display: grid; place-items: center; border-radius: 5px; background: var(--accent-softer); color: var(--text-muted); }
 .folder-enter { margin-left: auto; flex: none; color: var(--text-faint); }
 .file-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.file-row > :is(.file-icon, .folder-icon, .file-name, .folder-enter) { transition: color var(--motion-feedback) var(--motion-ease-enter), transform var(--motion-press) var(--motion-ease-enter); }
+.file-list[data-folder-motion="enter"] { --folder-row-offset: 8px; }
+.file-list[data-folder-motion="exit"] { --folder-row-offset: -8px; }
+.file-list[data-folder-motion] .file-row:not(.inline-entry-row) > :is(.file-icon, .folder-icon, .file-name, .folder-enter) {
+  animation: folder-row-enter var(--motion-folder) var(--motion-ease-enter) backwards;
+  animation-delay: var(--folder-row-delay, 0ms);
+}
 
 .empty-small {
   min-height: 94px;
@@ -600,7 +627,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   flex: none;
   cursor: col-resize;
   background: var(--line);
-  transition: background-color 140ms ease;
+  transition: background-color var(--motion-feedback) var(--motion-ease-enter);
 }
 
 .splitter::after {
@@ -656,11 +683,8 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 }
 
 .epub-content-row { position: relative; display: flex; flex: 1; min-height: 0; min-width: 0; overflow: clip; }
-/* Navigation overlays the paginated viewport: opening/closing it must not
-   change the dimensions observed by epub.js or trigger another pagination.
-   Clip (not hidden) also prevents focus during panel motion from scrolling
-   the viewport sideways to bring a translated outline item into view. */
-.note-outline.epub-outline { position: absolute; z-index: 6; inset: 0 0 0 auto; width: min(186px, calc(100% - 16px)); }
+/* Keep navigation beside the book so it cannot hide paginated text. */
+.note-outline.epub-outline { position: relative; z-index: 6; flex: 0 0 min(186px, 40%); width: min(186px, 40%); min-width: 0; }
 .note-outline button[aria-current="location"] { color: var(--accent); background: transparent; }
 
 .epub-reader-shell {
@@ -833,6 +857,8 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   padding: 0;
   border: 0;
   border-radius: 2px;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
   background: rgba(235, 207, 70, .47);
   mix-blend-mode: multiply;
   pointer-events: auto;
@@ -840,7 +866,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 
 .annotation.region { border: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 9%, transparent); }
 .annotation.note { min-width: 13px; min-height: 13px; border: 2px solid white; border-radius: 50%; background: var(--accent); }
-.annotation.flash { animation: anchor-flash .55s ease-in-out 4; }
+.annotation.flash { animation: anchor-locate var(--motion-anchor, 280ms) ease-out 1; }
 
 .selection-box {
   position: absolute;
@@ -1039,13 +1065,19 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 }
 .markdown-source-editor .cm-line { white-space: pre-wrap; }
 .markdown-source-editor .cm-md-heading { display: inline-block; color: var(--heading); font-family: var(--note-heading-font, var(--note-body-font)); font-weight: var(--md-heading-weight); line-height: var(--md-heading-line-height); }
+.markdown-source-editor .cm-md-heading-line { position: relative; }
+.markdown-source-editor .cm-md-heading-line::before { content: attr(data-md-heading-level); position: absolute; right: calc(100% + 10px); top: .45em; font: 10px/1.4 'Segoe UI', sans-serif; color: var(--text-faint); user-select: none; pointer-events: none; }
 .markdown-source-editor .cm-md-heading-1 { font-size: var(--md-heading-1-size); }
 .markdown-source-editor .cm-md-heading-2 { font-size: var(--md-heading-2-size); }
 .markdown-source-editor .cm-md-heading-3 { font-size: var(--md-heading-3-size); }
 .markdown-source-editor .cm-md-heading-4 { font-size: var(--md-heading-4-size); }
 .markdown-source-editor .cm-md-heading-5 { font-size: var(--md-heading-5-size); }
 .markdown-source-editor .cm-md-heading-6 { font-size: var(--md-heading-6-size); }
+.markdown-source-editor [data-md-motion-key] { position: relative; }
 .markdown-source-editor .cm-md-strong { font-weight: 700; }
+.markdown-source-editor :is(.cm-md-heading, .cm-md-strong, .cm-md-emphasis, .cm-md-strikethrough, .cm-md-highlight, .cm-md-inline-code, .cm-md-link) { transition: filter var(--motion-markdown) var(--motion-ease-enter); }
+.markdown-source-editor .cm-md-format-active { filter: brightness(1.035); }
+.markdown-source-editor .cm-md-format-token { animation: markdown-token-reveal var(--motion-markdown) var(--motion-ease-enter) both; }
 .markdown-source-editor .cm-md-code-block { font-family: "Cascadia Code", ui-monospace, monospace; }
 .markdown-source-editor .cm-md-code-line { background: var(--surface-muted); border-left: 3px solid var(--line); padding-left: 12px !important; }
 .markdown-source-editor .cm-md-code-first { border-radius: 7px 7px 0 0; padding-top: 8px; }
@@ -1061,6 +1093,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .markdown-source-editor .cm-md-strikethrough { text-decoration: line-through; text-decoration-thickness: 1.5px; }
 .markdown-source-editor .cm-md-highlight { background: var(--mark-bg); border-radius: 2px; color: var(--mark-text); }
 .markdown-source-editor .cm-md-inline-code { padding: 0 .18em; border-radius: 3px; background: var(--surface-muted); font-family: "Cascadia Code", ui-monospace, monospace; }
+.cm-md-inline-code-text { animation: markdown-text-reveal var(--motion-markdown) var(--motion-ease-enter) both; }
 .markdown-source-editor .cm-md-link { color: var(--link); text-decoration: underline; text-underline-offset: 3px; }
 .markdown-source-editor .cm-md-quote,
 .cm-md-block-wrapper {
@@ -1080,17 +1113,24 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   background-size: var(--md-list-guide-sizes), calc(var(--md-quote-depth, 0) * var(--md-quote-step)) 100%;
   background-repeat: no-repeat;
 }
-.markdown-source-editor, .markdown-preview { --md-list-gutter: 2em; }
+.markdown-source-editor, .markdown-preview { --md-list-gutter: 1.5em; }
 .markdown-source-editor .cm-line.cm-md-list-layout {
   padding-left: calc(var(--md-quote-depth, 0) * var(--md-quote-step) + var(--md-list-offset) + var(--md-list-wrap-indent)) !important;
   text-indent: calc(0px - var(--md-list-wrap-indent));
 }
+.markdown-source-editor .cm-md-indent-tab { display: inline-block; width: calc(var(--md-tab-columns) * var(--md-list-space-width, .5ch)); tab-size: var(--md-tab-columns); text-indent: 0; white-space: pre; }
 .markdown-source-editor .cm-md-list { color: var(--text); }
-.markdown-source-editor :is(.cm-md-list-marker, .cm-md-list-prefix) { display: inline-block; box-sizing: border-box; width: var(--md-list-gutter); padding-right: .35em; color: var(--accent); font-weight: 700; text-align: right; text-indent: 0; white-space: pre; }
+.markdown-source-editor :is(.cm-md-list-marker, .cm-md-list-prefix) { display: inline-block; box-sizing: border-box; width: var(--md-list-gutter); padding-right: .5em; color: var(--accent); font-weight: 700; text-align: right; text-indent: 0; white-space: pre; }
+.markdown-source-editor .cm-md-list-prefix {
+  --md-prefix-space-width: calc(var(--md-prefix-space-columns, 0) * var(--md-list-space-width, .5ch));
+  width: calc(var(--md-list-gutter) + max(0px, var(--md-prefix-space-width) - .5em));
+  margin-right: calc(0px - max(0px, var(--md-prefix-space-width) - .5em));
+  padding-right: max(0px, calc(.5em - var(--md-prefix-space-width)));
+}
 .markdown-source-editor .cm-md-list-marker[data-source-columns] {
   font-family: system-ui, sans-serif;
 }
-.markdown-source-editor .cm-md-task-checkbox { width: 1em; height: 1em; margin: 0 max(0px, calc(1em - var(--md-list-space-width, .5ch))) .08em 0; accent-color: var(--accent); vertical-align: middle; cursor: pointer; }
+.markdown-source-editor .cm-md-task-checkbox { width: 1em; height: 1em; margin: 0 .5em .08em 0; accent-color: var(--accent); vertical-align: middle; cursor: pointer; }
 
 .markdown-preview {
   flex: 1;
@@ -1277,10 +1317,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   border: 0;
 }
 
-@keyframes anchor-flash {
-  0%, 100% { box-shadow: none; }
-  50% { box-shadow: 0 0 0 7px rgba(214, 139, 54, .65); background: rgba(255, 199, 95, .76); }
-}
+@keyframes anchor-locate { from { outline-color: color-mix(in srgb, var(--accent) 85%, transparent); } to { outline-color: transparent; } }
 
 @media (max-width: 1120px) {
   .topbar { gap: 16px; }
@@ -1341,9 +1378,9 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .window-controls button:active { transform: none !important; background: transparent !important; }
 .window-controls .window-close:is(:hover, :active) { color: var(--accent); }
 /* Move only the glyph so the hit area and continuous topbar border stay put. */
-.window-controls button > svg { transition: transform 120ms ease; }
-.app[data-motion="full"] .window-controls button:hover > svg { transform: translateY(-1px); }
-.app[data-motion="full"] .window-controls button:active > svg { transform: translateY(1px); }
+.window-controls button > svg { transition: transform var(--motion-press) var(--motion-ease-enter); }
+.app[data-motion="full"] .window-controls button:not(:disabled):hover > svg { transform: translateY(-1px); }
+.app[data-motion="full"] .window-controls button:not(:disabled):active > svg { transform: translateY(1px); }
 .document-tabs { height: 39px; flex: none; display: flex; align-items: center; gap: 3px; padding: 0 8px; border-bottom: 1px solid var(--line); background: var(--surface-muted); overflow-x: auto; }
 .document-tab { display: flex; align-items: center; min-width: 110px; max-width: 220px; height: 33px; border: 1px solid transparent; border-radius: 5px 5px 0 0; flex-shrink: 0; }
 .document-tab.active { background: var(--surface); border-color: var(--line); border-bottom-color: var(--surface); }
@@ -1352,7 +1389,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .document-tab:has(+ .document-tab.dragging), .document-tab.dragging + .document-tab { border-color: var(--accent); }
 .document-tab > button:first-child { flex: 1; min-width: 0; padding: 6px 10px; text-align: left; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .document-tab > button:last-child { padding: 5px; margin-right: 3px; border-radius: 4px; color: var(--text-faint); }
-.document-tab button:hover { background: var(--hover); }
+.document-tab button:hover { background: transparent; color: var(--accent); }
 .compact-save { font-size: 10px; white-space: nowrap; color: var(--text-faint); padding: 0 5px; }
 .document-tabs > .compact-save { display: none; }
 .secondary-note { flex: 1; min-width: 0; border-left: 1px solid var(--line-strong); }
@@ -1416,18 +1453,16 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .workspace-compat-save { display: inline-flex; align-items: center; gap: 4px; margin-left: 5px; }
 .markdown-workspace-actions { display: flex; align-items: center; gap: 4px; flex: none; }
 .workspace-icon-action, .workspace-mode-switch button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 32px; border: 1px solid transparent; border-radius: 6px; color: var(--text-muted); background: transparent; }
-.workspace-icon-action, .workspace-mode-switch button { transition: color 140ms ease, transform 120ms ease; }
+.workspace-icon-action, .workspace-mode-switch button { transition: color var(--motion-feedback) var(--motion-ease-enter), background-color 0s, transform 0s; }
 .workspace-icon-action:not(:disabled):hover, .workspace-mode-switch button:not(:disabled):hover { background: transparent; color: var(--accent); }
-.app[data-motion="full"] :is(.workspace-icon-action, .workspace-mode-switch button):not(:disabled):hover { transform: translateY(-1px); }
-.app[data-motion="full"] :is(.workspace-icon-action, .workspace-mode-switch button):not(:disabled):active { transform: translateY(1px); }
+.app :is(.workspace-icon-action, .workspace-mode-switch button):not(:disabled):is(:hover, :active) { transform: none; }
 .workspace-icon-action { width: 32px; padding: 5px; }
 .workspace-icon-action.active { color: var(--accent); background: transparent; }
 /* Reader and note actions share glyph-only feedback; active tools keep red. */
-.pdf-navigation button { transition: color 140ms ease, transform 120ms ease; }
+.pdf-navigation button { transition: color var(--motion-feedback) var(--motion-ease-enter), background-color 0s, transform 0s; }
 .pdf-navigation button:not(:disabled):hover { background: transparent; color: var(--accent); }
 .pdf-navigation button[aria-pressed="true"] { color: var(--accent); background: transparent; }
-.app[data-motion="full"] .pdf-navigation button:not(:disabled):hover { transform: translateY(-1px); }
-.app[data-motion="full"] .pdf-navigation button:not(:disabled):active { transform: translateY(1px); }
+.app .pdf-navigation button:not(:disabled):is(:hover, :active) { transform: none; }
 .workspace-icon-action:disabled { cursor: not-allowed; opacity: .45; }
 .workspace-mode-switch { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid transparent; border-radius: 6px; background: transparent; }
 .workspace-mode-switch button { padding: 4px 8px; font-size: 12px; }
@@ -1477,6 +1512,16 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .note-outline small { opacity: .55; font-size: 9px; }
 .note-outline span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .note-outline p, .pdf-outline p { padding: 0 10px; color: var(--text-faint); font-size: 11px; line-height: 1.7; }
+/* Shared vertical scrollbars keep a wider native drag track and a restrained thumb. */
+.app :is(.file-list, .pdf-canvas-wrap, .cm-scroller, .markdown-preview, .note-outline, .pdf-outline, .epub-search-results, .epub-annotation-list, .settings-popover) {
+  scrollbar-width: auto;
+  scrollbar-color: auto;
+  scrollbar-gutter: stable;
+}
+.settings-popover { max-height: calc(100vh - 64px); overflow-y: auto; }
+.app :is(.file-list, .pdf-canvas-wrap, .cm-scroller, .markdown-preview, .note-outline, .pdf-outline, .epub-search-results, .epub-annotation-list, .settings-popover)::-webkit-scrollbar { width: 12px; height: 12px; }
+.app :is(.file-list, .pdf-canvas-wrap, .cm-scroller, .markdown-preview, .note-outline, .pdf-outline, .epub-search-results, .epub-annotation-list, .settings-popover)::-webkit-scrollbar-thumb { min-height: 32px; border: 3px solid transparent; border-radius: 5px; background: var(--scrollbar) padding-box; }
+.app :is(.file-list, .pdf-canvas-wrap, .cm-scroller, .markdown-preview, .note-outline, .pdf-outline, .epub-search-results, .epub-annotation-list, .settings-popover)::-webkit-scrollbar-track { background: transparent; }
 .markdown-preview { padding: 30px clamp(30px, 4vw, 64px) 110px; }
 .markdown-preview > :is(h1, h2, h3, h4, h5, h6, p, ul, ol, blockquote, pre, table, hr) {
   width: 100%;
@@ -1662,17 +1707,10 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 
 /* Short linear motion, without animating editor/reader geometry. */
 .app[data-fullscreen="true"] :is(.topbar, .note-workspace-bar, .pdf-navigation) {
-  transition: transform 240ms cubic-bezier(.2,.75,.3,1), opacity 200ms linear;
+  transition: transform var(--motion-layout) var(--motion-ease-enter), opacity var(--motion-panel) linear;
 }
 .app[data-fullscreen="true"][data-chrome-visible="false"] :is(.topbar, .note-workspace-bar, .pdf-navigation) {
-  transition: transform 240ms cubic-bezier(.4,0,.6,1), opacity 200ms linear 40ms;
-}
-@keyframes control-enter {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.app :is(.settings-popover, .file-context-menu, .selection-toolbar, .pdf-text-actions, .pdf-annotation-menu, .tab-context-menu) {
-  animation: control-enter 120ms cubic-bezier(.2,.75,.3,1);
+  transition: transform var(--motion-layout) var(--motion-ease-exit), opacity var(--motion-panel) linear 40ms;
 }
 .motion-preference { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; cursor: pointer; }
 .motion-preference input { accent-color: var(--accent); }
@@ -1683,6 +1721,55 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .app[data-motion="reduced"], .app[data-motion="reduced"] *, .app[data-motion="reduced"] *::before, .app[data-motion="reduced"] *::after {
   scroll-behavior: auto !important; animation: none !important; transition: none !important;
 }
+.app [inert][aria-hidden="true"] { pointer-events: none; }
+.app :is(.topbar button, .body > .sidebar button, .pane-toolbar button, .pdf-tools button, .selection-actions button, .annotation-list button, .modal-backdrop button, .toast button) > :is(svg, span, b) {
+  transition: transform var(--motion-press) var(--motion-ease-enter);
+}
+.app[data-motion="full"] :is(.body > .sidebar button, .pane-toolbar button, .pdf-tools button, .selection-actions button, .annotation-list button, .modal-backdrop button, .toast button):not(:disabled):hover > :is(svg, span, b) { transform: translateY(-1px); }
+.app[data-motion="full"] :is(.body > .sidebar button, .pane-toolbar button, .pdf-tools button, .selection-actions button, .annotation-list button, .modal-backdrop button, .toast button):not(:disabled):active > :is(svg, span, b) { transform: translateY(1px); }
+.app :is(.file-context-menu button, .tab-context-menu button, .note-outline button, .pdf-outline button, .epub-search-panel button, .epub-annotation-item button, .empty-tab-actions button, .find-bar button) > :is(svg, span, b) {
+  transition: color var(--motion-feedback) var(--motion-ease-enter), transform var(--motion-press) var(--motion-ease-enter);
+}
+.app[data-motion="full"] :is(.file-context-menu button, .tab-context-menu button, .note-outline button, .pdf-outline button, .epub-search-panel button, .epub-annotation-item button, .empty-tab-actions button, .find-bar button):not(:disabled):hover > :is(svg, span, b) { transform: translateY(-1px); }
+.app[data-motion="full"] :is(.file-context-menu button, .tab-context-menu button, .note-outline button, .pdf-outline button, .epub-search-panel button, .epub-annotation-item button, .empty-tab-actions button, .find-bar button):not(:disabled):active > :is(svg, span, b) { transform: translateY(1px); }
 .cm-md-image { display: inline-block; max-width: min(100%, 42rem); max-height: 32rem; object-fit: contain; vertical-align: middle; cursor: pointer; }
 .cm-md-image-error { outline: 1px dashed var(--muted); }
 .cm-md-inline-code-content { border-radius: 3px; padding: .06em .28em; background: color-mix(in srgb, var(--accent) 9%, var(--surface)); color: var(--accent); white-space: pre-wrap; }
+
+/* Keep quiet topbar hit areas still; feedback belongs to their glyphs. */
+.app > .topbar :is(.sidebar-toggle, .top-actions > .quiet-action, .settings-menu > .quiet-action, .window-controls > button) {
+  background: transparent !important;
+  transition: color var(--motion-feedback) var(--motion-ease-enter), background-color 0s, transform 0s;
+}
+.app > .topbar :is(.sidebar-toggle, .top-actions > .quiet-action, .settings-menu > .quiet-action, .window-controls > button):hover {
+  background: transparent !important;
+  color: var(--accent);
+}
+.app > .topbar :is(.sidebar-toggle, .top-actions > .quiet-action, .settings-menu > .quiet-action, .window-controls > button):active { transform: none; }
+.app > .topbar :is(.sidebar-toggle, .top-actions > .quiet-action, .settings-menu > .quiet-action, .window-controls > button) > :is(svg, .action-label, span) {
+  transition: color var(--motion-feedback) var(--motion-ease-enter), transform var(--motion-press) var(--motion-ease-enter);
+}
+.app[data-motion="full"] > .topbar :is(.sidebar-toggle, .top-actions > .quiet-action, .settings-menu > .quiet-action, .window-controls > button):not(:disabled):hover > :is(svg, .action-label, span) { transform: translateY(-1px); }
+.app[data-motion="full"] > .topbar :is(.sidebar-toggle, .top-actions > .quiet-action, .settings-menu > .quiet-action, .window-controls > button):not(:disabled):active > :is(svg, .action-label, span) { transform: translateY(1px); }
+.app > .topbar .layout-tabs button { transition: background-color 0s, color var(--motion-feedback) var(--motion-ease-enter), transform 0s; }
+.app > .topbar .layout-tabs button:not(.active):hover { background: transparent !important; color: var(--accent); }
+.app > .topbar .layout-tabs button.active:hover { background: var(--mode-bg, var(--accent-soft)) !important; color: var(--on-mode, var(--accent)); }
+.app > .topbar .layout-tabs button:active { transform: none; }
+.app > .topbar .layout-tabs button > span { display: inline-block; }
+.app > .topbar .layout-tabs button > span { transition: color var(--motion-feedback) var(--motion-ease-enter), transform var(--motion-press) var(--motion-ease-enter); }
+.app[data-motion="full"] > .topbar .layout-tabs button:not(:disabled):hover > span { transform: translateY(-1px); }
+.app[data-motion="full"] > .topbar .layout-tabs button:not(:disabled):active > span { transform: translateY(1px); }
+.app > .topbar .new-note-action { transition: background-color 0s, border-color 0s; }
+.app > .topbar .new-note-action:hover { background: var(--action-hover, var(--accent-hover)) !important; color: var(--on-action, var(--on-accent)); }
+.app > .topbar .new-note-action:active { transform: none !important; }
+.app[data-motion="full"] > .topbar .new-note-action:not(:disabled):hover > :is(svg, span) { transform: translateY(-1px); }
+.app[data-motion="full"] > .topbar .new-note-action:not(:disabled):active > :is(svg, span) { transform: translateY(1px); }
+.app > .topbar .new-note-action > :is(svg, span) { transition: transform var(--motion-press) var(--motion-ease-enter); }
+.note-workspace-bar .document-tab > button { background: transparent !important; transition: color var(--motion-feedback) var(--motion-ease-enter), background-color 0s, transform 0s; }
+.note-workspace-bar .document-tab > button:hover { color: var(--accent); }
+.note-workspace-bar .document-tab > button > :is(svg, span) { transition: color var(--motion-feedback) var(--motion-ease-enter), transform var(--motion-press) var(--motion-ease-enter); }
+.app[data-motion="full"] .note-workspace-bar .document-tab > button:not(:disabled):hover > :is(svg, span) { transform: translateY(-1px); }
+.app[data-motion="full"] .note-workspace-bar .document-tab > button:not(:disabled):active > :is(svg, span) { transform: translateY(1px); }
+@keyframes markdown-token-reveal { from { opacity: .3; } to { opacity: 1; } }
+@keyframes markdown-text-reveal { from { opacity: .55; } to { opacity: 1; } }
+@keyframes folder-row-enter { from { opacity: .4; transform: translateX(var(--folder-row-offset)); } to { opacity: 1; transform: translateX(0); } }

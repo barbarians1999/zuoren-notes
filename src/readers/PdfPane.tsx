@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { OutlinePanel } from '../OutlinePanel';
 import { BookOpen, ChevronLeft, ChevronRight, Copy, Crop, List, Highlighter, Maximize2, MessageSquare, MousePointer2, Search, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react';
 import type { PdfAnchor, PdfAnnotation, PdfMeta, PdfRect } from '../types';
@@ -17,6 +17,7 @@ import { PdfPopover } from './PdfPopover';
 import { ActionButton } from '../ui/ActionButton';
 import { ResponsiveToolGroup } from '../ui/ResponsiveToolGroup';
 import { DialogFrame } from '../ui/overlays';
+import { ReducedMotionContext, motionNumber, motionText, usePanelMotion } from '../uiMotion';
 import { createPdfRegionAction, type PdfExcerptContext, type PdfRegionAction } from './pdfRegionAction';
 import type { ExcerptFlowResult } from './excerptFlow';
 import { groupedPdfImages, paintPdfAppearance, type PdfRaster } from './pdfAppearance';
@@ -40,7 +41,9 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
   const [searchMatches, setSearchMatches] = useState<PdfSearchMatch[]>([]), [searchIndex, setSearchIndex] = useState(-1);
   const [searchStatus, setSearchStatus] = useState({ processed: 0, totalPages: 0, totalMatches: 0, errors: 0, truncated: false });
   const [size, setSize] = useState({ width: 595, height: 842 });
-  const pane = useRef<HTMLElement>(null), searchInput = useRef<HTMLInputElement>(null), pageInput = useRef<HTMLInputElement>(null);
+  const reducedMotion = useContext(ReducedMotionContext);
+  const pane = useRef<HTMLElement>(null), searchInput = useRef<HTMLInputElement>(null), searchTrigger = useRef<HTMLButtonElement>(null), pageInput = useRef<HTMLInputElement>(null);
+  const searchMotion = usePanelMotion(searchOpen, reducedMotion, '4px', () => searchTrigger.current || pane.current, 'y', { enter: '--motion-feedback', exit: '--motion-exit' });
   const [annotationMenu, setAnnotationMenu] = useState<{ id: string; key: object } | null>(null);
   const textSelection = usePdfSelection({ pdf, root: pane, tool, onTextAction, onMessage, onStart: () => setAnnotationMenu(null),
     onClickPoint: (x, y, element) => {
@@ -260,6 +263,17 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
   }, [document, searchOpen, searchText, searchCase]);
   const currentSearch = searchIndex >= 0 ? searchMatches[searchIndex] || null : null;
   useEffect(() => {
+    if (!textSelection.draft) return;
+    const dismissBodySelection = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.target !== window.document.body) return;
+      const selection = window.getSelection();
+      if (!selection?.anchorNode || !pane.current?.contains(selection.anchorNode)) return;
+      textSelection.clear(); event.preventDefault(); event.stopPropagation();
+    };
+    window.document.addEventListener('keydown', dismissBodySelection);
+    return () => window.document.removeEventListener('keydown', dismissBodySelection);
+  }, [textSelection.draft, textSelection.clear]);
+  useEffect(() => {
     if (window.document.activeElement !== pageInput.current) setPageDraft(String(page));
   }, [page]);
   useEffect(() => { if (currentSearch) jump(currentSearch.page); }, [currentSearch?.page, currentSearch?.occurrence]);
@@ -324,11 +338,11 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
         <button aria-label="批注" title="批注" aria-pressed={tool === 'note'} className={tool === 'note' ? 'on' : ''} onClick={() => setTool('note')}><MessageSquare size={16}/><span>批注</span></button>
       </ResponsiveToolGroup>
       <span className="toolbar-spacer"/>
-      <button className="icon-button" aria-label="在 PDF 中查找" title="在 PDF 中查找（Ctrl+F）" onClick={() => { setSearchOpen(true); requestAnimationFrame(() => searchInput.current?.focus()); }}><Search size={16}/></button>
+      <button ref={searchTrigger} className="icon-button" aria-label="在 PDF 中查找" title="在 PDF 中查找（Ctrl+F）" onClick={() => { setSearchOpen(true); requestAnimationFrame(() => searchInput.current?.focus()); }}><Search size={16}/></button>
       <div className="toolbar-group zoom-control"><button className="icon-button" title="缩小" aria-label="缩小" onClick={() => requestScale((zoomAnchor.current?.scale ?? scale) - .15)}><ZoomOut size={17}/></button><span>{Math.round(scale * 100)}%</span><button className="icon-button" title="放大" aria-label="放大" onClick={() => requestScale((zoomAnchor.current?.scale ?? scale) + .15)}><ZoomIn size={17}/></button>{!fullscreen && <button className="icon-button" aria-pressed={false} title="进入全屏阅读" aria-label="进入全屏阅读" onClick={onToggleFullscreen}><Maximize2 size={17}/></button>}</div>
       <button data-pdf-outline-toggle className="icon-button" aria-pressed={showToc} aria-expanded={showToc} aria-label={showToc ? '收起 PDF 大纲' : '展开 PDF 大纲'} title={pdf ? `${pdf.name}\n${showToc ? '收起大纲' : '展开大纲'}` : '展开大纲'} onClick={() => setShowToc(value => !value)}><List size={17}/></button>
     </div>
-    {searchOpen && <div className="pdf-find-bar" role="search" aria-label="查找当前 PDF"><Search size={15}/><input ref={searchInput} aria-label="PDF 查找文本" placeholder="在这份 PDF 中查找" value={searchText} onChange={event => setSearchText(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { setSearchOpen(false); setSearchText(''); pane.current?.focus(); } else if (event.key === 'Enter' && searchMatches.length) setSearchIndex(index => stepMatchIndex(searchMatches.length, index, event.shiftKey ? -1 : 1)); }}/><span className="pdf-find-progress" aria-live="polite">{searching ? `已检索 ${searchStatus.processed}/${searchStatus.totalPages} 页` : searchStatus.errors ? `${searchStatus.errors} 页无法提取文字` : ''}</span><span className="find-count" aria-live="polite">{searching ? `${searchStatus.totalMatches} 项` : searchStatus.totalMatches ? (searchStatus.truncated ? `${searchIndex + 1} / 5000 · 共 ${searchStatus.totalMatches}` : `${searchIndex + 1} / ${searchStatus.totalMatches}`) : '0 / 0'}</span><button className={searchCase ? 'selected' : ''} aria-label="PDF 搜索区分大小写" aria-pressed={searchCase} title="区分大小写" onClick={() => setSearchCase(value => !value)}>Aa</button><button aria-label="上一个 PDF 匹配" disabled={!searchMatches.length} onClick={() => setSearchIndex(index => stepMatchIndex(searchMatches.length, index, -1))}>↑</button><button aria-label="下一个 PDF 匹配" disabled={!searchMatches.length} onClick={() => setSearchIndex(index => stepMatchIndex(searchMatches.length, index, 1))}>↓</button><button aria-label="关闭 PDF 查找" title="关闭（Esc）" onClick={() => { setSearchOpen(false); setSearchText(''); pane.current?.focus(); }}>×</button></div>}
+    {searchMotion.present && <div ref={searchMotion.ref as React.RefObject<HTMLDivElement | null>} className="pdf-find-bar" role="search" aria-label="查找当前 PDF" aria-hidden={!searchOpen}><Search size={15}/><input ref={searchInput} aria-label="PDF 查找文本" placeholder="在这份 PDF 中查找" value={searchText} onChange={event => setSearchText(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { setSearchOpen(false); setSearchText(''); pane.current?.focus(); } else if (event.key === 'Enter' && searchMatches.length) setSearchIndex(index => stepMatchIndex(searchMatches.length, index, event.shiftKey ? -1 : 1)); }}/><span className="pdf-find-progress" aria-live="polite">{searching ? `已检索 ${searchStatus.processed}/${searchStatus.totalPages} 页` : searchStatus.errors ? `${searchStatus.errors} 页无法提取文字` : ''}</span><span className="find-count" aria-live="polite">{searching ? `${searchStatus.totalMatches} 项` : searchStatus.totalMatches ? (searchStatus.truncated ? `${searchIndex + 1} / 5000 · 共 ${searchStatus.totalMatches}` : `${searchIndex + 1} / ${searchStatus.totalMatches}`) : '0 / 0'}</span><button className={searchCase ? 'selected' : ''} aria-label="PDF 搜索区分大小写" aria-pressed={searchCase} title="区分大小写" onClick={() => setSearchCase(value => !value)}>Aa</button><button aria-label="上一个 PDF 匹配" disabled={!searchMatches.length} onClick={() => setSearchIndex(index => stepMatchIndex(searchMatches.length, index, -1))}>↑</button><button aria-label="下一个 PDF 匹配" disabled={!searchMatches.length} onClick={() => setSearchIndex(index => stepMatchIndex(searchMatches.length, index, 1))}>↓</button><button aria-label="关闭 PDF 查找" title="关闭（Esc）" onClick={() => { setSearchOpen(false); setSearchText(''); pane.current?.focus(); }}>×</button></div>}
 
     <div className="pdf-reader-body">
       <div className="pdf-canvas-wrap continuous-pdf" ref={scroll} onScroll={() => {
@@ -347,21 +361,25 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
           Array.from({ length: pages }, (_, index) => ({ id: String(index), label: `第 ${index + 1} 页`, depth: 0, active: page === index + 1 }))}
         onSelect={item => { if (toc.length) void goToDestination(toc[Number(item.id)].dest); else jump(Number(item.id) + 1); }}/>
     </div>
-    {textSelection.draft && <PdfPopover root={pane} anchor={() => visibleRect('.pdf-text-selection')} className="selection-actions pdf-text-actions">
-      <ActionButton aria-label="复制 PDF 选中文字" title="复制选中文字（Ctrl+C）" identity={textSelection.draft.id} action={textSelection.copy} successLabel="已复制" onError={onMessage}><Copy size={14}/>复制</ActionButton>
-      {textSelection.result?.retry ? <><span role="status">{textSelection.result.saved ? '高亮已保存，摘录待重试' : '操作未完成'}</span><button disabled={textSelection.busy} onClick={() => void textSelection.act('excerpt')}>{textSelection.result.saved ? '重试摘录' : '重试操作'}</button></> : <>
-        <button disabled={textSelection.busy} onClick={() => void textSelection.act('highlight')}><Highlighter size={14}/>高亮</button>
-        <button disabled={textSelection.busy || !canExcerpt} title={!canExcerpt ? '请先打开可写入的笔记并处理保存或恢复冲突' : '将选中文字插入当前笔记'} onClick={() => void textSelection.act('excerpt')}>摘录到当前笔记</button>
-        {tool === 'highlight' && <button disabled={textSelection.busy || !canExcerpt} onClick={() => void textSelection.act('highlight-and-excerpt')}>高亮并摘录</button>}
+    <PdfPopover open={!!textSelection.draft} root={pane} anchor={() => visibleRect('.pdf-text-selection')} className="selection-actions pdf-text-actions">
+      {textSelection.draft && <>
+        <ActionButton aria-label="复制 PDF 选中文字" title="复制选中文字（Ctrl+C）" identity={textSelection.draft.id} action={textSelection.copy} successLabel="已复制" onError={onMessage}><Copy size={14}/>复制</ActionButton>
+        {textSelection.result?.retry ? <><span role="status">{textSelection.result.saved ? '高亮已保存，摘录待重试' : '操作未完成'}</span><button disabled={textSelection.busy} onClick={() => void textSelection.act('excerpt')}>{textSelection.result.saved ? '重试摘录' : '重试操作'}</button></> : <>
+          <button disabled={textSelection.busy} onClick={() => void textSelection.act('highlight')}><Highlighter size={14}/>高亮</button>
+          <button disabled={textSelection.busy || !canExcerpt} title={!canExcerpt ? '请先打开可写入的笔记并处理保存或恢复冲突' : '将选中文字插入当前笔记'} onClick={() => void textSelection.act('excerpt')}>摘录到当前笔记</button>
+          {tool === 'highlight' && <button disabled={textSelection.busy || !canExcerpt} onClick={() => void textSelection.act('highlight-and-excerpt')}>高亮并摘录</button>}
+        </>}
+        <button aria-label="取消 PDF 文字选区" onClick={textSelection.clear}><X size={14}/></button>
       </>}
-      <button aria-label="取消 PDF 文字选区" onClick={textSelection.clear}><X size={14}/></button>
-    </PdfPopover>}
-    {menuAnnotation && <PdfPopover root={pane} anchor={() => visibleRect(`[data-annotation-id="${CSS.escape(menuAnnotation.id)}"]`)} className="selection-actions pdf-annotation-menu">
-      <span>{menuAnnotation.type === 'highlight' ? '已保存高亮' : menuAnnotation.type === 'note' ? '批注' : '图片摘录'}</span>
-      {menuAnnotation.text && <span>{menuAnnotation.text}</span>}
-      <button disabled={deleting} aria-label="删除 PDF 标记" onClick={() => void removeAnnotation(menuAnnotation.id)}><Trash2 size={14}/>删除</button>
-      <button aria-label="关闭 PDF 标记菜单" onClick={() => setAnnotationMenu(null)}><X size={14}/></button>
-    </PdfPopover>}
+    </PdfPopover>
+    <PdfPopover open={!!menuAnnotation} root={pane} anchor={() => visibleRect(`[data-annotation-id="${CSS.escape(menuAnnotation?.id || '')}"]`)} className="selection-actions pdf-annotation-menu">
+      {menuAnnotation && <>
+        <span>{menuAnnotation.type === 'highlight' ? '已保存高亮' : menuAnnotation.type === 'note' ? '批注' : '图片摘录'}</span>
+        {menuAnnotation.text && <span>{menuAnnotation.text}</span>}
+        <button disabled={deleting} aria-label="删除 PDF 标记" onClick={() => void removeAnnotation(menuAnnotation.id)}><Trash2 size={14}/>删除</button>
+        <button aria-label="关闭 PDF 标记菜单" onClick={() => setAnnotationMenu(null)}><X size={14}/></button>
+      </>}
+    </PdfPopover>
     {deletedAnnotation && sameDocument(deletedAnnotation.path, deletedAnnotation.annotation.anchor.pdfId) && <div className="inline-undo" role="status">已删除一条 PDF 标记<button disabled={deleting} onClick={() => void undoDelete()}>撤销</button><button disabled={deleting} aria-label="关闭撤销提示" onClick={() => setDeletedAnnotation(null)}>×</button></div>}
   </section>;
 }
@@ -390,12 +408,18 @@ function PdfPageSlot({ document, number, scale, size, root, pinned, children }: 
 }
 
 function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, captureExcerpt, target, onMessage, document: sharedDocument, tool, textSelection, search }: { dark: boolean; document: any; tool: PdfTool; pdf: ActivePdf | null; page: number; scale: number; onMeta: (change: (current: PdfMeta) => PdfMeta) => Promise<boolean>; onShowAnnotation: (id: string) => void; deleting: boolean; captureExcerpt: (source: ActivePdf) => PdfExcerptContext | null; target: PdfAnchor | null; onMessage: (message: string) => void; textSelection: PdfSelectedPage | null; search: { query: string; occurrence: number; caseSensitive: boolean } | null }) {
+  const reducedMotion = useContext(ReducedMotionContext);
+  const reducedMotionRef = useRef(reducedMotion); reducedMotionRef.current = reducedMotion;
   const canvas = useRef<HTMLCanvasElement>(null);
   const raster = useRef<PdfRaster | null>(null);
+  const pagePainted = useRef(false);
   const night = useRef(dark); night.current = dark;
   useLayoutEffect(() => {
     if (canvas.current && raster.current) paintPdfAppearance(canvas.current, raster.current, dark);
   }, [dark]);
+  useLayoutEffect(() => {
+    if (reducedMotion) canvas.current?.getAnimations().forEach(animation => animation.cancel());
+  }, [reducedMotion]);
   const textLayer = useRef<HTMLDivElement>(null);
   const holder = useRef<HTMLDivElement>(null);
   const pdfDocument = useRef<any>(null);
@@ -406,6 +430,9 @@ function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, c
   const [rotation, setRotation] = useState<0 | 90 | 180 | 270>(0);
 
   const [selection, setSelection] = useState<PdfRect[] | null>(null);
+  const lastSelection = useRef<PdfRect[] | null>(null); if (selection) lastSelection.current = selection;
+  const selectionActionsMotion = usePanelMotion(!!selection, reducedMotion, '4px', () => holder.current?.closest<HTMLElement>('.pdf-pane') || null, 'y', { enter: '--motion-feedback', exit: '--motion-exit' });
+  const selectionForMotion = selection || lastSelection.current;
   const [comment, setComment] = useState('');
   const [ocr, setOcr] = useState<(OcrDialog & { action: PdfRegionAction; result?: ExcerptFlowResult }) | null>(null);
   const ocrTitleId = React.useId();
@@ -451,7 +478,18 @@ function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, c
         if (cancelled || textLayer.current !== layer) return;
         textTask = new pdfjsLib.TextLayer({ textContentSource: text, container: layer, viewport });
         await textTask.render();
-        if (!cancelled) setTextRevision(value => value + 1);
+        if (!cancelled) {
+          setTextRevision(value => value + 1);
+          if (!pagePainted.current) {
+            pagePainted.current = true;
+            if (!reducedMotionRef.current) {
+              const style = getComputedStyle(holder.current || currentCanvas), opacity = Number.parseFloat(style.opacity) || 1;
+              currentCanvas.animate([{ opacity: opacity * .84 }, { opacity }], {
+                duration: motionNumber(style, '--motion-page', 120), easing: motionText(style, '--motion-ease-enter', 'cubic-bezier(.2,.75,.3,1)'),
+              });
+            }
+          }
+        }
       } catch (error: any) { if (!cancelled && error?.name !== 'RenderingCancelledException') onMessage(`页面显示失败：${error?.message || error}`); }
       finally { if (!cancelled) setLoading(false); }
     })();
@@ -597,7 +635,7 @@ function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, c
         {selection?.map((rect, index) => <div className="selection-box" key={index} style={{ left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.w * 100}%`, height: `${rect.h * 100}%` }}/>) }
       </div>{loading && <div className="loading">正在载入页面…</div>}
     </div>
-    {selection && <div className="selection-actions">{tool === 'region' ? renderRegionActions() : <><input autoFocus disabled={savingAnnotation} value={comment} onChange={event => setComment(event.target.value)} placeholder="写下批注"/><button className="primary" disabled={savingAnnotation || !comment.trim()} onClick={() => void saveHighlight()}>保存批注</button></>}<button disabled={savingAnnotation} onClick={() => { setSelection(null); regionOperation.current = null; setRegionResult(null); }}>取消</button></div>}
+    {selectionActionsMotion.present && selectionForMotion && <div ref={selectionActionsMotion.ref as React.RefObject<HTMLDivElement | null>} className="selection-actions" aria-hidden={!selection}>{tool === 'region' ? renderRegionActions() : <><input autoFocus disabled={savingAnnotation} value={comment} onChange={event => setComment(event.target.value)} placeholder="写下批注"/><button className="primary" disabled={savingAnnotation || !comment.trim()} onClick={() => void saveHighlight()}>保存批注</button></>}<button disabled={savingAnnotation} onClick={() => { setSelection(null); regionOperation.current = null; setRegionResult(null); }}>取消</button></div>}
     {!!pageAnnotations.length && <aside className="annotation-list"><b>本页标记</b>{pageAnnotations.map(annotation => <div key={annotation.id}><span>{annotation.type === 'highlight' ? '高亮' : annotation.type === 'region' ? '框选' : '批注'} · {annotation.anchor.quote || annotation.text || annotation.ocrText || '第 ' + page + ' 页'}</span><button disabled={deleting} onClick={() => onShowAnnotation(annotation.id)}>查看</button></div>)}</aside>}
     </div>}
     </div>

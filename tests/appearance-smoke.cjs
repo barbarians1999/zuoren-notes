@@ -49,9 +49,9 @@ async function openPrimaryNote(page) {
 }
 
 async function openSettings(page) {
-  if (await page.locator('.settings-popover').count()) return;
-  await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.locator('.settings-popover').waitFor();
+  const trigger = page.getByRole('button', { name: '设置', exact: true });
+  if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click();
+  await page.locator('.settings-popover[aria-hidden="false"]').waitFor();
 }
 
 async function fontFamily(locator) {

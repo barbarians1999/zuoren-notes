@@ -155,6 +155,60 @@ test('Tab changes only selected physical lines and ordered-list renumbering undo
   assert.equal(prose.state.doc.toString(), '\tfirst\n\tsecond\nthird');
 });
 
+test('Tab on a blank list continuation stores a real tab and Shift-Tab removes it as one undoable edit', async () => {
+  const { keyHabitsTab } = await import('../src/editor/markdownKeyHabits.ts');
+  const { undo } = await import('@codemirror/commands');
+  const doc = '- item\n', v = await view(doc, { anchor: doc.length });
+  assert.equal(keyHabitsTab(1)(v), true);
+  assert.equal(v.state.doc.toString(), '- item\n\t');
+  assert.equal(v.state.selection.main.head, v.state.doc.length, 'Tab leaves the caret at the end of the literal tab');
+  assert.equal(keyHabitsTab(-1)(v), true);
+  assert.equal(v.state.doc.toString(), doc);
+  assert.equal(undo(v), true); assert.equal(v.state.doc.toString(), '- item\n\t');
+  assert.equal(undo(v), true); assert.equal(v.state.doc.toString(), doc);
+});
+
+test('repeated list Tab never converts a marker into plain continuation text', async () => {
+  const { keyHabitsTab } = await import('../src/editor/markdownKeyHabits.ts');
+  const { ensureSyntaxTree } = await import('@codemirror/language');
+  const { undo } = await import('@codemirror/commands');
+  const { marked } = await import('marked');
+  for (const marker of ['-', '- [ ]', '1.']) {
+    const doc = `${marker} 我们得了出处\n${marker} 我们😀`, v = await view(doc), errors = [];
+    assert.equal(keyHabitsTab(1, message => errors.push(message))(v), true);
+    const once = v.state.doc.toString(), selection = v.state.selection;
+    assert.notEqual(once, doc);
+    assert.equal(keyHabitsTab(1, message => errors.push(message))(v), true);
+    assert.equal(v.state.doc.toString(), once, 'without a preceding sibling, a second indent is a handled no-op');
+    assert.ok(v.state.selection.eq(selection), 'rejected indentation preserves UTF-16 selection');
+    const tree = ensureSyntaxTree(v.state, v.state.doc.length, 100), marks = [];
+    tree.iterate({ enter(ref) { if (ref.name === 'ListMark') marks.push(ref.from); } });
+    assert.equal(marks.length, 2, 'both original source markers remain list markers');
+    assert.equal((await marked.parse(once)).match(/<li>/g)?.length, 2, 'reading mode sees the same two list items');
+    const reopened = await view(once, { anchor: selection.main.head });
+    assert.equal(keyHabitsTab(1)(reopened), true);
+    assert.equal(reopened.state.doc.toString(), once, 'recreating the state from saved source preserves the no-op boundary');
+    assert.equal(undo(v), true); assert.equal(v.state.doc.toString(), doc, 'the rejected Tab creates no undo entry');
+  }
+});
+
+test('a first or only list item cannot be indented into code, while a sibling can become a nested item', async () => {
+  const { keyHabitsTab } = await import('../src/editor/markdownKeyHabits.ts');
+  const { ensureSyntaxTree } = await import('@codemirror/language');
+  for (const doc of ['- only', '- parent\n  - only child', '1. only']) {
+    const v = await view(doc), selection = v.state.selection;
+    assert.equal(keyHabitsTab(1)(v), true);
+    assert.equal(v.state.doc.toString(), doc);
+    assert.ok(v.state.selection.eq(selection));
+  }
+  const doc = '- parent\n  - first\n  - second', v = await view(doc);
+  assert.equal(keyHabitsTab(1)(v), true);
+  assert.notEqual(v.state.doc.toString(), doc);
+  const tree = ensureSyntaxTree(v.state, v.state.doc.length, 100), marks = [];
+  tree.iterate({ enter(ref) { if (ref.name === 'ListMark') marks.push(ref.from); } });
+  assert.equal(marks.length, 3);
+});
+
 test('Tab renumbers a loose ordered list without touching other lines and undoes once', async () => {
   const { keyHabitsTab } = await import('../src/editor/markdownKeyHabits.ts');
   const { undo } = await import('@codemirror/commands');
@@ -184,13 +238,13 @@ test('ordered numbering changes only selected list markers and their original sa
   for (const [doc, cursorText, expected] of [
     ['5. first\n   continuation\n42. second', 'continuation', '5. first\n\t   continuation\n42. second'],
     ['1. parent\n2. selected\n   4. child1\n   8. child2\n3. sibling\n\n5. other\n42. untouched', '2. selected', '1. parent\n\t1. selected\n   4. child1\n   8. child2\n2. sibling\n\n5. other\n42. untouched'],
-    ['5. one\n6. two\n7. three', '5. one', '\t5. one\n6. two\n7. three'],
-    ['5. parent\n   - unordered child\n42. second', 'unordered child', '5. parent\n\t   - unordered child\n42. second'],
+    ['5. one\n6. two\n7. three', '5. one', '5. one\n6. two\n7. three'],
+    ['5. parent\n   - unordered child\n42. second', 'unordered child', '5. parent\n   - unordered child\n42. second'],
   ]) {
     const v = await view(doc, { anchor: doc.indexOf(cursorText) });
     assert.equal(keyHabitsTab(1)(v), true, cursorText);
     assert.equal(v.state.doc.toString(), expected, cursorText);
-    assert.equal(undo(v), true, 'indent and any affected sibling numbering undo together');
+    assert.equal(undo(v), expected !== doc, 'only a valid list move creates an undo entry; code/lazy-text conversions are rejected');
     assert.equal(v.state.doc.toString(), doc, 'undo restores exact source and line identities');
   }
 });

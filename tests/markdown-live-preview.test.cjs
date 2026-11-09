@@ -23,6 +23,46 @@ test('GFM tasks, strike, emphasis and highlights use parsed nodes',async()=>{
  for(const cls of ['strikethrough','strong','emphasis','highlight'])assert.ok(result.some(x=>x.spec.class==='cm-md-'+cls),cls);
  assert.ok(result.some(x=>x.spec.widget?.constructor.name==='TaskWidget'));
 });
+test('motion source ranges follow visible inline text gaps without covering hidden Markdown tokens', async () => {
+ const text = 'Start **bold phrase** middle *italic phrase* and [linked phrase](https://example.test)';
+ const { result } = await plan(text, { anchor: text.indexOf('bold phrase') + 1 });
+ const runs = result.filter(item => item.spec.attributes?.['data-md-motion-key']);
+ assert.ok(runs.some(item => item.source === 'Start '));
+ assert.ok(runs.some(item => item.source === 'bold phrase'));
+ assert.ok(runs.some(item => item.source.includes('italic phrase')));
+ assert.ok(runs.some(item => item.source.includes('linked phrase')));
+ assert.equal(runs.some(item => item.source.includes('**') || item.source.includes('*') || item.source.includes('](')), false);
+});
+test('motion runs omit leading list-continuation indentation so indent edits can map text identity', async () => {
+ const text = '- parent\n  continuation', { state, result } = await plan(text, { anchor: text.indexOf('continuation') + 1 });
+ const line = state.doc.lineAt(text.indexOf('continuation'));
+ const runs = result.filter(item => item.spec.attributes?.['data-md-motion-key'] && item.from >= line.from && item.to <= line.to);
+ assert.deepEqual(runs.map(item => item.source), ['continuation']);
+ assert.equal(state.doc.toString(), text, 'the visible motion range does not remove source indentation');
+});
+test('active list prefix is not split by motion decorations', async () => {
+ const text = '- 这个';
+ const { result } = await plan(text, { anchor: 1 });
+ const prefix = result.find(item => item.spec.class?.includes('cm-md-list-prefix'));
+ const runs = result.filter(item => item.spec.attributes?.['data-md-motion-key']);
+ assert.ok(prefix);
+ assert.equal(runs.some(run => run.from < prefix.to && run.to > prefix.from), false, 'the editable marker and its space share one visual gutter');
+});
+test('heading body motion identity exists before first entry and survives repeated delimiter disclosure', async () => {
+ for (const prefix of [1, 2, 3, 4, 5, 6].flatMap(level => [' ', '   '].map(gap => '#'.repeat(level) + gap))) {
+  const text = `${prefix}标题😀正文\n\n普通正文`, bodyFrom = prefix.length, bodyTo = text.indexOf('\n');
+  const key = `${bodyFrom}:${bodyTo}`;
+  for (const anchor of [text.length, bodyFrom + 1, text.length, bodyTo]) {
+   const { result } = await plan(text, { anchor });
+   const runs = result.filter(item => item.spec.attributes?.['data-md-motion-key'] === key);
+   assert.equal(runs.length, 1, `${JSON.stringify(prefix)} at ${anchor} keeps the same heading body`);
+   assert.equal(runs[0].source, '标题😀正文');
+   const labels = result.filter(item => item.spec.attributes?.['data-md-heading-level']);
+   assert.equal(labels.length, 1, 'the heading has one level label, independent of its inline marks');
+   assert.equal(labels[0].spec.attributes['data-md-heading-level'], String(prefix.trim().length));
+  }
+ }
+});
 test('table becomes one block widget only while selection is outside it',async()=>{
  const text='cursor\n\n| A | B |\n| :--- | ---: |\n| x | y |';
  const inactive=await plan(text);assert.equal(inactive.result.filter(x=>x.spec.widget?.constructor.name==='TableWidget').length,1);
@@ -117,7 +157,7 @@ test('moving the caret within the same active line reuses decorations; crossing 
 test('inline constructs activate only under the caret, selections expose touched syntax, and task bodies keep checkboxes', async () => {
  const text = '**one** and *two*\n\n- [ ] task';
  const first = await plan(text, { anchor: text.indexOf('one') + 1 });
- assert.equal(first.result.some(x => x.spec.class === 'cm-md-strong'), true);
+ assert.equal(first.result.some(x => x.spec.class?.split(/\s+/).includes('cm-md-strong')), true);
  assert.equal(first.result.some(x => x.from === text.indexOf('**') && x.to === text.indexOf('**') + 2 && !x.spec.class), false);
  const second = await plan(text, { anchor: text.indexOf('two') + 1 });
  assert.equal(second.result.some(x => x.from === text.indexOf('**') && x.to === text.indexOf('**') + 2 && !x.spec.class), true);
@@ -146,6 +186,67 @@ test('task prefix activation changes independently from the item body', async ()
   let found = false; decorations.between(0, text.length, (_from, _to, value) => { if (value.spec.widget?.constructor.name === name) found = true; });
   return found;
  }
+});
+
+test('inactive task widgets absorb the source gap and active prefixes retain it', async () => {
+ for (const source of ['- [ ] task', '- [ ]    task', '12. [ ]\ttask', '- [ ] \t  task']) {
+  const { result } = await plan('cursor\n\n' + source);
+  const checkbox = result.find(item => item.spec.widget?.constructor.name === 'TaskWidget');
+  assert.ok(checkbox, source);
+  assert.equal(checkbox.source, source.slice(0, source.indexOf('task')), 'the widget replaces the full source marker and gap without editing the document');
+ }
+ for (const [source, expectedColumns] of [['- [ ] task', 1], ['- [ ]    task', 4], ['12. [ ]\ttask', 1], ['- [ ] \t  task', 5]]) {
+  const active = await plan('cursor\n\n' + source, { anchor: 'cursor\n\n'.length + 2 });
+  const prefix = active.result.find(item => item.spec.class?.split(/\s+/).includes('cm-md-list-prefix'));
+  assert.ok(prefix, 'the active task syntax uses the shared visual prefix: ' + source);
+  assert.match(prefix.spec.attributes.style, new RegExp(`--md-prefix-space-columns: ${expectedColumns}(?:;|$)`), source);
+  assert.equal(active.result.some(item => item.spec.widget?.constructor.name === 'TaskWidget'), false, source);
+ }
+});
+
+test('ATX heading marker remains editable when the caret is just after its unfinished prefix', async () => {
+ const text = '# ', caret = text.length;
+ const { result } = await plan(text, { anchor: caret });
+ assert.equal(result.some(item => item.from === 0 && item.to >= caret && item.spec.class === undefined && item.spec.widget === undefined), false);
+});
+
+test('empty ATX heading stays visible after Enter moves the caret to the next line', async () => {
+ const { EditorState } = await import('@codemirror/state');
+ const { markdownSyntax } = await import('../src/editor/markdownLanguage.ts');
+ const { livePreview } = await import('../src/editor/markdownLivePreview.ts');
+ let state = EditorState.create({ doc: '# ', selection: { anchor: 2 }, extensions: [markdownSyntax(), livePreview] });
+ state = state.update({ changes: { from: 2, insert: '\n' }, selection: { anchor: 3 } }).state;
+ const hidden = []; state.field(livePreview).between(0, state.doc.length, (from, to, value) => { if (value.spec.class === undefined && value.spec.widget === undefined) hidden.push({ from, to }); });
+ assert.equal(state.doc.toString(), '# \n');
+ assert.equal(hidden.some(range => range.from === 0 && range.to >= 1), false, 'an empty heading delimiter is never hidden without heading text');
+});
+
+test('ordered marker source remains editable when the caret sits directly after the period', async () => {
+ const text = '9.', caret = text.length;
+ const { result } = await plan(text, { anchor: caret });
+ assert.equal(result.filter(item => item.spec.class?.split(/\s+/).includes('cm-md-list-prefix')).length, 1, 'the period-end caret stays inside the editable prefix');
+ assert.equal(result.filter(item => item.spec.widget?.constructor.name === 'MarkerWidget').length, 0, 'the end caret must not be replaced with a preview widget');
+});
+
+for (const prefix of ['- ', '12. ']) test(`list prefix ${JSON.stringify(prefix)} becomes one marker at its separator-end caret`, async () => {
+ const text = prefix + '\nbody', caret = prefix.length;
+ const { result } = await plan(text, { anchor: caret });
+ assert.equal(result.some(item => item.spec.class === 'cm-md-list-prefix'), false, JSON.stringify(prefix));
+ assert.equal(result.filter(item => item.spec.widget?.constructor.name === 'MarkerWidget').length, 1, JSON.stringify(prefix));
+});
+
+test('moving from a list body to the prefix end refreshes the single rendered marker', async () => {
+ const { EditorState } = await import('@codemirror/state');
+ const { markdownSyntax } = await import('../src/editor/markdownLanguage.ts');
+ const { livePreview } = await import('../src/editor/markdownLivePreview.ts');
+ const text = '- \nbody';
+ let state = EditorState.create({ doc: text, selection: { anchor: text.indexOf('body') + 1 }, extensions: [markdownSyntax(), livePreview] });
+ const body = state.field(livePreview);
+ state = state.update({ selection: { anchor: 2 } }).state;
+ assert.notEqual(state.field(livePreview), body, 'the prefix boundary is a distinct live-preview state even on the same source line');
+ const ranges = []; state.field(livePreview).between(0, text.length, (from, to, value) => ranges.push({ from, to, value }));
+ assert.equal(ranges.some(item => item.value.spec.class === 'cm-md-list-prefix'), false);
+ assert.equal(ranges.filter(item => item.value.spec.widget?.constructor.name === 'MarkerWidget').length, 1);
 });
 
 test('hard break marker previews as a line break, and is source when selected', async () => {
@@ -255,6 +356,138 @@ test('Tab nested Markdown keeps formatting; ordinary indented text remains code 
  }
 });
 
+test('list indentation tabs keep their source and code blocks keep their literal indentation', async () => {
+ for (const text of [
+  'cursor\n\n- parent\n\t  continuation',
+  'cursor\n\n1. parent\n\t  continuation',
+  'cursor\n\n- [ ] task\n\t  continuation',
+  'cursor\n\n- parent\n  - child\n\t  continuation',
+  'cursor\n\n> - parent\n> \t  continuation',
+ ]) {
+  const { state, result } = await plan(text);
+  assert.equal(state.doc.toString(), text);
+  assert.ok(result.some(item => item.spec.class === 'cm-md-indent-tab' && item.source === '\t'), text);
+ }
+ for (const text of ['cursor\n\n\tcode', 'cursor\n\n```text\n\tcode\n```']) {
+  const { state, result } = await plan(text);
+  assert.equal(state.doc.toString(), text);
+  assert.equal(result.some(item => item.spec.class === 'cm-md-indent-tab'), false, text);
+ }
+});
+
+test('whitespace-only list continuation keeps the same layout before and after typing', async () => {
+ for (const source of ['- item\n ', '- item\n\t', '- item\n\t  ', '1. item\n\t', '- outer\n  - inner\n\t\t', '> - item\n> \t']) {
+  const blank = await plan(source, { anchor: source.length });
+  const typed = await plan(source + '文', { anchor: source.length + 1 });
+  const layout = ({ state, result }) => {
+   const line = state.doc.lineAt(state.doc.length);
+   return result.find(item => item.from === line.from && item.spec.class === 'cm-md-list-layout')?.spec.attributes?.style;
+  };
+  assert.equal(blank.state.doc.toString(), source);
+  assert.ok(layout(typed), 'typed continuation must have list layout: ' + JSON.stringify(source));
+  assert.equal(layout(blank), layout(typed), 'empty and typed continuation use the same layout: ' + JSON.stringify(source));
+ }
+});
+
+test('horizontal-rule selection updates agree with fresh preview at either source boundary', async () => {
+ const { EditorState } = await import('@codemirror/state');
+ const { markdownSyntax } = await import('../src/editor/markdownLanguage.ts');
+ const { livePreview, buildMarkdownLivePreview } = await import('../src/editor/markdownLivePreview.ts');
+ for (const marker of ['---', '***', '___', '- - -']) {
+  const source = marker + '\ntext';
+  let state = EditorState.create({ doc: source, selection: { anchor: marker.length }, extensions: [markdownSyntax(), livePreview] });
+  const rules = decorations => {
+   const result = [];
+   decorations.between(0, state.doc.length, (from, to, value) => {
+    if (value.spec.widget?.constructor.name === 'HorizontalRuleWidget') result.push({ from, to });
+   });
+   return result;
+  };
+  for (const anchor of [1, marker.length, 0, marker.length, marker.length - 1]) {
+   state = state.update({ selection: { anchor } }).state;
+   assert.deepEqual(rules(state.field(livePreview)), rules(buildMarkdownLivePreview(state)),
+    `selection-only cache matches a fresh render at ${anchor}: ${marker}`);
+   assert.equal(rules(state.field(livePreview)).length, anchor < marker.length ? 0 : 1);
+   assert.equal(state.doc.toString(), source, 'revealing source never edits the document');
+  }
+ }
+});
+
+test('blank list paragraphs and lazy task continuations predict the parsed text edge', async () => {
+ // Reproduction: the empty line previously had no list offset until its first
+ // character was typed. A blank line requires the list's real content indent;
+ // only an adjacent paragraph/task permits lazy continuation indentation.
+ for (const source of [
+  '- item\n\n\t', '1. item\n\n\t', '10. item\n\n\t',
+  '- item\n\n\n  ', '- [ ] item\n ', '- [x] item\n\n\t',
+  '- parent\n  - child\n\n  ', '- parent\n  - child\n\n\t',
+  '- item\n  ```\n  code\n  ```\n\t', '- item\n  ~~~\n  code\n  ~~~\n\n\t',
+ ]) {
+  const blank = await plan(source, { anchor: source.length });
+  const typed = await plan(source + '文', { anchor: source.length + 1 });
+  const layout = ({ state, result }) => result.find(item => item.from === state.doc.lineAt(state.doc.length).from
+   && item.spec.class === 'cm-md-list-layout')?.spec.attributes?.style;
+  assert.ok(layout(typed), 'the Markdown parser confirms a list paragraph: ' + JSON.stringify(source));
+  assert.equal(layout(blank), layout(typed), 'the caret already uses the parsed text edge: ' + JSON.stringify(source));
+  assert.equal(blank.state.doc.toString(), source, 'the presentation does not rewrite indentation');
+ }
+});
+
+test('blank paragraph layout preserves UTF-16 edits, one-step undo and rehydration', async () => {
+ const { EditorState } = await import('@codemirror/state');
+ const { history, undo, redo } = await import('@codemirror/commands');
+ const { indentUnit } = await import('@codemirror/language');
+ const { markdownSyntax } = await import('../src/editor/markdownLanguage.ts');
+ const { livePreview } = await import('../src/editor/markdownLivePreview.ts');
+ const { keyHabitsTab } = await import('../src/editor/markdownKeyHabits.ts');
+ const extensions = [markdownSyntax(), livePreview, history(), indentUnit.of('\t'), EditorState.tabSize.of(4)];
+ for (const source of ['- item\n\n', '10. item\n\n', '- [ ] task\n\n']) {
+  const view = { state: EditorState.create({ doc: source, selection: { anchor: source.length }, extensions }) };
+  view.dispatch = transaction => { view.state = transaction.state || view.state.update(transaction).state; };
+  const layout = state => {
+   let value;
+   state.field(livePreview).between(state.doc.lineAt(state.doc.length).from, state.doc.length, (_from, _to, decoration) => {
+    if (decoration.spec.class === 'cm-md-list-layout') value = decoration.spec.attributes.style;
+   });
+   return value;
+  };
+  assert.equal(keyHabitsTab(1)(view), true);
+  assert.equal(view.state.doc.toString(), source + '\t');
+  const blankLayout = layout(view.state);
+  assert.ok(blankLayout);
+  const position = view.state.doc.length;
+  view.dispatch({ changes: { from: position, insert: '文😀' }, selection: { anchor: position + 3 }, userEvent: 'input.type' });
+  assert.equal(view.state.doc.toString(), source + '\t文😀');
+  assert.equal(view.state.selection.main.head, position + 3, 'selection positions remain UTF-16 offsets');
+  assert.equal(layout(view.state), blankLayout);
+  assert.equal(undo(view), true);
+  assert.equal(view.state.doc.toString(), source + '\t', 'one undo removes typing, not the preceding Tab');
+  assert.equal(view.state.selection.main.head, position);
+  assert.equal(layout(view.state), blankLayout);
+  assert.equal(redo(view), true);
+  const reopened = EditorState.create({ doc: view.state.doc.toString(), selection: view.state.selection, extensions });
+  assert.equal(layout(reopened), blankLayout, 'rehydrating the saved source gives the same list offset');
+  assert.equal(reopened.doc.toString(), source + '\t文😀');
+ }
+});
+
+test('blank continuation inference stops at list ends, quotes and indented code', async () => {
+ for (const source of [
+  '- item\n\n ', '10. item\n\n   ', '- item\n\n      ', '- item\n\n\t\t',
+  '- item\n\nplain paragraph\n\t', '- item\n\n# Heading\n\t',
+  '> - item\n\n\t', '> > - item\n\n  ', '```\n- item\n\t',
+  '    - code\n\t', '- item\n  ```\n  code\n\t',
+  '- item\n  ```\n  code\n  ```\n ', '- item\n  ```\n  code\n  ```\n\t\t',
+ ]) {
+  const lastLayout = ({ state, result }) => result.filter(item => item.from === state.doc.lineAt(state.doc.length).from
+   && item.spec.class === 'cm-md-list-layout');
+  assert.deepEqual(lastLayout(await plan(source + '文', { anchor: source.length + 1 })), [],
+   'the parser confirms this is not a prose list continuation: ' + JSON.stringify(source));
+  assert.deepEqual(lastLayout(await plan(source, { anchor: source.length })), [],
+   'an empty line does not invent list membership: ' + JSON.stringify(source));
+ }
+});
+
 test('list guides follow levels across continuation lines and paragraphs without changing source', async () => {
  const text = 'cursor\n\n  - first\n    continued\n\n    second paragraph\n    - child\n      child continued\n  - sibling\n\nplain\n  prose';
  const { state, result } = await plan(text, { anchor: text.indexOf('child continued') });
@@ -286,6 +519,14 @@ test('bullet display retains source-prefix metadata while layout uses a shared v
  const { result } = await plan('cursor\n\n  - first\n    continued\n\n  +   spaced\n      continued');
  const markers = result.filter(x => x.spec.widget?.constructor.name === 'MarkerWidget');
  assert.deepEqual(markers.map(x => x.spec.widget.columns), [2, 4]);
+});
+
+test('active list prefixes retain the full source-space count for visual gap compensation', async () => {
+ const source = '-    four spaces', { result } = await plan(source, { anchor: 1 });
+ const prefix = result.find(item => item.spec.class?.split(/\s+/).includes('cm-md-list-prefix'));
+ assert.ok(prefix, 'the source prefix is editable at the marker');
+ assert.match(prefix.spec.attributes.style, /--md-prefix-space-columns: 4/);
+ assert.equal(source, '-    four spaces', 'visual compensation does not rewrite Markdown');
 });
 
 test('ordinary spaces and code have no list guides; moving between items changes only active guide', async () => {

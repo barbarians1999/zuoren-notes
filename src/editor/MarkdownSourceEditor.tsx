@@ -13,6 +13,7 @@ import { reader } from '../readerContext';
 import { tableNextCell, tablePreviousCell } from './markdownTableNavigation';
 import { keyHabitsEnter, keyHabitsNonemptyListBackspace, keyHabitsShiftEnter, keyHabitsTab } from './markdownKeyHabits';
 import { markdownTextSelection } from './markdownSelection';
+import { attachMarkdownMotion, detachMarkdownMotion, updateMarkdownMotion } from './markdownMotion';
 import { continueMarkdown, exitEmptyBlockquote, exitEmptyIndent, exitEmptyListItem, formatSourceSelection } from './markdownCommands';
 import { undoNoteView, redoNoteView, type NoteDocument, type NoteViewState } from '../workspace/noteDocument';
 
@@ -40,11 +41,32 @@ export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, onMe
     if (!root.current) return;
     const measure = document.createElement('canvas').getContext('2d');
     const measureListSpace = (view: EditorView) => {
-      if (!measure) return;
       const style = getComputedStyle(view.contentDOM);
-      measure.font = style.font;
-      const width = measure.measureText(' ').width + (parseFloat(style.letterSpacing) || 0);
-      view.dom.style.setProperty('--md-list-space-width', `${width}px`);
+      if (measure) {
+        measure.font = style.font;
+        const width = measure.measureText(' ').width + (parseFloat(style.letterSpacing) || 0);
+        const value = `${width}px`;
+        if (view.dom.style.getPropertyValue('--md-list-space-width') !== value) view.dom.style.setProperty('--md-list-space-width', value);
+      }
+      const desiredGap = parseFloat(style.fontSize) / 2;
+      for (const prefix of view.dom.querySelectorAll<HTMLElement>('.cm-md-list-prefix')) {
+        const walker = document.createTreeWalker(prefix, NodeFilter.SHOW_TEXT);
+        let lastText: Text | null = null, lastOffset = -1;
+        while (walker.nextNode()) {
+          const text = walker.currentNode as Text;
+          for (let index = 0; index < text.length; index++) if (/\S/.test(text.data[index])) { lastText = text; lastOffset = index; }
+        }
+        if (!lastText) continue;
+        const range = document.createRange(); range.setStart(lastText, lastOffset); range.setEnd(lastText, lastOffset + 1);
+        const prefixStyle = getComputedStyle(prefix);
+        const bodyLeft = prefix.getBoundingClientRect().right + (parseFloat(prefixStyle.marginRight) || 0);
+        const adjustment = Math.min(0, bodyLeft - range.getBoundingClientRect().right - desiredGap);
+        const value = adjustment < -0.25 ? `${adjustment}px` : '';
+        if (prefix.style.textIndent !== value) {
+          if (value) prefix.style.textIndent = value;
+          else prefix.style.removeProperty('text-indent');
+        }
+      }
     };
     const extensions: Extension[] = [
         EditorView.domEventHandlers({
@@ -72,12 +94,13 @@ export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, onMe
           { key: 'Enter', run: keyHabitsEnter },
           { key: 'Enter', run: exitEmptyIndent }, { key: 'Enter', run: exitEmptyBlockquote },
           { key: 'Enter', run: continueMarkdown }, { key: 'Shift-Enter', run: keyHabitsShiftEnter },
-          { key: 'Mod-z', run: undoNoteView }, { key: 'Mod-Shift-z', run: redoNoteView }, { key: 'Mod-y', run: redoNoteView }])),
+          { key: 'Mod-Shift-z', run: redoNoteView, preventDefault: true }, { key: 'Mod-z', run: undoNoteView }, { key: 'Mod-y', run: redoNoteView }])),
         keymap.of([indentWithTab]),
         Prec.highest(keymap.of([{ key: 'Mod-b', run: view => formatSourceSelection(view, 'bold') }, { key: 'Mod-i', run: view => formatSourceSelection(view, 'italic') }, { key: 'Mod-Shift-x', run: view => formatSourceSelection(view, 'strike') }])),
         EditorView.lineWrapping,
         EditorView.updateListener.of(update => {
-          if (update.geometryChanged) measureListSpace(update.view);
+          updateMarkdownMotion(update);
+          if (update.geometryChanged || update.docChanged || update.selectionSet) measureListSpace(update.view);
           if (update.selectionSet || update.focusChanged) {
             const selection = update.state.selection.main;
             if (!update.view.hasFocus || selection.empty) {
@@ -114,9 +137,20 @@ export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, onMe
     const view = new EditorView({ parent: root.current, state: EditorState.create({ doc: shared.current.document.state.doc, selection: shared.current.tab.selection, extensions }), dispatchTransactions: (transactions, view) => {
       shared.current.document.dispatch(view, transactions);
     } });
+    attachMarkdownMotion(view);
     measureListSpace(view);
+    let measureFrame = 0, disposed = false;
+    const scheduleListSpace = () => {
+      if (disposed || measureFrame) return;
+      measureFrame = requestAnimationFrame(() => { measureFrame = 0; if (!disposed) measureListSpace(view); });
+    };
+    const app = root.current.closest('.app');
+    const fontObserver = new MutationObserver(scheduleListSpace);
+    if (app) fontObserver.observe(app, { attributes: true, attributeFilter: ['style'] });
+    document.fonts.addEventListener('loadingdone', scheduleListSpace);
+    void document.fonts.ready.then(scheduleListSpace);
     viewRef.current = view; callback.current(view);
-    return () => { callback.current(null); viewRef.current = null; view.destroy(); };
+    return () => { disposed = true; cancelAnimationFrame(measureFrame); fontObserver.disconnect(); document.fonts.removeEventListener('loadingdone', scheduleListSpace); callback.current(null); viewRef.current = null; detachMarkdownMotion(view); view.destroy(); };
   }, []);
   useEffect(() => {
     const view = viewRef.current;

@@ -40,23 +40,41 @@ function validRecovery(value, recoveryId, sourcePath) {
   return recoveryDraftHash(value.content, value.encoding) === value.draftHash;
 }
 
-async function atomicWrite(file, data) {
+async function atomicWrite(file, data, { mode } = {}) {
   const temp = path.join(path.dirname(file), `.${path.basename(file)}.${crypto.randomUUID()}.tmp`);
+  let pending = false;
   try {
-    const handle = await fs.open(temp, 'wx');
-    try { await handle.writeFile(data); await handle.sync(); } finally { await handle.close(); }
+    // Never expose note or recovery content through a permissive temporary file.
+    const handle = await fs.open(temp, 'wx', 0o600);
+    pending = true;
+    try {
+      await handle.writeFile(data);
+      if (process.platform !== 'win32') {
+        let targetMode = mode;
+        if (targetMode === undefined) {
+          // Read just before replacement so chmod during backup/write work is
+          // retained. Only a missing target uses the private new-file default.
+          try { targetMode = (await fs.stat(file)).mode & 0o777; }
+          catch (error) { if (error.code !== 'ENOENT') throw error; }
+        }
+        // Apply after writing, independent of umask. Failure must leave the
+        // original intact, not silently publish a replacement with wrong access.
+        if (targetMode !== undefined) await handle.chmod(targetMode);
+      }
+      await handle.sync();
+    } finally { await handle.close(); }
     // Windows scanners and indexers can briefly deny replacing an open target.
     // Retry only transient sharing/access errors; keep the atomic replacement
     // and leave the original untouched if the bounded retries still fail.
     const retryable = new Set(['EPERM', 'EACCES', 'EBUSY']);
     for (let attempt = 0; ; attempt++) {
-      try { await fs.rename(temp, file); break; }
+      try { await fs.rename(temp, file); pending = false; break; }
       catch (error) {
         if (process.platform !== 'win32' || !retryable.has(error.code) || attempt >= 5) throw error;
         await new Promise(resolve => setTimeout(resolve, 25 * (2 ** attempt)));
       }
     }
-  } finally { await fs.unlink(temp).catch(() => {}); }
+  } finally { if (pending) await fs.unlink(temp).catch(() => {}); }
 }
 
 async function realPathOrParent(file) {
@@ -149,7 +167,7 @@ class FileStore {
     if (!/\.(md|markdown)$/i.test(name)) name += '.md';
     const file = path.join(directory, name);
     await this.checked(file, { create: true });
-    try { await fs.writeFile(file, typeof content === 'string' ? content : '', { encoding: 'utf8', flag: 'wx' }); }
+    try { await fs.writeFile(file, typeof content === 'string' ? content : '', { encoding: 'utf8', flag: 'wx', mode: 0o600 }); }
     catch (error) { if (error.code === 'EEXIST') throw new Error('同名笔记已经存在'); throw error; }
     const granted = await this.grantFile(file);
     return this.readNote(granted);
@@ -311,7 +329,7 @@ class FileStore {
         const dir = path.join(aux, 'history'); await fs.mkdir(dir, { recursive: true });
         if (!inside(aux, await fs.realpath(dir))) throw new Error('历史目录不在资料文件夹内');
         const prefix = digest(path.basename(file)).slice(0, 16) + '-';
-        await atomicWrite(path.join(dir, prefix + Date.now() + '.md'), old);
+        await atomicWrite(path.join(dir, prefix + Date.now() + '.md'), old, { mode: 0o600 });
         const previous = (await fs.readdir(dir)).filter(n => n.startsWith(prefix) && /^\w+-\d+\.md$/.test(n)).sort().reverse();
         for (const name of previous.slice(20)) await fs.unlink(path.join(dir, name));
         this.lastBackup.set(file, Date.now());

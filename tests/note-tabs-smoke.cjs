@@ -34,7 +34,11 @@ test('per-pane tabs keep history, shared saves, focus, drag, blanks and restart 
   const file = name => page.locator('.file-row').filter({ has: page.getByText(name, { exact: true }) });
   const editor = pane => pane.locator('.cm-content');
   const tab = (pane, name) => pane.getByRole('tab', { name, exact: true });
-  async function choose(name, pin = false) { await file(name)[pin ? 'dblclick' : 'click'](); await editor(left()).waitFor(); }
+  async function choose(name, pin = false) {
+    await file(name)[pin ? 'dblclick' : 'click']();
+    await editor(left()).waitFor();
+    await tab(left(), name).waitFor({ state: 'visible' });
+  }
   async function openRight(name) { await file(name).click({ button: 'right' }); await page.getByRole('menuitem', { name: '在右侧打开', exact: true }).click(); await contentGroup('secondary').waitFor(); await tab(right(),name).waitFor(); }
   await t.test('temporary replacements and edited/permanent protection', async () => {
     await choose('a.md'); await choose('b.md'); assert.equal(await left().getByRole('tab').count(), 1);

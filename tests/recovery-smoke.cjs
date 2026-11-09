@@ -108,7 +108,7 @@ test('packaged app restores session and crash draft without putting note text in
       if (pageSession?.activePdf?.page === 2) break;
       await page.waitForTimeout(50);
     }
-    assert.equal(pageSession?.activePdf?.page, 2);
+    assert.equal(pageSession?.activePdf?.page, 2, `session did not persist page 2; UI: ${(await page.locator('body').innerText()).slice(-1200)}`);
     console.log('SMOKE PDF page set to 2');
     await page.waitForTimeout(500);
     await closeNormally(instance, page);

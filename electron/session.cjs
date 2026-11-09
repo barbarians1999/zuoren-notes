@@ -13,28 +13,40 @@ function validateNote(value) {
 }
 
 const pathKey = filePathKey;
+function validDocument(doc, limit = 100) {
+  const legacy = exactKeys(doc, ['path', 'recoveryId', 'retainedRecoveryIds']);
+  const current = exactKeys(doc, ['path', 'recoveryId', 'retainedRecoveries']);
+  if ((!legacy && !current) || !absolutePath(doc.path) || !recoveryIdPattern.test(doc.recoveryId)) return false;
+  if (legacy) return Array.isArray(doc.retainedRecoveryIds) && doc.retainedRecoveryIds.length <= limit
+    && doc.retainedRecoveryIds.every(id => recoveryIdPattern.test(id) && id !== doc.recoveryId)
+    && new Set(doc.retainedRecoveryIds).size === doc.retainedRecoveryIds.length;
+  if (!Array.isArray(doc.retainedRecoveries) || doc.retainedRecoveries.length > limit) return false;
+  const references = new Set();
+  for (const item of doc.retainedRecoveries) {
+    const key = isRecord(item) ? item.recoveryId : '';
+    if (!exactKeys(item, ['sourcePath', 'recoveryId']) || !absolutePath(item.sourcePath) || !recoveryIdPattern.test(item.recoveryId)
+      || item.recoveryId === doc.recoveryId || references.has(key)) return false;
+    references.add(key);
+  }
+  return true;
+}
 function validateGroups(value) {
   if (!exactKeys(value.noteGroups, ['primary', 'secondary']) || !['primary', 'secondary'].includes(value.activeNoteGroup)
     || !Array.isArray(value.noteDocuments) || value.noteDocuments.length > 100) return false;
   const documents = new Map(), ids = new Set();
   for (const doc of value.noteDocuments) {
-    const legacy = exactKeys(doc, ['path', 'recoveryId', 'retainedRecoveryIds']);
-    const current = exactKeys(doc, ['path', 'recoveryId', 'retainedRecoveries']);
-    if ((!legacy && !current) || !absolutePath(doc.path) || !recoveryIdPattern.test(doc.recoveryId) || documents.has(pathKey(doc.path))) return false;
-    if (legacy) {
-      if (!Array.isArray(doc.retainedRecoveryIds) || doc.retainedRecoveryIds.length > 100
-        || !doc.retainedRecoveryIds.every(id => recoveryIdPattern.test(id) && id !== doc.recoveryId)
-        || new Set(doc.retainedRecoveryIds).size !== doc.retainedRecoveryIds.length) return false;
-    } else {
-      if (!Array.isArray(doc.retainedRecoveries) || doc.retainedRecoveries.length > 100) return false;
-      const references = new Set();
-      for (const item of doc.retainedRecoveries) {
-        if (!exactKeys(item, ['sourcePath', 'recoveryId']) || !absolutePath(item.sourcePath) || !recoveryIdPattern.test(item.recoveryId)
-          || item.recoveryId === doc.recoveryId || references.has(item.recoveryId)) return false;
-        references.add(item.recoveryId);
-      }
-    }
+    if (!validDocument(doc) || documents.has(pathKey(doc.path))) return false;
     documents.set(pathKey(doc.path), doc);
+  }
+  if (Object.hasOwn(value, 'pendingNoteDocuments')) {
+    if (!Array.isArray(value.pendingNoteDocuments)) return false;
+    const paths = new Set();
+    for (const doc of value.pendingNoteDocuments) {
+      // This is a recovery catalog, not open tabs. Never silently evict older
+      // references to enforce the UI's 100-tab limit.
+      if (!validDocument(doc, Infinity) || paths.has(pathKey(doc.path))) return false;
+      paths.add(pathKey(doc.path));
+    }
   }
   let total = 0;
   const referenced = new Set();
@@ -60,7 +72,8 @@ function validateSession(value) {
   if (value.version === 1) {
     if (!exactKeys(value, baseKeys)) return null;
   } else if (value.version === 2 || value.version === 3) {
-    const keys = [...baseKeys, 'scrollMemory', ...(value.version === 3 ? ['noteGroups', 'activeNoteGroup', 'noteDocuments'] : [])];
+    const keys = [...baseKeys, 'scrollMemory', ...(value.version === 3 ? ['noteGroups', 'activeNoteGroup', 'noteDocuments',
+      ...(Object.hasOwn(value, 'pendingNoteDocuments') ? ['pendingNoteDocuments'] : [])] : [])];
     if (!exactKeys(value, keys) || (value.version === 3 && !validateGroups(value)) || !Array.isArray(value.scrollMemory)
       || value.scrollMemory.length > MAX_SCROLL_MEMORY_ENTRIES
       || !value.scrollMemory.every(entry => validScrollEntry(entry) && entry.scrollTop <= MAX_SCROLL_TOP)) return null;
@@ -80,8 +93,8 @@ function validateSession(value) {
 
 function sessionFilePaths(value) {
   const session = validateSession(value); if (!session) return [];
-  const retainedSources = session.version === 3 ? session.noteDocuments.flatMap(doc =>
-    'retainedRecoveries' in doc ? doc.retainedRecoveries.map(item => item.sourcePath) : [doc.path]) : [];
+  const retainedSources = session.version === 3 ? [...session.noteDocuments, ...(session.pendingNoteDocuments || [])].flatMap(doc =>
+    [doc.path, ...('retainedRecoveries' in doc ? doc.retainedRecoveries.map(item => item.sourcePath) : [])]) : [];
   return [...new Set([...session.noteTabs, session.primaryNote?.path, session.secondaryNote?.path,
     session.activePdf?.path, session.activeEpub, ...retainedSources].filter(Boolean))];
 }

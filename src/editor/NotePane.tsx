@@ -1,5 +1,5 @@
 import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ReducedMotionContext } from '../uiMotion';
+import { ReducedMotionContext, motionNumber, motionText, usePanelMotion } from '../uiMotion';
 import { OutlinePanel } from '../OutlinePanel';
 import { FileText } from 'lucide-react';
 import type { MarkdownScrollMemory, NoteRead, ReaderAnchor } from '../types';
@@ -34,6 +34,8 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
   useEffect(() => setImageMessage(''), [note?.path]);
   const pendingImage = sharedDocument?.pendingImagePastes[0];
   const liveNotePath = useRef(note?.path); liveNotePath.current = note?.path;
+  const previousContent = useRef<{ path: string | null; mode: NoteMode }>({ path: note?.path || null, mode });
+  const contentAnimation = useRef<Animation | null>(null);
   const openMarkdownLink = useCallback((href: string) => {
     const sourcePath = note?.path;
     if (!sourcePath) return;
@@ -62,6 +64,8 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
   const [selectedUnits, setSelectedUnits] = useState(0);
   const [paragraphUnits, setParagraphUnits] = useState(0);
   const [selectionToolbar, setSelectionToolbar] = useState<{ left: number; top: number } | null>(null);
+  const lastSelectionToolbar = useRef<{ left: number; top: number } | null>(null);
+  if (selectionToolbar) lastSelectionToolbar.current = selectionToolbar;
   const [sourceSelection, setSourceSelection] = useState<{ from: number; to: number; left: number; top: number; width: number; height: number } | null>(null);
   const onJumpRef = useRef(onJump); onJumpRef.current = onJump;
   const scrollMemoryRef = useRef(scrollMemory); scrollMemoryRef.current = scrollMemory;
@@ -79,6 +83,32 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
     return true;
   }, [sourceView, note?.path, hidden, label, sharedDocument]);
   const host = useRef<HTMLDivElement>(null);
+  const findMotion = usePanelMotion(findOpen, reducedMotion, '4px', () =>
+    headerTarget?.querySelector<HTMLElement>('[aria-label="查找"]') || host.current?.querySelector<HTMLElement>('.note-toolbar [aria-label="查找"]') || sourceView?.contentDOM || null,
+  'y', { enter: '--motion-feedback', exit: '--motion-exit' });
+  const selectionMotion = usePanelMotion(!!selectionToolbar, reducedMotion, '4px', () =>
+    mode === 'edit' ? sourceView?.contentDOM || null : headerTarget?.querySelector<HTMLElement>('[aria-label="切换到源码编辑"]') || null,
+  'y', { enter: '--motion-feedback', exit: '--motion-exit' });
+  useLayoutEffect(() => {
+    const path = note?.path || null, previous = previousContent.current;
+    previousContent.current = { path, mode };
+    if (!previous.path || !path || (previous.path === path && previous.mode === mode) || hidden || reducedMotion) {
+      if (reducedMotion) { contentAnimation.current?.cancel(); contentAnimation.current = null; }
+      return;
+    }
+    const node = host.current; if (!node) return;
+    const direction = previous.path === path ? (mode === 'preview' ? 1 : -1) : 1;
+    const active = contentAnimation.current;
+    const from = active ? getComputedStyle(node).transform : `translateX(${direction * 12}px)`;
+    active?.cancel();
+    const style = getComputedStyle(node);
+    const animation = node.animate([{ transform: from }, { transform: 'translateX(0px)' }], {
+      duration: motionNumber(style, '--motion-content', 160), easing: motionText(style, '--motion-ease-enter', 'cubic-bezier(.2,.75,.3,1)'),
+    });
+    contentAnimation.current = animation;
+    animation.finished.then(() => { if (contentAnimation.current === animation) contentAnimation.current = null; }).catch(() => {});
+  }, [note?.path, mode, hidden, reducedMotion]);
+  useLayoutEffect(() => () => { contentAnimation.current?.cancel(); }, []);
   const findInput = useRef<HTMLInputElement>(null);
   const replaceInput = useRef<HTMLInputElement>(null);
   const findFocusTarget = useRef<'find' | 'replace'>('find');
@@ -113,7 +143,7 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
     let scrollTimer = 0;
     let scroller: HTMLElement | null = null;
     const capture = () => {
-      if (!scroller || !scroller.clientHeight) return;
+      if (!scroller) return;
       const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
       if (tab) tab.scroll[memoryMode] = scroller.scrollTop;
       onScrollMemoryRef.current({ pane: paneId, path: notePath, mode: memoryMode, scrollTop: scroller.scrollTop, ratio: maxScrollTop ? scroller.scrollTop / maxScrollTop : 0 });
@@ -149,7 +179,7 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
   }, [findCommand?.sequence, findCommand?.pane, paneId]);
   useLayoutEffect(() => {
     if (findOpen) (findFocusTarget.current === 'replace' ? replaceInput.current : findInput.current)?.focus();
-  }, [findOpen, replaceOpen]);
+  }, [findOpen, findMotion.present, replaceOpen]);
   useEffect(() => {
     if (findOpen) setCurrentIndex(matches.length ? 0 : -1);
   }, [findText, caseSensitive, note?.path, findOpen]);
@@ -296,6 +326,10 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
         event.preventDefault(); event.stopPropagation(); return;
       }
     }
+    if (sourceView && !hidden && !event.defaultPrevented && !event.nativeEvent.isComposing && event.keyCode !== 229
+      && (event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'z') {
+      event.preventDefault(); event.stopPropagation(); cmRedo(sourceView); sourceView.focus(); return;
+    }
     if (!note || hidden || event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229 ||
         !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 's') return;
     // Pane capture covers reading/Find too, with the current callback and
@@ -306,7 +340,7 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
       const header = <MarkdownWorkspaceHeader path={note?.path || ''} caption={caption} label={label} onSave={onSave} canSave={!!note && (label === '编辑中' || label === '保存失败')} mode={mode === 'preview' ? 'preview' : 'edit'} outline={outline} onFind={() => { findFocusTarget.current = 'find'; setFindOpen(true); setReplaceOpen(false); findInput.current?.focus(); }} onToggleMode={() => setMode(mode === 'preview' ? 'edit' : 'preview')} onToggleOutline={() => setOutline(value => !value)} compact={unifiedHeader} enabled={!!note} controls={headerControls}/>;
       return unifiedHeader ? headerTarget && createPortal(<div data-note-controls={paneId}>{header}</div>, headerTarget) : header;
     })()}
-    {findOpen && <div className="find-bar" role="search" aria-label={`查找当前${paneId === 'primary' ? '左' : '右'}栏笔记`}>
+    {findMotion.present && <div ref={findMotion.ref as React.RefObject<HTMLDivElement | null>} className="find-bar" role="search" aria-label={`查找当前${paneId === 'primary' ? '左' : '右'}栏笔记`} aria-hidden={!findOpen}>
       <input ref={findInput} aria-label="查找文本" placeholder="查找" value={findText} onChange={event => setFindText(event.target.value)} onKeyDown={onFindKeyDown}/>
       <button type="button" className="find-replace-toggle" aria-label={replaceOpen ? '收起替换' : '展开替换'} title={replaceOpen ? '收起替换' : '展开替换'} aria-expanded={replaceOpen} onClick={toggleReplace}><span aria-hidden="true">替</span></button>
       {replaceOpen && <input ref={replaceInput} aria-label="替换为" placeholder="替换为" value={replaceText} onChange={event => setReplaceText(event.target.value)} onKeyDown={onReplaceKeyDown}/>}
@@ -336,7 +370,7 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
           const preview = host.current?.querySelector<HTMLElement>('.markdown-preview'), nonce = preview?.dataset.headingNonce;
           if (preview?.dataset.previewCurrent === 'true' && nonce && item.line !== undefined) preview.querySelector(`[data-zuoren-heading="${nonce}:${item.line}"]`)?.scrollIntoView({ block: 'start', behavior: reducedMotion ? 'auto' : 'smooth' }); }}/>
     </div>
-    {selectionToolbar && mode === 'edit' && sourceView && <div className="selection-toolbar" role="toolbar" aria-label="选中文本格式" style={{ left: selectionToolbar.left, top: selectionToolbar.top }} onPointerDown={event => event.preventDefault()}>
+    {selectionMotion.present && lastSelectionToolbar.current && <div ref={selectionMotion.ref as React.RefObject<HTMLDivElement | null>} className="selection-toolbar" role="toolbar" aria-label="选中文本格式" style={{ left: lastSelectionToolbar.current.left, top: lastSelectionToolbar.current.top }} aria-hidden={!selectionToolbar} onPointerDown={event => event.preventDefault()}>
       <button title="加粗（Ctrl+B）" onClick={() => runInlineFormat('bold')}>B</button>
       <button title="斜体（Ctrl+I）" onClick={() => runInlineFormat('italic')}><i>I</i></button>
       <button title="行内代码" onClick={() => runInlineFormat('code')}>`</button>

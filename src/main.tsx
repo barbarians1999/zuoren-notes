@@ -4,7 +4,7 @@ import { EpubPane } from './readers/EpubPane';
 import { ReaderSession } from './readers/readerSession';
 import { createExcerptFlow, type ExcerptFlowFailure, type ExcerptFlowResult } from './readers/excerptFlow';
 import type { PdfExcerptContext } from './readers/pdfRegionAction';
-import { NoteWorkspace, documentKey, type NoteGroupId } from './workspace/noteWorkspace';
+import { NoteWorkspace, type NoteGroupId } from './workspace/noteWorkspace';
 import { NoteGroupPane } from './workspace/NoteGroupPane';
 import { ConflictDialog, UnsavedDialog, TrashConfirmation } from './workspace/DocumentDialogs';
 import { reader, NOTE_BODY_FONTS, type Layout, type ThemePreference, type NoteBodyFont, type ActivePdf, type ActiveEpub, type FileContextMenu, type InlineEntryEdit, type FindCommand } from './readerContext';
@@ -14,6 +14,7 @@ import { ArrowLeft, ChevronRight, Copy, Folder, FolderOpen, FolderPlus, FolderTr
 import { diagnostics } from './diagnostics.cjs';
 import { LatestRequest } from './asyncRequest.cjs';
 import { SessionWriter } from './sessionWriter.cjs';
+import { SessionRecovery } from './sessionRecovery';
 import type { DirectoryListing, EpubAnchor, EpubAnnotation, MarkdownScrollMemory, PdfAnchor, PdfMeta, ReaderAnchor, ReaderSessionV3, SearchResult, WorkspaceDirectoryEntry, WorkspaceFile } from './types';
 import { encodeReaderAnchor, formatEpubAnchor, isEpubAnchor } from './readerAnchor.cjs';
 import { upsertScrollMemory } from './sessionState.cjs';
@@ -22,8 +23,8 @@ import { MutationBarrier, remapDescendantPath, sameOrDescendantPath } from './fi
 import { THEMES, parseThemePreference, resolveTheme, themeVariables, type ThemeName } from './appearanceTheme.cjs';
 import './styles.css';
 import { useFullscreenChrome } from './useFullscreenChrome';
-import { ReducedMotionContext, usePanelMotion, useTabMotion } from './uiMotion';
-import { ContextMenu, useOverlayFocus } from './ui/overlays';
+import { ReducedMotionContext, useLayoutMotion, usePanelMotion, useTabMotion } from './uiMotion';
+import { ContextMenu, ToastMessage, useOverlayFocus } from './ui/overlays';
 import { PaneSplitter } from './ui/PaneSplitter';
 import './ui/chrome.css';
 import { NOTE_FONT_FACES_CSS } from './noteFonts';
@@ -65,7 +66,7 @@ function App() {
   const [reduceMotion, setReduceMotion] = useState(() => { try { return localStorage.getItem('zhaoye-reduce-motion') === 'true'; } catch { return false; } });
   const [systemReduced, setSystemReduced] = useState(() => matchMedia('(prefers-reduced-motion: reduce)').matches);
   const motionReduced = reduceMotion || systemReduced;
-  const sidebarMotion = usePanelMotion(sidebar, motionReduced || !sessionReady, '-100%', 220, () => document.querySelector('.sidebar-toggle'));
+  const sidebarMotion = usePanelMotion(sidebar, motionReduced || !sessionReady, '-100%', () => document.querySelector('.sidebar-toggle'));
   useTabMotion(noteTabsTarget, motionReduced);
   useEffect(() => { try { localStorage.setItem('zhaoye-reduce-motion', String(reduceMotion)); } catch {} }, [reduceMotion]);
   useEffect(() => {
@@ -74,6 +75,8 @@ function App() {
     media.addEventListener('change', changed); return () => media.removeEventListener('change', changed);
   }, []);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [appInfo, setAppInfo] = useState<{ name: string; version: string } | null>(null);
+  useEffect(() => { void reader().getAppInfo().then(setAppInfo).catch(() => setMessage('无法读取应用版本，请重新打开软件。')); }, []);
   const [windowState, setWindowState] = useState({ maximized: false, fullscreen: false });
   useFullscreenChrome(windowState.fullscreen);
   const [themePreference, setThemePreference] = useState<ThemePreference>(initialThemePreference);
@@ -85,9 +88,13 @@ function App() {
   const [noteBodyFont, setNoteBodyFont] = useState<NoteBodyFont>(readNoteBodyFont);
   const [splitAt, setSplitAt] = useState(52);
   const panesRef = useRef<HTMLDivElement>(null);
+  const layoutMotionRequested = useRef(false);
+  useLayoutMotion(panesRef, layout, sessionReady, motionReduced, layoutMotionRequested);
   const [root, setRootState] = useState('');
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [directory, setDirectory] = useState<DirectoryListing | null>(null);
+  const [directoryMotion, setDirectoryMotion] = useState<{ sequence: number; direction: 'enter' | 'exit'; active: boolean } | null>(null);
+  const directoryMotionSequence = useRef(0);
   const [query, setQueryState] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const secondInsertExcerpt = useRef<(block: string) => boolean>(() => false);
@@ -107,10 +114,11 @@ function App() {
   const setRoot = useCallback((value: string) => { directoryRequest.current.invalidate(); searchRequest.current.invalidate(); setRootState(value); }, []);
   const setQuery = useCallback((value: string) => { searchRequest.current.invalidate(); setQueryState(value); setResults([]); }, []);
   const sessionWriter = useRef(new SessionWriter());
+  const sessionRecovery = useRef(new SessionRecovery());
   const settingsRef = useRef<HTMLDivElement>(null);
-  const settingsPanelRef = useRef<HTMLDivElement>(null);
   const fileMenuTrigger = useRef<HTMLElement | null>(null);
-  useOverlayFocus(settingsOpen, settingsPanelRef, { kind: 'popover', onDismiss: () => setSettingsOpen(false),
+  const settingsMotion = usePanelMotion(settingsOpen, motionReduced, '4px', () => settingsRef.current?.querySelector('button') || null, 'y', { enter: '--motion-overlay', exit: '--motion-exit' });
+  useOverlayFocus(settingsOpen && settingsMotion.present, settingsMotion.ref, { kind: 'popover', onDismiss: () => setSettingsOpen(false),
     returnFocus: () => settingsRef.current?.querySelector('button') || null });
   const inlineEntryInputRef = useRef<HTMLInputElement>(null);
   const newNoteGroup = useRef<NoteGroupId>('primary');
@@ -140,6 +148,7 @@ function App() {
   const modalConflict = conflictDoc?.recoveryConflict?.note || conflictDoc?.conflict;
   useEffect(() => { if (modalConflict || workspace.pendingClose) setTrashCandidate(null); }, [modalConflict, workspace.pendingClose]);
   const openEntryRef = useRef<(file: WorkspaceFile, options?: { replaceCurrentNote?: boolean; skipUnsavedPrompt?: boolean; group?: NoteGroupId; pinned?: boolean; recoveryId?: string }) => Promise<void>>(async () => {});
+  useEffect(() => workspace.subscribe(() => { sessionRecovery.current.capture(workspace.documents.values()); }), [workspace]);
   useEffect(() => {
     workspace.ready = sessionReady;
     const timer = window.setInterval(() => workspace.tick(), 250);
@@ -209,15 +218,25 @@ function App() {
     return () => window.cancelAnimationFrame(frame);
   }, [inlineEntryEdit?.kind, inlineEntryEdit?.entry?.path, inlineEntryEdit?.error]);
 
-  const loadDirectory = useCallback(async (workspaceRoot: string, path: string) => {
+  const loadDirectory = useCallback(async (workspaceRoot: string, path: string, motionDirection?: 'enter' | 'exit') => {
     const current = directoryRequest.current.begin();
     setFileContextMenu(null);
     setInlineEntryEdit(null);
     try {
       const listing = await reader().listDirectory({ root: workspaceRoot, directory: path });
-      if (current()) setDirectory(listing);
+      if (current()) {
+        if (motionDirection) setDirectoryMotion({ sequence: ++directoryMotionSequence.current, direction: motionDirection, active: true });
+        setDirectory(listing);
+      }
     } catch (error) { if (current()) throw error; }
   }, []);
+
+  useEffect(() => {
+    if (!directoryMotion?.active) return;
+    const sequence = directoryMotion.sequence;
+    const timer = window.setTimeout(() => setDirectoryMotion(current => current?.sequence === sequence ? { ...current, active: false } : current), 240);
+    return () => window.clearTimeout(timer);
+  }, [directoryMotion]);
 
   const sessionSnapshot = useCallback((): ReaderSessionV3 => ({
     version: 3,
@@ -226,6 +245,7 @@ function App() {
     layout,
     sidebar,
     splitAt,
+    pendingNoteDocuments: sessionRecovery.current.snapshot(workspace.documents.values()),
     ...workspace.sessionFields(),
     ...readerSession.sessionFields(),
     scrollMemory,
@@ -236,6 +256,7 @@ function App() {
   }, []);
 
   const saveSessionNow = useCallback(async (force = false) => {
+    if (!sessionRecovery.current.initialized) { setMessage('尚未读取上次工作现场，已暂停覆盖恢复记录；请重新打开软件后重试。'); return false; }
     try { await sessionWriter.current.write(sessionSnapshot(), snapshot => reader().saveSession(snapshot), force); return true; }
     catch (error) { setMessage(`工作现场保存失败：${error instanceof Error ? error.message : String(error)}`); return false; }
   }, [sessionSnapshot]);
@@ -247,11 +268,10 @@ function App() {
       try {
         const launch = await reader().getLaunchItems();
         const settings = await reader().getSettings();
+        if (settings.settingsReadFailed === true) throw new Error(settings.warning || '无法读取上次工作现场，已保留原恢复记录。');
+        sessionRecovery.current.seed(settings.session);
         if (settings.warning) warn(settings.warning);
         const session = !launch.root && !launch.files.length ? settings.session : null;
-        const launchRecovery = launch.files[0]?.type === 'md' && settings.session?.version === 3
-          ? settings.session.noteDocuments.find(item => documentKey(item.path) === documentKey(launch.files[0].path))
-          : [settings.session?.primaryNote, settings.session?.secondaryNote].find(item => item?.path === launch.files[0]?.path);
         const savedRoot = session?.root || settings.roots?.[0] || '';
         if (launch.root) {
           setRoot(launch.root); setFiles(launch.files); await loadDirectory(launch.root, launch.root);
@@ -268,11 +288,12 @@ function App() {
           // One initial request only: a second automatic open could override
           // a sidebar choice made while the first recovery check was pending.
           const opening = openSequence.current + 1;
-          await openEntry(launch.files[0], { replaceCurrentNote: !!launch.root, recoveryId: launchRecovery?.recoveryId });
+          await openEntry(launch.files[0], { replaceCurrentNote: !!launch.root });
           if (!launch.root) {
             for (const file of launch.files.slice(1).filter(file => file.type === 'md')) {
               if (openSequence.current !== opening) break;
-              await workspace.open(file.path, 'primary', true);
+              try { await sessionRecovery.current.open(workspace, file.path, 'primary', true); }
+              catch { warn(`笔记不可用，恢复记录已保留：${file.name}`); }
             }
             if (openSequence.current === opening && launch.files[0].type === 'md') {
               const first = workspace.groups.primary.tabs.find(tab => tab.document?.note.path === launch.files[0].path);
@@ -284,6 +305,7 @@ function App() {
           setScrollMemory(session.version !== 1 ? session.scrollMemory : []);
           const restoring = openSequence.current;
           await workspace.restore(session);
+          sessionRecovery.current.snapshot(workspace.documents.values());
           if (!savedRoot && settings.recentFiles?.length) setFiles(settings.recentFiles.map(fromPath));
           if (openSequence.current === restoring && session.activePdf) {
             try {
@@ -314,7 +336,21 @@ function App() {
         } else if (items.files.length) {
           setFiles(previous => [...items.files, ...previous.filter(old => !items.files.some(item => item.path === old.path))]);
         }
-        if (items.files[0]) await openEntryRef.current(items.files[0], { skipUnsavedPrompt: true });
+        if (items.files[0]) {
+          const opening = openSequence.current + 1, group = workspace.activeGroup;
+          await openEntryRef.current(items.files[0], { skipUnsavedPrompt: true, group });
+          if (!items.root) {
+            for (const file of items.files.slice(1).filter(file => file.type === 'md')) {
+              if (openSequence.current !== opening) break;
+              try { await sessionRecovery.current.open(workspace, file.path, group, true); }
+              catch { setMessage(`笔记不可用，恢复记录已保留：${file.name}`); }
+            }
+            if (openSequence.current === opening && items.files[0].type === 'md') {
+              const first = workspace.groups[group].tabs.find(tab => tab.document?.note.path === items.files[0].path);
+              if (first) workspace.activate(group, first.id);
+            }
+          }
+        }
       }).catch(error => setMessage(`无法打开：${error instanceof Error ? error.message : String(error)}`));
     });
   }, [loadDirectory]);
@@ -346,7 +382,7 @@ function App() {
     const request = ++openSequence.current;
     if (file.type === 'md') {
       try {
-        const tab = await workspace.open(file.path, group, options.pinned ?? !options.replaceCurrentNote, options.recoveryId, async () => {
+        const tab = await sessionRecovery.current.open(workspace, file.path, group, options.pinned ?? !options.replaceCurrentNote, options.recoveryId, async () => {
           if (!(await readerSession.flush())) { setMessage('阅读进度或标注尚未保存成功，请重试后切换。'); return false; }
           releaseMutationBarrier(file.path); return true;
         });
@@ -387,7 +423,7 @@ function App() {
       setMessage('阅读进度或标注尚未保存成功，请重试后切换。');
       return;
     }
-    if (request === openSequence.current) { setLayout(next); setActiveSurface(next === 'read' ? 'reader' : 'note'); }
+    if (request === openSequence.current) { layoutMotionRequested.current = true; setLayout(next); setActiveSurface(next === 'read' ? 'reader' : 'note'); }
   }
   async function openWorkspace() {
     const selected = await reader().chooseWorkspace();
@@ -417,7 +453,7 @@ function App() {
         const renamed = await reader().renameEntry({ path: edit.entry.path, name: edit.value });
         const newPath = renamed.path;
         const remap = (value: string) => remapDescendantPath(value, oldPath, newPath);
-        workspace.remap(oldPath, newPath);
+        sessionRecovery.current.remap(oldPath, newPath, () => workspace.remap(oldPath, newPath));
         readerSession.remapPath(oldPath, newPath);
         setFiles(items => items.map(item => ({ ...item, path: remap(item.path), name: remap(item.path).split(/[\\/]/).pop() || item.name })));
         if (directory && sameOrDescendantPath(directory.directory, oldPath)) setDirectory(value => value ? { ...value, directory: remap(value.directory), parent: value.parent ? remap(value.parent) : null, breadcrumbs: value.breadcrumbs.map(item => ({ ...item, path: remap(item.path) })) } : value);
@@ -450,12 +486,15 @@ function App() {
     const selected = await reader().chooseFiles();
     if (!selected.length) return;
     setFiles(previous => [...selected, ...previous.filter(old => !selected.some(item => item.path === old.path))]);
-    for (const file of selected.filter(file => file.type === 'md')) await workspace.open(file.path, group, true);
+    for (const file of selected.filter(file => file.type === 'md')) {
+      try { await sessionRecovery.current.open(workspace, file.path, group, true); }
+      catch { setMessage(`笔记不可用，恢复记录已保留：${file.name}`); }
+    }
     await openEntry(selected[0], { group });
   }
   async function openBrowserEntry(entry: WorkspaceDirectoryEntry, pinned = false) {
     if (entry.kind === 'folder') {
-      try { await loadDirectory(root, entry.path); setResults([]); } catch (error) { setMessage(`无法打开文件夹：${String(error)}`); }
+      try { await loadDirectory(root, entry.path, 'enter'); setResults([]); } catch (error) { setMessage(`无法打开文件夹：${String(error)}`); }
       return;
     }
     await openEntry(entry, { replaceCurrentNote: !pinned, pinned });
@@ -465,7 +504,7 @@ function App() {
     const request = ++openSequence.current;
     const alongsideReader = !!(activePdf || activeEpub) && layout !== 'note';
     const group = alongsideReader ? workspace.activeGroup : 'secondary';
-    try { releaseMutationBarrier(file.path); const tab = await workspace.open(file.path, group, true); if (tab && request === openSequence.current) setLayout(alongsideReader ? 'split' : 'note'); }
+    try { releaseMutationBarrier(file.path); const tab = await sessionRecovery.current.open(workspace, file.path, group, true); if (tab && request === openSequence.current) setLayout(alongsideReader ? 'split' : 'note'); }
     catch (error) { setMessage(`无法在右栏打开：${String(error)}`); }
   }
   async function runSearch() {
@@ -663,12 +702,12 @@ function App() {
     {windowState.fullscreen && <div className="fullscreen-reveal-edge" aria-hidden="true"/>}
     <header className="topbar">
       <button className="icon-button sidebar-toggle" aria-label={sidebar ? '收起资料栏' : '展开资料栏'} title={sidebar ? '收起资料栏' : '展开资料栏'} onClick={() => setSidebar(value => !value)}>{sidebar ? <PanelLeftClose size={18}/> : <PanelLeftOpen size={18}/>}</button>
-      <nav className="layout-tabs" aria-label="工作模式">{([['read', '阅读'], ['note', '笔记'], ['split', '对照']] as const).map(([id, label]) => <button aria-pressed={layout === id} className={layout === id ? 'active' : ''} onClick={() => void changeLayout(id)} key={id}>{label}</button>)}</nav>
+      <nav className="layout-tabs" aria-label="工作模式">{([['read', '阅读'], ['note', '笔记'], ['split', '对照']] as const).map(([id, label]) => <button aria-pressed={layout === id} className={layout === id ? 'active' : ''} onClick={() => void changeLayout(id)} key={id}><span>{label}</span></button>)}</nav>
       <div className="top-actions">
         <button className="quiet-action" title={sidebar ? '收起资料栏' : '展开资料栏'} onClick={() => setSidebar(value => !value)}>{sidebar ? <PanelLeftClose size={17}/> : <PanelLeftOpen size={17}/>}<span className="action-label">资料栏</span></button>
         <div className="settings-menu" ref={settingsRef}>
           <button className="quiet-action" aria-expanded={settingsOpen} aria-haspopup="dialog" title="设置" onClick={() => setSettingsOpen(value => !value)}><Settings2 size={17}/><span className="action-label">设置</span></button>
-          {settingsOpen && <div ref={settingsPanelRef} className="settings-popover" role="dialog" aria-label="阅读设置" tabIndex={-1}>
+          {settingsMotion.present && <div ref={settingsMotion.ref as React.RefObject<HTMLDivElement | null>} className="settings-popover" role="dialog" aria-label="阅读设置" tabIndex={-1} aria-hidden={!settingsOpen}>
             <div className="settings-heading"><div><b>正文大小</b></div><strong>{readingSize}px</strong></div>
             <div className="font-size-control">
               <button aria-label="减小正文字体" title="减小" disabled={readingSize <= 14} onClick={() => setReadingSize(size => Math.max(14, size - 1))}>A−</button>
@@ -700,6 +739,10 @@ function App() {
             <div className="settings-section">
               <button className="settings-row" title="F11 切换全屏；全屏时移到顶边显示工具栏，F6 聚焦工具栏" onClick={() => { setSettingsOpen(false); void reader().windowControl('fullscreen'); }}>{windowState.fullscreen ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}<span>全屏阅读</span><small>{windowState.fullscreen ? '退出' : '进入'} · F11</small></button>
             </div>
+            <details className="settings-section settings-about">
+              <summary>关于</summary>
+              <div className="about-content"><b>{appInfo?.name || '左人笔记'}</b><span>版本 {appInfo?.version || '读取中…'}</span><a href="https://github.com/barbarians1999/zuoren-notes" target="_blank" rel="noopener noreferrer">GitHub 仓库</a></div>
+            </details>
           </div>}
         </div>
         <button className="quiet-action" aria-label="打开文件" title="打开文件" onClick={() => void openFiles()}><FolderOpen size={17}/><span className="action-label">打开文件</span></button>
@@ -717,16 +760,18 @@ function App() {
       {sidebarMotion.present && <aside ref={sidebarMotion.ref} className="sidebar" aria-hidden={!sidebar}>
         <div className="search"><Search size={16}/><input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => event.key === 'Enter' && void runSearch()} placeholder="搜索文件名或笔记内容" aria-label="搜索文件名或笔记内容"/>{query && <button aria-label="清空搜索" title="清空搜索" onClick={() => { setQuery(''); setResults([]); }}><X size={14}/></button>}</div>
         {root && directory && <div className="folder-navigation">
-          <button className="folder-back" aria-label="返回上一级文件夹" title="返回上一级" disabled={!directory.parent} onClick={() => directory.parent && void loadDirectory(root, directory.parent)}><ArrowLeft size={16}/></button>
-          <div className="folder-address" aria-label="当前文件夹地址" title={directory.directory}><FolderOpen size={14}/><div className="folder-crumbs">{directory.breadcrumbs.map((crumb, index) => <React.Fragment key={crumb.path}>{index > 0 && <ChevronRight size={11} className="crumb-separator"/>}<button title={crumb.path} aria-current={index === directory.breadcrumbs.length - 1 ? 'location' : undefined} onClick={() => void loadDirectory(root, crumb.path)}>{crumb.name}</button></React.Fragment>)}</div></div>
+          <button className="folder-back" aria-label="返回上一级文件夹" title="返回上一级" disabled={!directory.parent} onClick={() => directory.parent && void loadDirectory(root, directory.parent, 'exit')}><ArrowLeft size={16}/></button>
+          <div className="folder-address" aria-label="当前文件夹地址" title={directory.directory}><FolderOpen size={14}/><div className="folder-crumbs">{directory.breadcrumbs.map((crumb, index) => <React.Fragment key={crumb.path}>{index > 0 && <ChevronRight size={11} className="crumb-separator"/>}<button title={crumb.path} aria-current={index === directory.breadcrumbs.length - 1 ? 'location' : undefined} onClick={() => void loadDirectory(root, crumb.path, index < directory.breadcrumbs.length - 1 ? 'exit' : undefined)}>{crumb.name}</button></React.Fragment>)}</div></div>
         </div>}
         <div className={'section-title ' + (root ? 'after-address' : '')}><span>{root ? '当前文件夹' : '最近文件'}</span><span>{root ? visibleDirectory.length : visibleRecent.length}</span></div>
-        <div className="file-list">{inlineEntryEdit && inlineEntryEdit.kind !== 'rename' && <div className="file-row inline-entry-row"><span className={inlineEntryEdit.kind === 'folder' ? 'folder-icon' : 'file-icon md'}>{inlineEntryEdit.kind === 'folder' ? <Folder size={17}/> : 'MD'}</span><input ref={inlineEntryInputRef} className="inline-entry-input" aria-label={inlineEntryEdit.kind === 'folder' ? '新文件夹名称' : '新笔记名称'} value={inlineEntryEdit.value} disabled={inlineEntryEdit.busy} onChange={event => setInlineEntryEdit(value => value && ({ ...value, value: event.target.value }))} onKeyDown={event => { if (event.key === 'Enter') void commitInline(); if (event.key === 'Escape') setInlineEntryEdit(null); }} />{inlineEntryEdit.error && <small className="inline-entry-error">{inlineEntryEdit.error}</small>}</div>}{root ? visibleDirectory.map(entry => {
+        <div key={directoryMotion?.sequence ?? 0} className="file-list" data-folder-motion={directoryMotion?.active ? directoryMotion.direction : undefined}>
+          {inlineEntryEdit && inlineEntryEdit.kind !== 'rename' && <div className="file-row inline-entry-row"><span className={inlineEntryEdit.kind === 'folder' ? 'folder-icon' : 'file-icon md'}>{inlineEntryEdit.kind === 'folder' ? <Folder size={17}/> : 'MD'}</span><input ref={inlineEntryInputRef} className="inline-entry-input" aria-label={inlineEntryEdit.kind === 'folder' ? '新文件夹名称' : '新笔记名称'} value={inlineEntryEdit.value} disabled={inlineEntryEdit.busy} onChange={event => setInlineEntryEdit(value => value && ({ ...value, value: event.target.value }))} onKeyDown={event => { if (event.key === 'Enter') void commitInline(); if (event.key === 'Escape') setInlineEntryEdit(null); }} />{inlineEntryEdit.error && <small className="inline-entry-error">{inlineEntryEdit.error}</small>}</div>}{root ? visibleDirectory.map((entry, index) => {
           const activePath = entry.kind === 'file' ? entry.type === 'pdf' ? activePdf?.path : entry.type === 'epub' ? activeEpub?.path : workspace.currentDocument()?.note.path : null;
           const renaming = inlineEntryEdit?.kind === 'rename' && inlineEntryEdit.entry?.path === entry.path;
           const body = renaming ? <><input ref={inlineEntryInputRef} className="inline-entry-input" aria-label={'重命名 ' + entry.name} value={inlineEntryEdit!.value} disabled={inlineEntryEdit!.busy} onChange={event => setInlineEntryEdit(value => value && ({ ...value, value: event.target.value }))} onKeyDown={event => { event.stopPropagation(); if (event.key === 'Enter') void commitInline(); if (event.key === 'Escape') setInlineEntryEdit(null); }} />{inlineEntryEdit?.error && <small className="inline-entry-error">{inlineEntryEdit.error}</small>}</> : <><span className={entry.kind === 'folder' ? 'folder-icon' : 'file-icon ' + entry.type}>{entry.kind === 'folder' ? <Folder size={17}/> : entry.type === 'pdf' ? 'PDF' : entry.type === 'epub' ? 'EPUB' : 'MD'}</span><span className="file-name">{entry.name}</span></>;
-          return renaming ? <div className="file-row inline-entry-row" key={entry.path}>{body}</div> : <button title={entry.path} className={'file-row ' + (activePath === entry.path ? 'selected' : '')} key={entry.path} onContextMenu={event => showContext(event, entry)} onClick={event => void openBrowserEntry(entry, event.ctrlKey)} onDoubleClick={() => void openBrowserEntry(entry, true)}>{body}{entry.kind === 'folder' && <ChevronRight size={14} className="folder-enter"/>}</button>;
-        }) : visibleRecent.map(file => { const activePath = file.type === 'pdf' ? activePdf?.path : file.type === 'epub' ? activeEpub?.path : workspace.currentDocument()?.note.path; return <button title={file.path} className={'file-row ' + (activePath === file.path ? 'selected' : '')} key={file.path} onContextMenu={event => showContext(event, { ...file, kind: 'file' })} onClick={event => void openEntry(file, { replaceCurrentNote: !event.ctrlKey })} onDoubleClick={() => void openEntry(file)}><span className={'file-icon ' + file.type}>{file.type === 'pdf' ? 'PDF' : file.type === 'epub' ? 'EPUB' : 'MD'}</span><span className="file-name">{file.name}</span></button>; })}{!(root ? visibleDirectory.length : visibleRecent.length) && <div className="empty-small"><FolderOpen size={20}/><span>{root ? '这个文件夹里没有可阅读的文件' : '打开文件夹后，资料会显示在这里'}</span></div>}</div>
+          return renaming ? <div className="file-row inline-entry-row" key={entry.path}>{body}</div> : <button title={entry.path} className={'file-row ' + (activePath === entry.path ? 'selected' : '')} key={entry.path} style={{ '--folder-row-delay': `${Math.min(index, 3) * 18}ms` } as React.CSSProperties} onContextMenu={event => showContext(event, entry)} onClick={event => void openBrowserEntry(entry, event.ctrlKey)} onDoubleClick={() => void openBrowserEntry(entry, true)}>{body}{entry.kind === 'folder' && <ChevronRight size={14} className="folder-enter"/>}</button>;
+        }) : visibleRecent.map(file => { const activePath = file.type === 'pdf' ? activePdf?.path : file.type === 'epub' ? activeEpub?.path : workspace.currentDocument()?.note.path; return <button title={file.path} className={'file-row ' + (activePath === file.path ? 'selected' : '')} key={file.path} onContextMenu={event => showContext(event, { ...file, kind: 'file' })} onClick={event => void openEntry(file, { replaceCurrentNote: !event.ctrlKey })} onDoubleClick={() => void openEntry(file)}><span className={'file-icon ' + file.type}>{file.type === 'pdf' ? 'PDF' : file.type === 'epub' ? 'EPUB' : 'MD'}</span><span className="file-name">{file.name}</span></button>; })}{!(root ? visibleDirectory.length : visibleRecent.length) && <div className="empty-small"><FolderOpen size={20}/><span>{root ? '这个文件夹里没有可阅读的文件' : '打开文件夹后，资料会显示在这里'}</span></div>}
+        </div>
         {!!results.length && <><div className="section-title">搜索结果</div>{results.map(result => <button className="result-row" key={result.path} onContextMenu={event => showContext(event, { ...result, kind: 'file' })} onClick={event => void openEntry(result, { replaceCurrentNote: !event.ctrlKey })} onDoubleClick={() => void openEntry(result)}><b>{result.name}</b><small>{result.snippet || '文件名匹配'}</small></button>)}</>}
       </aside>}
       <main className="main">
@@ -762,9 +807,17 @@ function App() {
         </div>
       </main>
     </div>
-    {fileContextMenu && <ContextMenu x={fileContextMenu.x} y={fileContextMenu.y} returnFocus={fileMenuTrigger.current} label="文件操作" onClose={() => setFileContextMenu(null)}><button role="menuitem" onClick={() => { setFileContextMenu(null); void reader().showItemInFolder(fileContextMenu.entry.path); }}>打开所在路径</button>{fileContextMenu.entry.kind === 'file' && fileContextMenu.entry.type === 'md' && <button role="menuitem" onClick={() => { const entry = fileContextMenu.entry as WorkspaceFile; setFileContextMenu(null); void openEntry(entry); }}>在新标签页中打开</button>}{fileContextMenu.entry.kind === 'file' && fileContextMenu.entry.type === 'md' && <button role="menuitem" onClick={() => { const entry = fileContextMenu.entry as WorkspaceFile; setFileContextMenu(null); void openNoteInSecondary(entry); }}>在右侧打开</button>}<button role="menuitem" onClick={() => beginRename(fileContextMenu.entry)}>重命名</button><button role="menuitem" className="menu-item-danger" onClick={() => { setTrashCandidate(fileContextMenu.entry); setFileContextMenu(null); }}>移到回收站</button></ContextMenu>}
+    <ContextMenu open={!!fileContextMenu} x={fileContextMenu?.x ?? 0} y={fileContextMenu?.y ?? 0} returnFocus={fileMenuTrigger.current} label="文件操作" onClose={() => setFileContextMenu(null)}>
+      {fileContextMenu && <>
+        <button role="menuitem" onClick={() => { setFileContextMenu(null); void reader().showItemInFolder(fileContextMenu.entry.path); }}>打开所在路径</button>
+        {fileContextMenu.entry.kind === 'file' && fileContextMenu.entry.type === 'md' && <button role="menuitem" onClick={() => { const entry = fileContextMenu.entry as WorkspaceFile; setFileContextMenu(null); void openEntry(entry); }}>在新标签页中打开</button>}
+        {fileContextMenu.entry.kind === 'file' && fileContextMenu.entry.type === 'md' && <button role="menuitem" onClick={() => { const entry = fileContextMenu.entry as WorkspaceFile; setFileContextMenu(null); void openNoteInSecondary(entry); }}>在右侧打开</button>}
+        <button role="menuitem" onClick={() => beginRename(fileContextMenu.entry)}>重命名</button>
+        <button role="menuitem" className="menu-item-danger" onClick={() => { setTrashCandidate(fileContextMenu.entry); setFileContextMenu(null); }}>移到回收站</button>
+      </>}
+    </ContextMenu>
     {trashCandidate && !modalConflict && !workspace.pendingClose && <TrashConfirmation name={trashCandidate.name} onCancel={() => setTrashCandidate(null)} onConfirm={async () => { const entry = trashCandidate; const okay = await deleteEntry(entry); if (okay) setTrashCandidate(null); return okay; }}/>}
-    {message && <div className="toast"><span role="status">{message}</span><button aria-label="关闭提示" onClick={() => setMessage('')}><X size={16}/></button></div>}
+    <ToastMessage open={!!message} message={message} onDismiss={() => setMessage('')}/>
     {workspace.pendingClose && !modalConflict && <UnsavedDialog description="关闭这份未能保存的笔记" onCancel={() => { workspace.pendingClose = null; workspace.blockingDocument = null; workspace.notify(); }}
       onDiscard={async () => { await workspace.finishPendingClose(true).catch(error => setMessage(String(error))); }}
       onSave={async () => { await workspace.finishPendingClose().catch(error => setMessage(String(error))); }}/>}

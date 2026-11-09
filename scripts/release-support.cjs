@@ -43,13 +43,73 @@ function checkMac(report, asset, architecture, version, sourceCommit) {
   assert.equal(asset.digest, 'sha256:' + report.dmg.sha256);
 }
 
-function passed(text) {
-  const count = Number(text.match(/^# tests (\d+)\s*$/m)?.[1]);
-  const success = Number(text.match(/^# pass (\d+)\s*$/m)?.[1]);
-  if (!count || success !== count || !['fail', 'cancelled', 'skipped', 'todo'].every(key =>
-    new RegExp('^# ' + key + ' 0\\s*$', 'm').test(text))) throw Error('Incomplete or unsuccessful TAP result');
-  return count;
+const windowsPosixSkips = new Set([
+  'note saves preserve POSIX permissions while history stays owner-only',
+  'new notes, atomic files and recovery drafts are private even with a permissive umask',
+  'replacement restores the original mode rather than restricting it through the current umask',
+  'atomic temporary files are private before any content is written',
+  'save uses permissions changed during backup work and leaves conflicts untouched',
+  'history writes restrict an existing permissive snapshot at the same destination',
+  'permission and stat errors fail closed, preserving the original and cleaning the temporary file',
+]);
+const posixSkipReason = 'POSIX mode bits are not supported on Windows';
+
+// Validate Node's complete TAP stream, not just a possibly duplicated summary.
+// Only the Windows unit caller may opt into the exact platform exclusions.
+function tapResult(text, { platform, stage } = {}) {
+  const reject = () => { throw Error('Incomplete or unsuccessful TAP result'); };
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  if (lines.filter(line => line === 'TAP version 13').length !== 1) reject();
+  const counts = {};
+  for (const key of ['tests', 'suites', 'pass', 'fail', 'cancelled', 'skipped', 'todo']) {
+    const matches = lines.filter(line => line.startsWith('# ' + key + ' '));
+    if (matches.length !== 1 || !new RegExp('^# ' + key + ' ([0-9]+)$').test(matches[0])) reject();
+    counts[key] = Number(matches[0].slice(key.length + 3));
+    if (!Number.isSafeInteger(counts[key])) reject();
+  }
+  if (counts.pass <= 0 || counts.fail || counts.cancelled || counts.todo ||
+      counts.pass + counts.skipped !== counts.tests) reject();
+  const allowPosix = platform === 'win32' && stage === 'unit';
+  if (counts.skipped && (!allowPosix || counts.skipped !== windowsPosixSkips.size)) reject();
+  let records = 0, suites = 0, topPlan = -1;
+  const pending = new Map(), allowedSkips = [], seenSkips = new Set();
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    if (/^\s*(?:not ok\b|Bail out!)/i.test(line)) reject();
+    const plan = line.match(/^( *)(?:1\.\.)([0-9]+)$/);
+    if (plan) {
+      const depth = plan[1].length, expected = Number(plan[2]);
+      if (!Number.isSafeInteger(expected) || (pending.get(depth) || 0) !== expected) reject();
+      pending.delete(depth);
+      if (!depth) { if (topPlan !== -1) reject(); topPlan = index; }
+      continue;
+    }
+    const record = line.match(/^( *)ok ([0-9]+) - (.*)$/);
+    if (!record) continue;
+    if (topPlan !== -1) reject();
+    const depth = record[1].length, number = Number(record[2]);
+    if (number !== (pending.get(depth) || 0) + 1) reject();
+    pending.set(depth, number); records++;
+    const directive = record[3].match(/^(.*?) # (SKIP|TODO)(?: (.*))?$/i);
+    if (directive) {
+      const [, name, kind, reason] = directive;
+      if (depth || kind !== 'SKIP' || !allowPosix || !windowsPosixSkips.has(name) ||
+          reason !== posixSkipReason || seenSkips.has(name)) reject();
+      seenSkips.add(name); allowedSkips.push({ name, reason });
+    }
+    // A suite has an ok record but is excluded from Node's tests/pass totals.
+    for (let next = index + 1; next < lines.length; next++) {
+      if (lines[next] === ' '.repeat(depth + 2) + "type: 'suite'") { suites++; break; }
+      if (lines[next] === ' '.repeat(depth + 2) + '...' ||
+          !lines[next].startsWith(' '.repeat(depth + 2))) break;
+    }
+  }
+  if (topPlan < 0 || pending.size || records !== counts.tests + counts.suites ||
+      suites !== counts.suites || allowedSkips.length !== counts.skipped) reject();
+  if (lines.slice(0, topPlan).some(line => /^# (?:tests|suites|pass|fail|cancelled|skipped|todo) /.test(line))) reject();
+  return { total: counts.tests, passed: counts.pass, skipped: counts.skipped, allowedSkips };
 }
+function passed(text, context) { return tapResult(text, context).passed; }
 
 // The tag endpoint omits draft releases, even for an authenticated owner.
 async function releaseForTag(api, tag) {
@@ -91,4 +151,4 @@ async function checkPublication(api, { releaseId, tag, sourceCommit, assets, pub
   }
   return release;
 }
-module.exports = { options, changes, checkMac, passed, releaseForTag, checkPublication, tagCommit };
+module.exports = { options, changes, checkMac, passed, tapResult, releaseForTag, checkPublication, tagCommit };

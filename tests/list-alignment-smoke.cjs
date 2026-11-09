@@ -69,21 +69,35 @@ test('ordered and bullet list text, wrapping and continuations align without cha
       await page.getByRole('button', { name: '设置', exact: true }).click();
       await page.getByRole('combobox', { name: 'Markdown 正文字体' }).selectOption(font); await page.keyboard.press('Escape');
       await page.evaluate(() => document.fonts.ready);
-      await page.waitForFunction(() => {
+      try { await page.waitForFunction(() => {
         const editor = document.querySelector('.cm-editor'), content = document.querySelector('.cm-content');
         if (!editor || !content) return false;
         const style = getComputedStyle(content), canvas = document.createElement('canvas').getContext('2d');
         canvas.font = style.font;
         const expected = canvas.measureText(' ').width + (parseFloat(style.letterSpacing) || 0);
         return Math.abs(parseFloat(getComputedStyle(editor).getPropertyValue('--md-list-space-width')) - expected) < .01;
-      });
+      }); } catch (error) {
+        console.error('list font measurement diagnostic', await page.evaluate(() => {
+          const editor = document.querySelector('.cm-editor'), content = document.querySelector('.cm-content');
+          const style = getComputedStyle(content), canvas = document.createElement('canvas').getContext('2d'); canvas.font = style.font;
+          return { font: style.font, current: getComputedStyle(editor).getPropertyValue('--md-list-space-width'), expected: canvas.measureText(' ').width, status: document.fonts.status };
+        }));
+        throw error;
+      }
       await check('.cm-line');
       await screenshot(font + '-edit', '.cm-scroller');
       await page.getByRole('button', { name: '切换到预览', exact: true }).click();
       await page.locator('.markdown-preview li').first().waitFor();
+      await page.waitForFunction(() => !document.querySelector('.note-body')?.getAnimations().some(animation => animation.playState === 'running'));
       await check('.markdown-preview li');
       await screenshot(font + '-read', '.markdown-preview');
       await page.getByRole('button', { name: '切换到源码编辑', exact: true }).click();
+      await page.evaluate(async () => {
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        await Promise.all(document.querySelector('.note-body').getAnimations({ subtree: true })
+          .filter(animation => Number.isFinite(animation.effect?.getTiming().iterations))
+          .map(animation => animation.finished.catch(() => {})));
+      });
     }
     const line = page.locator('.cm-line').filter({ hasText: /BULLET / }).filter({ hasNotText: /CHILD_|QUOTE_/ });
     await line.scrollIntoViewIfNeeded();
@@ -92,11 +106,41 @@ test('ordered and bullet list text, wrapping and continuations align without cha
       while ((node = walker.nextNode())) {
         const offset = node.textContent.indexOf('😀'); if (offset < 0) continue;
         const range = document.createRange(); range.setStart(node, offset); range.setEnd(node, offset + 2);
-        const bounds = range.getBoundingClientRect(); return { x: bounds.left + 1, y: bounds.top + bounds.height / 2 };
+        const bounds = range.getBoundingClientRect();
+        const content = element.closest('.cm-editor').querySelector('.cm-content'), view = content?.cmTile?.root?.view;
+        const state = (phase, event) => {
+          const selection = window.getSelection();
+          return { phase, x: event?.clientX, y: event?.clientY, buttons: event?.buttons, detail: event?.detail,
+            anchor: view?.state.selection.main.anchor, head: view?.state.selection.main.head,
+            domSelection: { collapsed: selection?.isCollapsed, textLength: selection?.toString().length,
+              anchorOffset: selection?.anchorOffset, focusOffset: selection?.focusOffset },
+            scroll: view?.scrollDOM.scrollTop, transform: getComputedStyle(document.querySelector('.note-body')).transform,
+            animations: document.querySelector('.note-body').getAnimations({ subtree: true }).map(animation => ({ state: animation.playState,
+              time: animation.currentTime, duration: animation.effect?.getTiming().duration, target: animation.effect?.target?.className })) };
+        };
+        window.__listClickTrace = [state('before')];
+        for (const eventName of ['mousemove', 'mousedown', 'mouseup', 'click']) {
+          document.addEventListener(eventName, event => { window.__listClickTrace.push(state(eventName, event)); queueMicrotask(() => window.__listClickTrace.push(state(eventName + '-after', event))); }, { capture: true, once: true });
+        }
+        return { x: bounds.left + 1, y: bounds.top + bounds.height / 2 };
       }
       throw Error('Missing Emoji click target');
     });
-    await page.mouse.click(point.x, point.y); await page.keyboard.insertText('Z');
+    const snapshotSelection = () => page.evaluate(() => {
+      const content = document.querySelector('.cm-content'), view = content?.cmTile?.root?.view;
+      const main = view?.state.selection.main, cursor = document.querySelector('.cm-cursor-primary')?.getBoundingClientRect();
+      return { anchor: main?.anchor, head: main?.head, empty: main?.empty, scroll: document.querySelector('.cm-scroller')?.scrollTop,
+        cursor: cursor?.toJSON(), focused: document.activeElement?.className };
+    });
+    await page.mouse.click(point.x, point.y);
+    const afterClick = await snapshotSelection();
+    const clickSelection = await page.evaluate(() => {
+      const selection = window.getSelection();
+      return { textLength: selection?.toString().length || 0, collapsed: selection?.isCollapsed, anchorOffset: selection?.anchorOffset, focusOffset: selection?.focusOffset,
+        backgrounds: document.querySelectorAll('.cm-proseSelectionBackground').length, focused: document.activeElement?.className, trace: window.__listClickTrace };
+    });
+    assert.equal(clickSelection.collapsed, true, `click must leave a collapsed selection: ${JSON.stringify({ point, afterClick, clickSelection })}`);
+    await page.keyboard.insertText('Z');
     const at = source.indexOf('😀', source.indexOf('- BULLET '));
     await waitForFile(file, value => value === source.slice(0, at) + 'Z' + source.slice(at));
     await page.keyboard.press('Control+z'); await waitForFile(file, value => value === source);

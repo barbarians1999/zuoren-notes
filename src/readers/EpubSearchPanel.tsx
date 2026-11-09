@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import ePub from 'epubjs';
 import type Section from 'epubjs/types/section';
 import type { FlatNavItem } from '../readerContext';
 import { stepMatchIndex } from '../findReplace';
 import { collectEpubMatches, findEpubSectionMatches, EPUB_SEARCH_LIMIT, type EpubSearchResult, type EpubSearchStatus } from './epubSearch';
 
-export function EpubSearchPanel({ data, toc, onNavigate, onClose, onClear }: {
+export function EpubSearchPanel({ open, motionRef, data, toc, onNavigate, onClose, onClear }: {
+  open: boolean; motionRef: RefObject<HTMLElement | null>;
   data: Uint8Array; toc: FlatNavItem[]; onNavigate: (result: EpubSearchResult) => Promise<boolean>; onClose: () => void; onClear: () => void;
 }) {
   const [query, setQuery] = useState(''), [caseSensitive, setCaseSensitive] = useState(false);
@@ -64,7 +65,7 @@ export function EpubSearchPanel({ data, toc, onNavigate, onClose, onClear }: {
     }
   }
   const status = current?.status;
-  return <aside className="epub-search-panel" aria-label="EPUB 全书搜索" onKeyDown={event => {
+  return <aside ref={motionRef} className="epub-search-panel" aria-label="EPUB 全书搜索" aria-hidden={!open} onKeyDown={event => {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); }
     if (event.key === 'Enter' && event.target instanceof HTMLInputElement && event.target.type === 'text' && status?.results.length) {

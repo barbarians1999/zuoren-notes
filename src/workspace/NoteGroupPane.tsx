@@ -81,12 +81,12 @@ export function NoteGroupPane({ workspace, group, findCommand, onJump, insertReg
       headerControls={<><button className="workspace-icon-action" aria-label="新建空白标签" title="新标签" onClick={() => workspace.blank(group)}><Plus size={16}/></button>
         <button className={'workspace-icon-action' + (split ? ' active' : '')} aria-label="左右分屏笔记" aria-pressed={split} title={split ? '恢复单栏（保留全部标签）' : '在右侧打开当前笔记'} onClick={onSplit}><Columns2 size={17}/></button></>}/>
     {!doc && <div className="empty-tab-actions"><button onClick={onOpen}>打开笔记</button><button onClick={onNew}>新建笔记</button></div>}
-    {selected && menu && <ContextMenu x={menu.x} y={menu.y} returnFocus={menu.trigger} label="标签操作" onClose={() => setMenu(null)}>
-      {selected.document && <button role="menuitem" onClick={() => { setMenu(null); onRight(selected.document!.note.path); }}>在右侧打开</button>}
-      {!!workspace.groups.secondary.tabs.length && <><button role="menuitem" aria-label="交换左右笔记" onClick={() => { setMenu(null); workspace.swap(); }}><ArrowLeftRight size={15}/>交换左右笔记</button>
+    <ContextMenu open={!!(selected && menu)} x={menu?.x ?? 0} y={menu?.y ?? 0} returnFocus={menu?.trigger} label="标签操作" onClose={() => setMenu(null)}>
+      {selected && menu && selected.document && <button role="menuitem" onClick={() => { setMenu(null); onRight(selected.document!.note.path); }}>在右侧打开</button>}
+      {selected && menu && !!workspace.groups.secondary.tabs.length && <><button role="menuitem" aria-label="交换左右笔记" onClick={() => { setMenu(null); workspace.swap(); }}><ArrowLeftRight size={15}/>交换左右笔记</button>
         <button role="menuitem" aria-label="关闭笔记分屏" onClick={() => { setMenu(null); workspace.merge(); }}><Columns2 size={15}/>合并左右标签</button></>}
-      {!!selected.document?.retainedRecoveryIds.length && <button role="menuitem" onClick={() => { setMenu(null); void workspace.copyRetainedRecovery(selected.document!).catch(workspace.report); }}>旧恢复稿副本</button>}
-      <button role="menuitem" onClick={() => { setMenu(null); void workspace.close(group, selected); }}><span>关闭</span>{value.activeId === selected.id && <kbd aria-hidden="true">Ctrl+W</kbd>}</button>
-    </ContextMenu>}
+      {selected && menu && !!selected.document?.retainedRecoveryIds.length && <button role="menuitem" onClick={() => { setMenu(null); void workspace.copyRetainedRecovery(selected.document!).catch(workspace.report); }}>旧恢复稿副本</button>}
+      {selected && menu && <button role="menuitem" onClick={() => { setMenu(null); void workspace.close(group, selected); }}><span>关闭</span>{value.activeId === selected.id && <kbd aria-hidden="true">Ctrl+W</kbd>}</button>}
+    </ContextMenu>
   </div>;
 }

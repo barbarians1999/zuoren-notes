@@ -11,7 +11,7 @@ before(async () => {
 const { validateSession, sessionFilePaths } = require('../electron/session.cjs');
 const digest = text => createHash('sha256').update(text).digest('hex');
 const a = 'C:\\notes\\a.md', b = 'C:\\notes\\b.md', c = 'C:\\notes\\c.md';
-function fixture() {
+function fixture(barrier = { has: () => false }) {
   const disk = new Map([a,b,c].map(path => [documentKey(path), { path, content: path === a ? '- [ ] task\n' : '# '+path, hash: digest(path === a ? '- [ ] task\n' : '# '+path), bom: false, eol: '\n' }]));
   const writes = [], drafts = new Map(), messages = [];
   const api = {
@@ -21,7 +21,7 @@ function fixture() {
     writeRecovery: async input => { drafts.set(input.recoveryId, { status: 'recoverable', recovery: { ...input, draftHash: digest(input.content) } }); },
     saveNote: async input => { writes.push(input); const old = disk.get(documentKey(input.path)); if (old.hash !== input.hash) return { ...old, conflict: true }; const next = { ...old, content: input.content, hash: digest(input.content) }; disk.set(documentKey(input.path), next); drafts.delete(input.recoveryId); return { ...next, conflict: false }; },
   };
-  const ws = new NoteWorkspace(() => api, { has: () => false }, message => messages.push(message));
+  const ws = new NoteWorkspace(() => api, barrier, message => messages.push(message));
   return { ws, api, disk, writes, drafts, messages };
 }
 function mount(tab) {
@@ -29,6 +29,13 @@ function mount(tab) {
   view.detach = tab.document.attach(view, tab); return view;
 }
 function edit(tab, view, from, to, insert) { tab.document.dispatch(view, [view.state.update({ changes: { from, to, insert }, selection: { anchor: from + insert.length }, annotations: [Transaction.userEvent.of('input'), isolateHistory.of('full')] })]); }
+async function withClock(run) {
+  const originalNow = Date.now; let now = 100000;
+  Date.now = () => now;
+  try { await run({ now: () => now, advance: ms => { now += ms; } }); }
+  finally { Date.now = originalNow; }
+}
+const settle = async () => { await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve)); };
 test('temporary replacement, pinning, and same-file deduplication are per group', async () => {
   const { ws } = fixture(); const first = await ws.open(a); await ws.open(b); assert.equal(ws.groups.primary.tabs.length, 1); assert.ok(first.document.disposed);
   const pinned = await ws.open(a, 'primary', true); await ws.open(c); assert.equal(ws.groups.primary.tabs.length, 2); assert.ok(ws.groups.primary.tabs.includes(pinned));
@@ -138,6 +145,96 @@ test('failed close and background saves retain draft, view and retry', async () 
   assert.equal(await ws.close('primary', tab), false); assert.equal(ws.current(), tab); assert.ok(ws.pendingClose); assert.equal(tab.document.text, 'draft- [ ] task\n');
   api.saveNote = original; await ws.finishPendingClose(); assert.equal(ws.groups.primary.tabs.length, 0); assert.equal(writes.length, 1);
 });
+test('a failed automatic write retries without new input and saves the latest snapshot', async () => withClock(async clock => {
+  const { ws, api } = fixture(), tab = await ws.open(a), view = mount(tab), doc = tab.document;
+  ws.ready = true; edit(tab, view, 0, 0, 'draft');
+  const write = api.saveNote; let attempts = 0;
+  api.saveNote = async input => { attempts++; if (attempts === 1) throw Error('temporary disk error'); return write(input); };
+  clock.advance(900); ws.tick(); await settle();
+  assert.equal(attempts, 1); assert.equal(doc.label, '保存失败'); assert.equal(doc.saveDue, Date.now() + 2000);
+  clock.advance(1999); ws.tick(); await settle(); assert.equal(attempts, 1);
+  clock.advance(1); ws.tick(); await settle();
+  assert.equal(attempts, 2); assert.equal(doc.note.content, doc.text); assert.equal(doc.label, '已保存'); assert.equal(doc.saveDue, Infinity);
+}));
+test('automatic save retries use bounded 2/5/15 second backoff and then stop', async () => withClock(async clock => {
+  const { ws, api, messages } = fixture(), tab = await ws.open(a), view = mount(tab), doc = tab.document;
+  ws.ready = true; edit(tab, view, 0, 0, 'draft'); let attempts = 0;
+  api.saveNote = async () => { attempts++; throw Error('disk unavailable'); };
+  const delays = [900, 2000, 5000, 15000];
+  for (let i = 0; i < delays.length; i++) {
+    clock.advance(delays[i]); ws.tick(); await settle(); assert.equal(attempts, i + 1);
+  }
+  assert.equal(doc.label, '保存失败'); assert.equal(doc.saveDue, Infinity);
+  ws.tick(); await settle(); assert.equal(attempts, 4);
+  assert.equal(messages.filter(message => message.startsWith('保存失败：')).length, 1);
+}));
+test('new edits keep the normal 900ms save schedule while a retry is pending', async () => withClock(async clock => {
+  const { ws, api } = fixture(), tab = await ws.open(a), view = mount(tab), doc = tab.document;
+  ws.ready = true; edit(tab, view, 0, 0, 'first'); let attempts = 0;
+  const write = api.saveNote;
+  api.saveNote = async input => { attempts++; if (attempts === 1) throw Error('temporary disk error'); return write(input); };
+  clock.advance(900); ws.tick(); await settle(); assert.equal(doc.saveDue, Date.now() + 2000);
+  edit(tab, view, 0, 0, 'new '); assert.equal(doc.saveDue, Date.now() + 900);
+  clock.advance(900); ws.tick(); await settle();
+  assert.equal(attempts, 2); assert.equal(doc.note.content, doc.text); assert.match(doc.note.content, /^new first/);
+}));
+test('a failed in-flight save keeps the earlier new-edit deadline and retries the latest snapshot', async () => withClock(async clock => {
+  const { ws, api } = fixture(), tab = await ws.open(a), view = mount(tab), doc = tab.document; ws.ready = true;
+  edit(tab, view, 0, 0, 'old ');
+  let rejectWrite, started; const entered = new Promise(resolve => started = resolve); let attempts = 0;
+  const write = api.saveNote;
+  api.saveNote = async input => {
+    attempts++;
+    if (attempts === 1) { started(); return new Promise((_, reject) => { rejectWrite = reject; }); }
+    return write(input);
+  };
+  const saving = doc.save(); await entered;
+  clock.advance(300); edit(tab, view, 0, 0, 'new '); const editDue = doc.saveDue;
+  rejectWrite(Error('old write failed')); assert.equal(await saving, false);
+  assert.equal(doc.saveDue, editDue); assert.equal(doc.saveDue, Date.now() + 900);
+  clock.advance(899); ws.tick(); await settle(); assert.equal(attempts, 1);
+  clock.advance(1); ws.tick(); await settle();
+  assert.equal(attempts, 2); assert.equal(doc.note.content, doc.text); assert.match(doc.note.content, /^new old/);
+}));
+test('a retry due during a path barrier does not write or restart automatically after release', async () => withClock(async clock => {
+  let blocked = false; const { ws, api } = fixture({ has: () => blocked }), tabPromise = ws.open(a);
+  const tab = await tabPromise, view = mount(tab), doc = tab.document; ws.ready = true; edit(tab, view, 0, 0, 'draft');
+  let attempts = 0; const write = api.saveNote;
+  api.saveNote = async input => { attempts++; if (attempts === 1) throw Error('temporary disk error'); return write(input); };
+  clock.advance(900); ws.tick(); await settle(); assert.equal(attempts, 1);
+  clock.advance(2000); blocked = true; ws.tick(); await settle();
+  assert.equal(attempts, 1); assert.equal(doc.saveDue, Infinity);
+  blocked = false; clock.advance(60000); ws.tick(); await settle(); assert.equal(attempts, 1);
+  assert.equal(await doc.save(), true); assert.equal(attempts, 2); assert.equal(doc.note.content, doc.text);
+}));
+test('save conflicts do not enter the automatic retry schedule', async () => withClock(async clock => {
+  const { ws, api, disk } = fixture(), tab = await ws.open(a), view = mount(tab), doc = tab.document;
+  ws.ready = true; edit(tab, view, 0, 0, 'draft');
+  const changed = { ...disk.get(documentKey(a)), content: 'external', hash: digest('external') }; disk.set(documentKey(a), changed);
+  clock.advance(900); ws.tick(); await settle();
+  assert.equal(doc.label, '外部冲突'); assert.equal(doc.saveDue, Infinity);
+  clock.advance(60000); ws.tick(); await settle(); assert.equal(doc.label, '外部冲突');
+}));
+test('recovery conflicts and documents that are not ready do not schedule retries', async () => withClock(async clock => {
+  const { ws, api } = fixture(), tab = await ws.open(a), doc = tab.document; ws.ready = true;
+  let attempts = 0; api.saveNote = async () => { attempts++; throw Error('should remain blocked'); };
+  doc.recoveryConflict = { note: doc.note, recovery: { content: 'recovery' }, recoveryId: doc.recoveryId };
+  assert.equal(await doc.save(), false); assert.equal(doc.saveDue, Infinity);
+  clock.advance(60000); ws.tick(); await settle(); assert.equal(attempts, 0);
+  doc.recoveryConflict = null; doc.ready = false;
+  assert.equal(await doc.save(), false); assert.equal(doc.saveDue, Infinity);
+  clock.advance(60000); ws.tick(); await settle(); assert.equal(attempts, 0);
+}));
+test('manual save success cancels pending retries and dispose clears the due time', async () => withClock(async clock => {
+  const { ws, api } = fixture(), tab = await ws.open(a), view = mount(tab), doc = tab.document;
+  ws.ready = true; edit(tab, view, 0, 0, 'draft'); const write = api.saveNote; let attempts = 0;
+  api.saveNote = async input => { attempts++; if (attempts === 1) throw Error('temporary disk error'); return write(input); };
+  clock.advance(900); ws.tick(); await settle(); assert.equal(doc.saveDue, Date.now() + 2000);
+  assert.equal(await doc.save(), true); assert.equal(doc.label, '已保存'); assert.equal(doc.saveDue, Infinity);
+  clock.advance(60000); ws.tick(); await settle(); assert.equal(attempts, 2);
+  edit(tab, view, 0, 0, 'again'); assert.notEqual(doc.saveDue, Infinity); doc.dispose();
+  assert.equal(doc.saveDue, Infinity);
+}));
 test('discard closes only after recovery cleanup succeeds', async () => {
   const { ws, api, drafts, messages } = fixture(); const tab = await ws.open(a), view = mount(tab); edit(tab, view, 0, 0, 'discard me');
   api.saveNote = async () => { throw Error('disk unavailable'); };
@@ -148,7 +245,7 @@ test('discard closes only after recovery cleanup succeeds', async () => {
   assert.equal(ws.pendingClose.tab, tab); assert.equal(ws.current(), tab); assert.match(tab.document.text, /discard me/);
   assert.match(messages.at(-1), /清理失败/);
   api.deleteRecovery = remove; await ws.finishPendingClose(true);
-  assert.equal(ws.groups.primary.tabs.length, 0); assert.equal(tab.document.text, tab.document.note.content); assert.equal(drafts.has(id), false);
+  assert.equal(ws.groups.primary.tabs.length, 0); assert.equal(tab.document.text, tab.document.note.content); assert.equal(drafts.has(id), false); assert.equal(tab.document.saveDue, Infinity);
 });
 test('independent open generations reject stale selection without disposing a reused document', async () => {
   const { ws, api } = fixture(); const read = api.readNote; let release;

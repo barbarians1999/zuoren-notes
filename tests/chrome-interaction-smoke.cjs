@@ -31,14 +31,24 @@ test('shared chrome preserves focus, async failures and confirmed copy feedback'
     await t.test('menus, tabs and settings keep keyboard focus and ignore composing Escape', async () => {
       await row('b.md').click({ button: 'right' });
       const menu = page.getByRole('menu', { name: '文件操作' }); await menu.waitFor();
+      const menuSurface = page.locator('.file-context-menu[aria-label="文件操作"]');
+      await page.waitForFunction(() => {
+        const el = document.querySelector('.file-context-menu[aria-label="文件操作"]');
+        return el?.getAttribute('aria-hidden') === 'false' && el.getAnimations().some(animation => animation.effect.getTiming().duration === 150);
+      });
+      assert.deepEqual(await menuSurface.evaluate(el => ({ open: el.getAttribute('aria-hidden'), inert: el.inert, duration: el.getAnimations()[0]?.effect.getTiming().duration })), { open: 'false', inert: false, duration: 150 });
       if (screenshots) await page.screenshot({ path: path.join(screenshots, 'chrome-file-menu.png') });
       await page.keyboard.press('End'); assert.match(await page.locator(':focus').innerText(), /移到回收站/);
       await page.keyboard.press('Home'); assert.equal(await page.locator(':focus').innerText(), '打开所在路径');
       await composingEscape(); assert.equal(await menu.isVisible(), true);
-      await page.keyboard.press('Escape'); await menu.waitFor({ state: 'hidden' });
+      await page.keyboard.press('Escape'); await page.waitForFunction(() => document.querySelector('.file-context-menu[aria-label="文件操作"]')?.inert === true);
       assert.equal(await row('b.md').evaluate(el => document.activeElement === el), true);
+      assert.deepEqual(await menuSurface.evaluate(el => ({ hidden: el.getAttribute('aria-hidden'), duration: el.getAnimations()[0]?.effect.getTiming().duration, pointer: getComputedStyle(el).pointerEvents })), { hidden: 'true', duration: 110, pointer: 'none' });
+      await menuSurface.waitFor({ state: 'detached' });
       const a = page.getByRole('tab', { name: 'a.md', exact: true }); await a.click(); await a.focus();
+      await page.getByRole('tab', { name: 'b.md', exact: true }).waitFor();
       await page.keyboard.press('ArrowRight');
+      await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'tab' && document.activeElement.textContent.trim() === 'b.md');
       assert.equal(await page.locator('[role="tab"]:focus').getAttribute('aria-selected'), 'true');
       assert.equal(await page.locator('[role="tab"]:focus').innerText(), 'b.md');
       await page.keyboard.press('Home'); assert.equal(await page.locator('[role="tab"]:focus').innerText(), 'a.md');
@@ -47,11 +57,16 @@ test('shared chrome preserves focus, async failures and confirmed copy feedback'
       await page.keyboard.press('Escape'); assert.equal(await a.evaluate(el => el === document.activeElement), true);
       const settings = page.getByRole('button', { name: '设置', exact: true });
       await settings.click(); await page.getByRole('dialog', { name: '阅读设置' }).waitFor();
+      await page.waitForFunction(() => document.querySelector('.settings-popover')?.getAnimations().length > 0);
+      assert.equal(await page.locator('.settings-popover').evaluate(el => el.getAnimations()[0]?.effect.getTiming().duration), 150);
       if (screenshots) await page.screenshot({ path: path.join(screenshots, 'chrome-settings.png') });
       await composingEscape(); assert.equal(await page.locator('.settings-popover').isVisible(), true);
       await page.keyboard.press('Escape'); assert.equal(await settings.evaluate(el => el === document.activeElement), true);
+      await page.waitForFunction(() => document.querySelector('.settings-popover')?.inert === true);
+      assert.deepEqual(await page.locator('.settings-popover').evaluate(el => ({ duration: el.getAnimations()[0]?.effect.getTiming().duration, pointer: getComputedStyle(el).pointerEvents })), { duration: 110, pointer: 'none' });
+      await page.locator('.settings-popover').waitFor({ state: 'detached' });
       await settings.click(); await page.locator('.settings-popover').waitFor(); await settings.click();
-      await page.locator('.settings-popover').waitFor({ state: 'hidden' });
+      await page.locator('.settings-popover').waitFor({ state: 'detached' });
     });
 
     await t.test('recycle failure retains the dialog/file and prevents duplicate async submissions', async () => {
@@ -69,6 +84,10 @@ test('shared chrome preserves focus, async failures and confirmed copy feedback'
       });
       await row('b.md').click({ button: 'right' });
       const recycleItem = page.getByRole('menuitem', { name: '移到回收站', exact: true });
+      await page.waitForFunction(() => {
+        const menu = document.querySelector('.file-context-menu[aria-label="文件操作"]');
+        return menu?.getAttribute('aria-hidden') === 'false' && !menu.inert && menu.getAnimations().length === 0;
+      });
       try { await recycleItem.click(); } catch (error) {
         console.error('recycle menu diagnostic', await page.evaluate(() => ({ menus: [...document.querySelectorAll('[role="menu"]')].map(menu => ({ label: menu.getAttribute('aria-label'), connected: menu.isConnected, text: menu.innerText, bounds: menu.getBoundingClientRect().toJSON() })),
           fileRows: [...document.querySelectorAll('.file-row')].map(row => ({ text: row.innerText, bounds: row.getBoundingClientRect().toJSON() })),
@@ -95,6 +114,15 @@ test('shared chrome preserves focus, async failures and confirmed copy feedback'
     await t.test('copy waits for confirmation, supports failure and compact PDF tools stay usable', async () => {
       await row('paper.pdf').click(); await page.locator('.layout-tabs').getByRole('button', { name: '阅读', exact: true }).click();
       await page.waitForFunction(() => document.querySelector('.textLayer')?.textContent.includes('Confirmed'));
+      const pdfSearchTrigger = page.getByRole('button', { name: '在 PDF 中查找', exact: true });
+      await pdfSearchTrigger.click(); const pdfFind = page.locator('.pdf-find-bar'); await pdfFind.waitFor();
+      await page.waitForFunction(() => document.querySelector('.pdf-find-bar')?.getAnimations().length > 0);
+      assert.equal(await pdfFind.evaluate(el => el.getAnimations()[0]?.effect.getTiming().duration), 140);
+      await pdfFind.getByRole('button', { name: '关闭 PDF 查找', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('.pdf-find-bar')?.inert === true);
+      const pdfFindExit = await pdfFind.evaluate(el => ({ hidden: el.getAttribute('aria-hidden'), duration: el.getAnimations()[0]?.effect.getTiming().duration }));
+      assert.deepEqual(pdfFindExit, { hidden: 'true', duration: 110 });
+      await pdfFind.waitFor({ state: 'detached' });
       await page.evaluate(() => {
         window.__chromeCopy = { calls: 0, fail: false };
         Object.defineProperty(navigator.clipboard, 'writeText', { configurable: true, value: async text => {
@@ -120,6 +148,14 @@ test('shared chrome preserves focus, async failures and confirmed copy feedback'
       await page.waitForFunction(() => document.querySelector('.toast')?.textContent.includes('复制失败'));
       assert.equal(await copy.getAttribute('data-feedback'), 'ready');
       await page.getByRole('button', { name: '取消 PDF 文字选区', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('.pdf-text-actions')?.inert === true);
+      assert.equal(await page.locator('.pdf-text-actions').evaluate(el => el.getAnimations()[0]?.effect.getTiming().duration), 110);
+      await page.locator('.pdf-text-actions').waitFor({ state: 'detached' });
+      await page.getByRole('button', { name: '关闭提示', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('.toast')?.inert === true);
+      const toastExit = await page.locator('.toast').evaluate(el => ({ hidden: el.getAttribute('aria-hidden'), duration: el.getAnimations()[0]?.effect.getTiming().duration }));
+      assert.deepEqual(toastExit, { hidden: 'true', duration: 110 });
+      await page.locator('.toast').waitFor({ state: 'detached' });
       const compactSize = await app.evaluate(async ({ BrowserWindow }) => {
         const win = BrowserWindow.getAllWindows()[0];
         if (win.isMaximized()) {

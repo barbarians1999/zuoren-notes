@@ -48,7 +48,8 @@ test('basic Markdown live display, local activation, tasks and table navigation 
       const code = content.locator('.cm-md-inline-code-content').filter({ hasText: 'x😀y' });
       await code.scrollIntoViewIfNeeded();
       const point = await code.evaluate(el => {
-        const range = document.createRange(); range.setStart(el.firstChild, 3); range.setEnd(el.firstChild, 4);
+        const textNode = el.querySelector('.cm-md-inline-code-text')?.firstChild; if (!textNode) throw Error('Missing inline-code text node');
+        const range = document.createRange(); range.setStart(textNode, 3); range.setEnd(textNode, 4);
         const box = range.getBoundingClientRect(); return { x: box.left + Math.min(1, box.width / 10), y: box.top + box.height / 2 };
       });
       await page.mouse.click(point.x, point.y); await page.keyboard.type('!');
@@ -72,7 +73,8 @@ test('basic Markdown live display, local activation, tasks and table navigation 
       const code = content.locator('.cm-md-inline-code-content').filter({ hasText: 'x😀y' });
       await code.scrollIntoViewIfNeeded();
       const start = await code.evaluate(el => {
-        const range = document.createRange(); range.setStart(el.firstChild, 0); range.setEnd(el.firstChild, 1);
+        const textNode = el.querySelector('.cm-md-inline-code-text')?.firstChild; if (!textNode) throw Error('Missing inline-code text node');
+        const range = document.createRange(); range.setStart(textNode, 0); range.setEnd(textNode, 1);
         const box = range.getBoundingClientRect(); return { x: box.left + 1, y: box.top + box.height / 2 };
       });
       await page.evaluate(() => {

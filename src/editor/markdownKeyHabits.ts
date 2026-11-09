@@ -202,6 +202,32 @@ export function keyHabitsTab(direction: -1 | 1, onError?: (message: string) => v
     const changes = numberingEdits.length
       ? indentationChanges.compose(indented.changes(numberingEdits))
       : indentationChanges;
+    if (direction > 0 && lines.some(number => /^[\t ]*(?:>[\t ]*)*(?:[-+*]|\d{1,9}[.)])(?:[\t ]|$)/.test(state.doc.line(number).text))) {
+      const end = state.doc.line(lines[lines.length - 1]).to;
+      const beforeTree = syntaxTreeAvailable(state, end) ? syntaxTree(state) : ensureTree(state, end, 100);
+      if (!beforeTree) { onError?.('列表仍在解析，请稍后重试'); return true; }
+      const selected = new Set(lines), markers: number[] = [];
+      beforeTree.iterate({ from: state.doc.line(lines[0]).from, to: end, enter(ref) {
+        if (ref.name === 'ListMark' && selected.has(state.doc.lineAt(ref.from).number)) markers.push(ref.from);
+      } });
+      if (markers.length) {
+        const finalState = numberingEdits.length ? indented.update({ changes: numberingEdits }).state : indented;
+        const finalTree = ensureTree(finalState, changes.mapPos(end, 1), 100);
+        if (!finalTree) { onError?.('列表仍在解析，请稍后重试'); return true; }
+        const remaining = new Set<number>();
+        finalTree.iterate({ from: changes.mapPos(state.doc.line(lines[0]).from, -1), to: changes.mapPos(end, 1), enter(ref) {
+          if (ref.name === 'ListMark') remaining.add(ref.from);
+        } });
+        // A tab is not an arbitrary Markdown list level: without a sibling
+        // to become the parent, the parser can turn the marker into code or
+        // lazy paragraph text. Consume that Tab without corrupting the list
+        // (and without letting the generic Tab fallback insert it again).
+        if (markers.some(position => !remaining.has(changes.mapPos(position, 1)))) {
+          onError?.('当前列表项没有可继续缩进的上级条目');
+          return true;
+        }
+      }
+    }
     view.dispatch({
       changes,
       selection: state.selection.map(changes, 1),

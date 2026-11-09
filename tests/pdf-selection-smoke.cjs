@@ -79,6 +79,7 @@ test('PDF native dragging, page geometry, safe text actions, copy and menu delet
   await ready(1); await ready(2);
   await page.evaluate(() => { window.addEventListener('copy', event => { window.__pdfCtrlCopiedText = event.clipboardData?.getData('text/plain') || ''; }); });
   const toolbar = page.locator('.pdf-text-actions');
+  let pdfActionsMotionChecked = false;
   const jump = async number => {
     const input = page.getByRole('textbox', { name: '当前页码', exact: true }); await input.fill(String(number)); await input.press('Enter'); await ready(number);
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -106,8 +107,26 @@ test('PDF native dragging, page geometry, safe text actions, copy and menu delet
       console.error('drag diagnostic', { from, to, a, b }, await page.evaluate(({ number, a, b }) => ({ selection: window.getSelection()?.toString(), tool: document.querySelector('.pdf-tools [aria-pressed="true"]')?.getAttribute('aria-label'), focus: document.activeElement?.className, focused: document.hasFocus(), toast: document.querySelector('.toast')?.textContent, startTarget: document.elementFromPoint(a.x, a.y)?.outerHTML.slice(0, 300), endTarget: document.elementFromPoint(b.x, b.y)?.outerHTML.slice(0, 300), viewport: document.querySelector('.pdf-canvas-wrap')?.getBoundingClientRect().toJSON(), holder: document.querySelector(`[data-pdf-page="${number}"] .canvas-holder`)?.getBoundingClientRect().toJSON(), layer: document.querySelector(`[data-pdf-page="${number}"] .textLayer`)?.outerHTML, html: document.querySelector('.pdf-text-actions')?.outerHTML }), { number: from[0], a, b }));
       throw error;
     }
+    if (!pdfActionsMotionChecked) {
+      await page.waitForFunction(() => document.querySelector('.pdf-text-actions')?.getAnimations().length > 0);
+      assert.equal(await toolbar.evaluate(el => el.getAnimations()[0]?.effect.getTiming().duration), 140, 'PDF text actions use the shared entrance timing');
+      pdfActionsMotionChecked = true;
+    }
   };
-  const cancel = async () => { await page.getByRole('button', { name: '取消 PDF 文字选区', exact: true }).click(); await toolbar.waitFor({ state: 'hidden' }); };
+  const cancel = async () => {
+    await page.getByRole('button', { name: '取消 PDF 文字选区', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('.pdf-text-actions')?.inert === true);
+    const exit = await toolbar.evaluate(el => ({ hidden: el.getAttribute('aria-hidden'), duration: el.getAnimations()[0]?.effect.getTiming().duration }));
+    assert.deepEqual(exit, { hidden: 'true', duration: 110 });
+    await toolbar.waitFor({ state: 'detached' });
+  };
+  const selectionDiagnostic = label => page.evaluate(label => {
+    const pane = document.querySelector('.pdf-pane'), bar = document.querySelector('.pdf-text-actions');
+    const active = document.activeElement;
+    return { label, active: active ? { tag: active.tagName, className: active.className, aria: active.getAttribute('aria-label') } : null,
+      activeInsidePane: !!pane?.contains(active), nativeSelection: window.getSelection()?.toString() || '',
+      toolbar: bar ? { ariaHidden: bar.getAttribute('aria-hidden'), inert: bar.inert, connected: bar.isConnected } : null };
+  }, label);
   const copy = async () => {
     await page.evaluate(() => { window.__pdfCopiedText = '__copy_pending__'; });
     await page.getByRole('button', { name: '复制 PDF 选中文字', exact: true }).click();
@@ -132,7 +151,19 @@ test('PDF native dragging, page geometry, safe text actions, copy and menu delet
     assert.equal(await page.evaluate(() => window.__pdfCtrlCopiedText.replace(/\r\n/g, '\n')), quote);
     assert.equal(await copy(), quote);
     await cancel(); await drag([1, 2, 999, true], [1, 0, 0, false]); assert.equal(await copy(), quote);
-    await page.keyboard.press('Escape'); await toolbar.waitFor({ state: 'hidden' });
+    console.log('[pdf-selection-escape-diagnostic]', await selectionDiagnostic('before Escape'));
+    await page.evaluate(() => {
+      const pane = document.querySelector('.pdf-pane');
+      window.__pdfEscapeEvents = [];
+      const record = phase => event => window.__pdfEscapeEvents.push({ phase, key: event.key, target: event.target?.className || event.target?.tagName,
+        defaultPrevented: event.defaultPrevented, active: document.activeElement?.className || document.activeElement?.tagName,
+        paneContainsActive: !!pane?.contains(document.activeElement) });
+      document.addEventListener('keydown', record('document-capture'), { capture: true, once: true });
+      pane?.addEventListener('keydown', record('pane-bubble'), { once: true });
+    });
+    await page.keyboard.press('Escape');
+    console.log('[pdf-selection-escape-diagnostic]', await selectionDiagnostic('after Escape'), await page.evaluate(() => window.__pdfEscapeEvents));
+    await toolbar.waitFor({ state: 'detached' });
     await drag([1, 0, 6, false], [1, 0, 14, true]); assert.equal(await copy(), 'selection');
     await cancel();
   });
@@ -152,7 +183,7 @@ test('PDF native dragging, page geometry, safe text actions, copy and menu delet
   });
   await t.test('one highlighter action saves three non-overlapping rectangles; existing marks do not intercept dragging', async () => {
     await drag();
-    await toolbar.getByRole('button', { name: '高亮', exact: true }).click(); await toolbar.waitFor({ state: 'hidden' });
+    await toolbar.getByRole('button', { name: '高亮', exact: true }).click(); await toolbar.waitFor({ state: 'detached' });
     const meta = await readMeta(++count), mark = meta.annotations.at(-1);
     assert.equal(mark.anchor.rects.length, 3); assert.equal(mark.anchor.quote.split('\n').length, 3);
     await page.getByRole('status').filter({ hasText: '高亮已保存' }).waitFor();
@@ -170,7 +201,7 @@ test('PDF native dragging, page geometry, safe text actions, copy and menu delet
     await drag([1, 1, 0, false], [2, 1, 999, true]);
     const quote = await copy(); assert.match(quote, /third line 1\n\nAlpha/);
     const before = await application.evaluate(() => globalThis.__pdfAudit.writes.length);
-    await toolbar.getByRole('button', { name: '高亮并摘录', exact: true }).click(); await toolbar.waitFor({ state: 'hidden' });
+    await toolbar.getByRole('button', { name: '高亮并摘录', exact: true }).click(); await toolbar.waitFor({ state: 'detached' });
     const meta = await readMeta(count += 2), newMarks = meta.annotations.slice(-2);
     assert.deepEqual(newMarks.map(item => item.anchor.page), [1, 2]);
     assert.equal(newMarks[0].anchor.quote, 'Bravo selection second line 1\nCharlie selection third line 1');
@@ -194,12 +225,12 @@ test('PDF native dragging, page geometry, safe text actions, copy and menu delet
     await toolbar.getByRole('button', { name: '高亮', exact: true }).click(); await toolbar.getByRole('button', { name: '重试操作', exact: true }).waitFor();
     await readMeta(count); assert.equal(await page.locator('.pdf-text-selection').count(), 3);
     await toolbar.getByRole('button', { name: '重试操作', exact: true }).evaluate(button => { button.click(); button.click(); });
-    await toolbar.waitFor({ state: 'hidden' }); await readMeta(++count);
+    await toolbar.waitFor({ state: 'detached' }); await readMeta(++count);
     await drag(); await application.evaluate(() => { globalThis.__pdfAudit.failInsert = true; });
     await toolbar.getByRole('button', { name: '高亮并摘录', exact: true }).click();
     await toolbar.getByRole('button', { name: '重试摘录', exact: true }).waitFor(); await readMeta(++count);
     assert.equal(await fs.readFile(note, 'utf8'), original);
-    await toolbar.getByRole('button', { name: '重试摘录', exact: true }).click(); await toolbar.waitFor({ state: 'hidden' });
+    await toolbar.getByRole('button', { name: '重试摘录', exact: true }).click(); await toolbar.waitFor({ state: 'detached' });
     await waitForFile(note, text => text.includes('回到原文')); assert.equal((await readMeta(count)).annotations.length, count);
     await page.locator('.cm-content').click(); await page.keyboard.press('Control+z'); await waitForFile(note, text => text === original);
   });
@@ -210,6 +241,7 @@ test('PDF native dragging, page geometry, safe text actions, copy and menu delet
     await application.evaluate(async () => { while (!globalThis.__pdfAudit.pending) await new Promise(resolve => setTimeout(resolve, 10)); });
     await open('other.md'); await layout('对照').click();
     await application.evaluate(() => { globalThis.__pdfAudit.release(); });
+    await jump(1);
     await drag(); await toolbar.getByRole('button', { name: '摘录到当前笔记', exact: true }).waitFor({ state: 'visible' });
     await page.waitForFunction(() => ![...document.querySelectorAll('.pdf-text-actions button')].find(el => el.textContent === '摘录到当前笔记')?.disabled);
     await cancel();
@@ -226,7 +258,7 @@ test('PDF native dragging, page geometry, safe text actions, copy and menu delet
     await application.evaluate(async () => { while (!globalThis.__pdfAudit.pending) await new Promise(resolve => setTimeout(resolve, 10)); });
     await open('other.pdf'); await application.evaluate(() => { globalThis.__pdfAudit.release(); });
     await page.locator('.file-row.selected').filter({ hasText: 'other.pdf' }).waitFor();
-    await toolbar.waitFor({ state: 'hidden' });
+    await toolbar.waitFor({ state: 'detached' });
     assert.equal(await fs.readFile(note, 'utf8'), original);
     await open('selection.pdf'); await jump(1); await drag(); await cancel();
   });
@@ -295,12 +327,14 @@ test('PDF native dragging, page geometry, safe text actions, copy and menu delet
     await jump(1); await drag([1, 0, 0, false], [1, 1, 999, true]); await page.screenshot({ path: path.join(output, 'pdf-selection-narrow-light.png') });
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 950));
     await page.getByRole('button', { name: '设置', exact: true }).click(); await page.getByRole('button', { name: '深色', exact: true }).click(); await page.getByRole('button', { name: '设置', exact: true }).click();
-    await jump(1); await drag(); await page.screenshot({ path: path.join(output, 'pdf-selection-wide-dark.png') }); await cancel();
+    await jump(1); await drag(); await page.screenshot({ path: path.join(output, 'pdf-selection-wide-dark.png') });
+    assert.equal(await page.locator('.pdf-pane').count(), 1, 'PDF remains open after the wide dark screenshot');
+    await cancel();
   });
   await t.test('a rotated PDF page retains its rotation and clipped selection geometry', async () => {
     await jump(4); await drag([4, 0, 0, false], [4, 2, 999, true]);
     assert.equal(await copy(), 'Alpha selection first line 4\nBravo selection second line 4\nCharlie selection third line 4');
-    await toolbar.getByRole('button', { name: '高亮', exact: true }).click(); await toolbar.waitFor({ state: 'hidden' });
+    await toolbar.getByRole('button', { name: '高亮', exact: true }).click(); await toolbar.waitFor({ state: 'detached' });
     const mark = (await readMeta(++count)).annotations.at(-1); assert.equal(mark.anchor.rotation, 90); assert.equal(mark.anchor.page, 4);
     for (const rect of mark.anchor.rects) assert.ok(rect.x >= 0 && rect.y >= 0 && rect.x + rect.w <= 1 && rect.y + rect.h <= 1);
   });

@@ -6,7 +6,63 @@ const { spawnSync } = require('node:child_process');
 const { _electron } = require('./electronHarness.cjs');
 const JSZip = require('jszip');
 const { createSmokeWorkspace, cleanupSmokeWorkspace } = require('./smokeWorkspace.cjs');
+const { createNativeFocusDiagnostics } = require('./nativeFocusDiagnostics.cjs');
 const root = path.resolve(__dirname, '..');
+
+// A synchronous blur()/focus() pair may be coalesced before the renderer sees
+// a blur. Transfer native focus to a test-owned blank window and observe both
+// sides of the cycle instead, without touching any user application.
+async function cycleNativeFocus(app, page, label) {
+  const diagnostics = await createNativeFocusDiagnostics(app, page, label);
+  let windows, originalError;
+  try {
+    diagnostics.stage('disable-focus-emulation');
+    const session = await page.context().newCDPSession(page);
+    try { await session.send('Emulation.setFocusEmulationEnabled', { enabled: false }); }
+    finally { await session.detach(); }
+    diagnostics.stage('create-and-focus-auxiliary');
+    windows = await app.evaluate(async ({ BrowserWindow }) => {
+      const main = BrowserWindow.getAllWindows()[0];
+      if (!main || main.isDestroyed()) throw Error('The test application window is unavailable');
+      const auxiliary = new BrowserWindow({ width: 320, height: 160, show: false,
+        title: 'Focus regression fixture', webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+      try {
+        await auxiliary.loadURL('about:blank');
+        auxiliary.show(); auxiliary.focus();
+        return { main: main.id, auxiliary: auxiliary.id };
+      } catch (error) { if (!auxiliary.isDestroyed()) auxiliary.destroy(); throw error; }
+    });
+    diagnostics.identify(windows);
+    diagnostics.stage('await-renderer-blur');
+    await page.waitForFunction(() => !document.hasFocus());
+    diagnostics.stage('assert-native-blur');
+    assert.deepEqual(await app.evaluate(({ BrowserWindow }, ids) => ({
+      main: BrowserWindow.fromId(ids.main)?.isFocused(), auxiliary: BrowserWindow.fromId(ids.auxiliary)?.isFocused(),
+    }), windows), { main: false, auxiliary: true }, 'native focus actually leaves the application');
+    diagnostics.stage('request-main-focus');
+    await app.evaluate(({ BrowserWindow }, ids) => { BrowserWindow.fromId(ids.main)?.focus(); }, windows);
+    diagnostics.stage('await-renderer-focus');
+    await page.waitForFunction(() => document.hasFocus());
+    diagnostics.stage('assert-native-focus');
+    assert.equal(await app.evaluate(({ BrowserWindow }, ids) => BrowserWindow.fromId(ids.main)?.isFocused(), windows), true);
+    await diagnostics.save('passed');
+  } catch (error) {
+    originalError = error;
+    await diagnostics.save('failed', error);
+    throw error;
+  } finally {
+    try {
+      if (windows) await app.evaluate(({ BrowserWindow }, ids) => {
+        const auxiliary = BrowserWindow.fromId(ids.auxiliary), main = BrowserWindow.fromId(ids.main);
+        if (auxiliary && !auxiliary.isDestroyed()) auxiliary.destroy();
+        if (main && !main.isDestroyed()) main.focus();
+      }, windows);
+    } catch (error) {
+      if (!originalError) throw error;
+      console.error('[input-focus] cleanup failed after the original failure: ' + error.message);
+    } finally { await diagnostics.dispose(); }
+  }
+}
 
 test('body clicks and font controls recover content focus without recreating the editor', { timeout: 60000 }, async () => {
   const workspace = await createSmokeWorkspace('input-focus'); let app;
@@ -50,10 +106,31 @@ test('body clicks and font controls recover content focus without recreating the
     const selected = await page.evaluate(() => window.getSelection().toString());
     assert.ok(selected.length > 0 && selected.length < 'Plain body text for placing the cursor in the middle.'.length,
       'drag selects only the requested characters, not the whole paragraph: ' + JSON.stringify({ selected, box, focus: await page.evaluate(() => ({ active: document.activeElement?.className, selection: window.getSelection()?.toString() })) }));
+
+    // Preserve a live, partial CodeMirror selection across native window
+    // deactivation/reactivation. Do not click between the two snapshots:
+    // clicking would collapse the selection and miss the reported path.
+    const selectionSnapshot = async () => page.evaluate(() => {
+      const content = document.querySelector('[data-pane-id="primary"] .cm-content');
+      const view = content.cmTile.root.view, selection = view.state.selection.main;
+      const clipboard = new DataTransfer();
+      content.dispatchEvent(new ClipboardEvent('copy', { clipboardData: clipboard, bubbles: true, cancelable: true }));
+      return { anchor: selection.anchor, head: selection.head, text: view.state.sliceDoc(selection.from, selection.to),
+        copied: clipboard.getData('text/markdown') };
+    });
+    const selectionBeforeFocus = await selectionSnapshot();
+    assert.equal(selectionBeforeFocus.text, selected, 'the source selection matches the visible partial drag');
+    assert.equal(selectionBeforeFocus.copied, selected, 'copy returns the selected source, not a larger region');
+    await cycleNativeFocus(app, page, 'partial-selection');
+    await page.waitForFunction(() => document.hasFocus());
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.deepEqual(await selectionSnapshot(), selectionBeforeFocus,
+      'blur/refocus without an intervening click preserves the exact partial source selection');
+
     await clickMiddle();
 
     // Exercise actual window deactivate/reactivate, without touching user apps.
-    await app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.blur(); win.focus(); });
+    await cycleNativeFocus(app, page, 'body-cursor');
     await clickMiddle();
     await page.waitForFunction(() => document.hasFocus() && document.activeElement?.classList.contains('cm-content'));
     assert.equal(await page.evaluate(() => window.getSelection()?.isCollapsed), true);
@@ -81,7 +158,7 @@ test('body clicks and font controls recover content focus without recreating the
 
     await page.getByRole('button', { name: '设置', exact: true }).click();
     const fonts = page.getByRole('combobox', { name: 'Markdown 正文字体', exact: true });
-    await app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.blur(); win.focus(); });
+    await cycleNativeFocus(app, page, 'settings-font');
     await fonts.click();
     await page.waitForFunction(() => document.hasFocus() && document.activeElement?.tagName === 'SELECT');
     await page.keyboard.press('End'); await page.keyboard.press('Enter');

@@ -1,11 +1,60 @@
-import { createContext, useLayoutEffect, useRef, useState } from 'react';
+import { createContext, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 
 export const ReducedMotionContext = createContext(false);
-const easing = 'cubic-bezier(.2,.75,.3,1)';
-const exitEasing = 'cubic-bezier(.4,0,.6,1)';
+export const motionNumber = (style: CSSStyleDeclaration, name: string, fallback: number) => {
+  const value = style.getPropertyValue(name).trim();
+  const match = /^(-?(?:\d+\.?\d*|\.\d+))(ms|s)?$/.exec(value);
+  if (!match) return fallback;
+  const number = Number(match[1]);
+  const milliseconds = match[2] === 's' ? number * 1000 : number;
+  return Number.isFinite(milliseconds) && milliseconds > 0 ? milliseconds : fallback;
+};
+export const motionText = (style: CSSStyleDeclaration, name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback;
+
+// Layout changes are immediate; only their shared surface moves. A newer
+// request continues from the visible position, and accessibility changes stop
+// in-flight motion even when the selected layout has not changed.
+export function useLayoutMotion(
+  host: RefObject<HTMLElement | null>,
+  layout: 'read' | 'note' | 'split',
+  ready: boolean,
+  reduced: boolean,
+  requested: RefObject<boolean>,
+) {
+  const previousLayout = useRef(layout), initialized = useRef(false);
+  const animation = useRef<Animation | null>(null);
+  useLayoutEffect(() => {
+    if (reduced || !ready) { animation.current?.cancel(); animation.current = null; }
+    if (!ready) { previousLayout.current = layout; return; }
+    if (!initialized.current) { initialized.current = true; previousLayout.current = layout; return; }
+    const previous = previousLayout.current; previousLayout.current = layout;
+    if (previous === layout) return;
+    const shouldAnimate = requested.current; requested.current = false;
+    const node = host.current, active = animation.current;
+    const from = active && node ? getComputedStyle(node).transform : null;
+    active?.cancel(); animation.current = null;
+    if (!shouldAnimate || reduced || !node) return;
+    const positions = { read: 0, note: 1, split: 2 };
+    const direction = positions[layout] > positions[previous] ? 1 : -1;
+    const style = getComputedStyle(node);
+    const next = node.animate([{ transform: from || `translateX(${direction * 12}px)` }, { transform: 'translateX(0px)' }], {
+      duration: motionNumber(style, '--motion-mode', 180), easing: motionText(style, '--motion-ease-enter', 'cubic-bezier(.2,.75,.3,1)'),
+    });
+    animation.current = next;
+    next.finished.then(() => { if (animation.current === next) animation.current = null; }).catch(() => {});
+  }, [host, layout, ready, reduced, requested]);
+  useLayoutEffect(() => () => { animation.current?.cancel(); }, []);
+}
 
 // Keep layout stable during motion. Hidden panels are inert until removed.
-export function usePanelMotion(open: boolean, reduced: boolean, direction: string, duration: number, returnFocus: () => HTMLElement | null) {
+export function usePanelMotion(
+  open: boolean,
+  reduced: boolean,
+  direction: string,
+  returnFocus: () => HTMLElement | null,
+  axis: 'x' | 'y' = 'x',
+  durationVariables: { enter?: string; exit?: string } = {},
+) {
   const [present, setPresent] = useState(open);
   const ref = useRef<HTMLElement>(null);
   const animation = useRef<Animation | null>(null);
@@ -15,24 +64,41 @@ export function usePanelMotion(open: boolean, reduced: boolean, direction: strin
   useLayoutEffect(() => {
     const preferenceChanged = previousReduced.current !== reduced;
     previousReduced.current = reduced;
-    if (open && !present) { setPresent(true); return; }
+    if (open && !present) { animation.current?.cancel(); animation.current = null; setPresent(true); return; }
     const node = ref.current;
     if (!node) { animation.current?.cancel(); animation.current = null; initialized.current = true; return; }
-    node.inert = !open;
-    if (!open && node.contains(document.activeElement)) focus.current()?.focus();
     const previous = animation.current;
     const style = getComputedStyle(node);
+    const activeElement = document.activeElement;
+    const focusWasInside = !open && node.contains(activeElement);
+    if (open) {
+      node.style.pointerEvents = '';
+      node.inert = false;
+    } else {
+      node.style.pointerEvents = 'none';
+      if (focusWasInside) {
+        const target = focus.current();
+        if (target?.isConnected && !node.contains(target) && !target.closest('[inert]')) target.focus({ preventScroll: true });
+      }
+      node.inert = true;
+    }
+    const enterEasing = motionText(style, '--motion-ease-enter', 'cubic-bezier(.2,.75,.3,1)');
+    const exitEasing = motionText(style, '--motion-ease-exit', 'cubic-bezier(.4,0,.6,1)');
+    const translate = (offset: string) => `translate${axis.toUpperCase()}(${offset})`;
     const from = previous ? { transform: style.transform, opacity: style.opacity } :
-      { transform: open ? `translateX(${direction})` : 'translateX(0)', opacity: open ? 0 : 1 };
+      { transform: open ? translate(direction) : translate('0'), opacity: open ? 0 : 1 };
     previous?.cancel(); animation.current = null;
     if (reduced || preferenceChanged || !initialized.current) {
       initialized.current = true;
       if (!open) setPresent(false);
       return;
     }
-    const frames = open ? [from, { transform: 'translateX(0)', opacity: 1 }] :
-      [from, { opacity: from.opacity, offset: .35 }, { transform: `translateX(${direction})`, opacity: 0 }];
-    const next = node.animate(frames, { duration, easing: open ? easing : exitEasing, fill: 'both' });
+    const frames = open ? [from, { transform: translate('0'), opacity: 1 }] :
+      [from, { opacity: from.opacity, offset: .35 }, { transform: translate(direction), opacity: 0 }];
+    const duration = open
+      ? motionNumber(style, durationVariables.enter || '--motion-panel', 200)
+      : motionNumber(style, durationVariables.exit || '--motion-panel', 200);
+    const next = node.animate(frames, { duration, easing: open ? enterEasing : exitEasing, fill: 'both' });
     animation.current = next;
     next.finished.then(() => {
       if (animation.current !== next) return;
@@ -42,12 +108,12 @@ export function usePanelMotion(open: boolean, reduced: boolean, direction: strin
         setPresent(false);
       } else { animation.current = null; next.cancel(); }
     }).catch(() => {});
-  }, [open, present, reduced, direction, duration]);
+  }, [open, present, reduced, direction]);
   useLayoutEffect(() => () => { animation.current?.cancel(); }, []);
   return { present, ref };
 }
 
-// One decorative line follows the active tab; document switching stays instant.
+// A shared accent line marks selection; tab content itself switches instantly.
 export function useTabMotion(host: HTMLElement | null, reduced: boolean) {
   useLayoutEffect(() => {
     if (!host) return;
@@ -68,7 +134,10 @@ export function useTabMotion(host: HTMLElement | null, reduced: boolean) {
       const from = getComputedStyle(line).transform;
       animation?.cancel(); line.hidden = false; line.style.transform = transform;
       lastTransform = transform;
-      if (active && active !== next && !reduced) animation = line.animate([{ transform: from }, { transform }], { duration: 140, easing });
+      const style = getComputedStyle(host);
+      if (active && active !== next && !reduced) animation = line.animate([{ transform: from }, { transform }], {
+        duration: motionNumber(style, '--motion-feedback', 140), easing: motionText(style, '--motion-ease-enter', 'cubic-bezier(.2,.75,.3,1)'),
+      });
       if (active !== next) { if (active) resize.unobserve(active); resize.observe(next); active = next; }
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(update); };

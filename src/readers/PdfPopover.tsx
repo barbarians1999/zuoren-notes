@@ -1,12 +1,17 @@
-import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useContext, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { ReducedMotionContext, usePanelMotion } from '../uiMotion';
 
-export function PdfPopover({ root, anchor, children, className }: {
-  root: RefObject<HTMLElement | null>; anchor: () => { left: number; right: number; top: number; bottom: number } | null;
+export function PdfPopover({ open, root, anchor, children, className }: {
+  open: boolean; root: RefObject<HTMLElement | null>; anchor: () => { left: number; right: number; top: number; bottom: number } | null;
   children: ReactNode; className: string;
 }) {
-  const host = useRef<HTMLDivElement>(null);
+  const reducedMotion = useContext(ReducedMotionContext);
+  const motion = usePanelMotion(open, reducedMotion, '4px', () => root.current, 'y', { enter: '--motion-feedback', exit: '--motion-exit' });
+  const host = motion.ref as RefObject<HTMLDivElement | null>;
+  const previousChildren = useRef(children); if (open) previousChildren.current = children;
   const [position, setPosition] = useState<{ left: number; top: number; maxWidth: number; visibility: 'visible' | 'hidden' }>({ left: 0, top: 0, maxWidth: 400, visibility: 'hidden' });
   useLayoutEffect(() => {
+    if (!open || !motion.present) return;
     let frame = 0;
     const place = () => {
       const pane = root.current?.querySelector('.pdf-canvas-wrap')?.getBoundingClientRect(), box = host.current?.getBoundingClientRect(), at = anchor();
@@ -46,6 +51,7 @@ export function PdfPopover({ root, anchor, children, className }: {
     place();
     const element = root.current;
     return () => { cancelAnimationFrame(frame); observer.disconnect(); element?.removeEventListener('scroll', schedule, true); window.removeEventListener('resize', schedule); };
-  }, [anchor, root]);
-  return <div ref={host} role="group" className={className} style={position}>{children}</div>;
+  }, [anchor, root, open, motion.present]);
+  if (!motion.present) return null;
+  return <div ref={host} role="group" className={className} style={position} aria-hidden={!open}>{open ? children : previousChildren.current}</div>;
 }

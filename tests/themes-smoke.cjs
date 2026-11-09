@@ -44,7 +44,14 @@ async function launchApplication() {
   return page;
 }
 async function openSettings(page) {
-  if (!await page.locator('.settings-popover').count()) await page.getByRole('button', { name: '设置', exact: true }).click();
+  const trigger = page.getByRole('button', { name: '设置', exact: true });
+  if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click();
+  await page.locator('.settings-popover[aria-hidden="false"]').waitFor();
+}
+async function closeSettings(page) {
+  const trigger = page.getByRole('button', { name: '设置', exact: true });
+  if (await trigger.getAttribute('aria-expanded') === 'true') await page.keyboard.press('Escape');
+  await page.locator('.settings-popover').waitFor({ state: 'detached' });
 }
 async function chooseTheme(page, name) {
   await openSettings(page);
@@ -55,7 +62,7 @@ async function chooseTheme(page, name) {
   assert.equal(await page.evaluate(() => localStorage.getItem('zhaoye-theme')), name);
 }
 async function openEditor(page) {
-  await page.keyboard.press('Escape');
+  await closeSettings(page);
   await page.locator('.file-row').filter({ hasText: 'theme.md' }).click();
   const pane = noteUI(page, 'primary');
   if (await pane.locator('.markdown-preview').count()) await pane.getByRole('button', { name: '切换到源码编辑', exact: true }).click();
@@ -132,16 +139,25 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
     assert.deepEqual(await editor.evaluate(element => {
       const css = getComputedStyle(element); return { font: css.fontFamily, size: css.fontSize, leading: css.lineHeight, width: css.maxWidth };
     }), originalMetrics, 'theme does not alter document typography');
-    // Color transitions finish after the theme identity has already changed.
-    const expectedControls = { background: rgb(theme.colors['mode-bg']), color: rgb(theme.colors['on-mode']), radius: '2px' };
+    // Preserve the original selected mode surface while its fill stays static.
+    const expectedControls = { background: rgb(theme.colors['mode-bg']), color: rgb(theme.colors['on-mode']), radius: '2px', backgroundDuration: '0s' };
     await page.waitForFunction(expected => {
       const css = getComputedStyle(document.querySelector('.layout-tabs button.active'));
       return css.backgroundColor === expected.background && css.color === expected.color;
     }, expectedControls);
     const controls = await page.locator('.layout-tabs button.active').evaluate(button => {
-      const css = getComputedStyle(button); return { background: css.backgroundColor, color: css.color, radius: css.borderTopLeftRadius };
+      const css = getComputedStyle(button), properties = css.transitionProperty.split(',').map(value => value.trim()), durations = css.transitionDuration.split(',').map(value => value.trim());
+      return { background: css.backgroundColor, color: css.color, radius: css.borderTopLeftRadius,
+        backgroundDuration: durations[properties.indexOf('background-color')] };
     });
-    assert.deepEqual(controls, expectedControls, 'both themes keep clear, square active controls');
+    assert.deepEqual(controls, expectedControls, 'original selected mode surface stays in place without animating its block');
+    await page.locator('.settings-menu > .quiet-action').hover();
+    assert.equal(await page.locator('.settings-menu > .quiet-action').evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)');
+    assert.equal(await page.locator('.settings-menu > .quiet-action').evaluate(el => getComputedStyle(el).transform), 'none');
+    const settingsMotion = await page.locator('.settings-menu > .quiet-action').evaluate(el => ({
+      icon: getComputedStyle(el.querySelector('svg')).transform, label: getComputedStyle(el.querySelector('.action-label')).transform,
+    }));
+    assert.notEqual(settingsMotion.icon, 'none'); assert.notEqual(settingsMotion.label, 'none', 'quiet controls animate their contents only');
     await page.mouse.move(1, 1);
     await page.waitForFunction(expected => {
       const css = selector => getComputedStyle(document.querySelector(selector));
@@ -159,6 +175,7 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
         selectedFile: style('.file-row.selected').backgroundColor,
         workspaceHead: style('.markdown-workspace-head').backgroundColor,
         newNoteBackground: style('.top-actions .new-note-action').backgroundColor,
+        newNoteColor: style('.top-actions .new-note-action').color,
         markdownIcon: { background: md.backgroundColor, color: md.color },
         epubIcon: { background: epub.backgroundColor, color: epub.color },
         headingDecoration: style('.cm-md-heading').textDecorationLine,
@@ -171,7 +188,7 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
       topbarAction: rgb(theme.colors['topbar-text']),
       windowControl: rgb(theme.colors['topbar-text']),
       selectedFile: rgb(theme.colors['selected-row-bg']),
-      workspaceHead: rgb(theme.colors.chrome), newNoteBackground: rgb(theme.colors['action-bg']),
+      workspaceHead: rgb(theme.colors.chrome), newNoteBackground: rgb(theme.colors['action-bg']), newNoteColor: rgb(theme.colors['on-action']),
       markdownIcon: { background: 'rgba(0, 0, 0, 0)', color: rgb(theme.colors.accent) },
       epubIcon: { background: rgb(theme.colors['epub-icon-bg']), color: rgb(theme.colors['epub-icon-text']) },
       headingDecoration: 'none', quoteBackground: 'rgba(0, 0, 0, 0)', codeRadius: '2px',
@@ -180,7 +197,7 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
     const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
     assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= viewport.width && bounds.y + bounds.height <= viewport.height, 'settings remain in view');
     if (custom.includes(name)) {
-      await page.keyboard.press('Escape');
+      await closeSettings(page);
       await page.locator('.cm-scroller').evaluate(element => { element.scrollTop = 0; });
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
       await screenshot(page, name + '-editor');
@@ -190,7 +207,7 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
         await resizeWindow(page, 1280, 900);
       }
     }
-    await page.keyboard.press('Escape');
+    await closeSettings(page);
     await assertGlyphActions(page, page.locator('.note-controls-slot .workspace-mode-switch button, .note-controls-slot .workspace-icon-action'));
     await page.locator('.file-row').filter({ hasText: 'theme.md' }).click({ button: 'right' });
     const menu = page.getByRole('menu'); await menu.waitFor();
@@ -210,7 +227,7 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
         assert.notEqual(await item.evaluate(el => getComputedStyle(el).boxShadow), 'none', 'night hover has an explicit marker');
       }
     }
-    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape'); await page.locator('.file-context-menu').waitFor({ state: 'detached' });
   }
   await editor.click(); await page.keyboard.press('Control+z');
   assert.doesNotMatch(await editor.innerText(), /THEME-UNDO/, 'theme changes retain undo history');
@@ -219,7 +236,7 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
   await noteUI(page, 'primary').getByRole('button', { name: '切换到预览', exact: true }).click();
   const preview = page.locator('.note-pane[data-pane-id="primary"] .markdown-preview'); await preview.waitFor();
   for (const name of custom) {
-    await chooseTheme(page, name); await page.keyboard.press('Escape');
+    await chooseTheme(page, name); await closeSettings(page);
     assert.equal(await preview.evaluate(element => getComputedStyle(element).color), rgb(THEMES[name].colors.text));
     assert.equal(await preview.locator('h1').evaluate(element => getComputedStyle(element).color), rgb(THEMES[name].colors.heading));
     assert.equal(await preview.locator('a').evaluate(element => getComputedStyle(element).color), rgb(THEMES[name].colors.link));
@@ -242,7 +259,7 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
     return { width: canvas.width, height: canvas.height, paper: [...canvas.getContext('2d').getImageData(0, 0, 1, 1).data] };
   });
   for (const name of custom) {
-    await chooseTheme(page, name); await page.keyboard.press('Escape');
+    await chooseTheme(page, name); await closeSettings(page);
     assert.equal(await pageNumber.inputValue(), '2');
     assert.equal(await page.evaluate(() => window.__themePdfCanvas === document.querySelector('[data-pdf-page="2"] canvas')), true);
     const pdf = await page.evaluate(() => {
@@ -277,7 +294,7 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
   const beforeEpub = await page.evaluate(() => ({ chapter: document.querySelector('.epub-pane').dataset.currentChapter,
     font: window.__themeFrame.contentWindow.getComputedStyle(window.__themeBookDocument.body).fontFamily, text: window.__themeBookDocument.body.textContent }));
   for (const name of custom) {
-    await chooseTheme(page, name); await page.keyboard.press('Escape');
+    await chooseTheme(page, name); await closeSettings(page);
     await page.waitForFunction(color => {
       const frame = window.__themeFrame;
       return frame.contentWindow.getComputedStyle(frame.contentDocument.body).backgroundColor === color;
@@ -310,7 +327,7 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
   }
   await resizeWindow(page, 960, 640);
   for (const name of custom) {
-    await chooseTheme(page, name); await page.keyboard.press('Escape');
+    await chooseTheme(page, name); await closeSettings(page);
     await screenshot(page, name + '-epub-narrow');
   }
   await resizeWindow(page, 1280, 900);
@@ -318,7 +335,7 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
   assert.equal((await fs.stat(notePath)).mtimeMs, beforeStat.mtimeMs, 'appearance changes do not rewrite notes');
 
   await chooseTheme(page, 'constructivist');
-  await page.keyboard.press('Escape');
+  await closeSettings(page);
   await toc.getByRole('button', { name: '第一章', exact: true }).click();
   await page.waitForFunction(color => [...document.querySelectorAll('.epub-viewer iframe')].some(frame => {
     const doc = frame.contentDocument;
@@ -348,7 +365,7 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
   await page.emulateMedia({ colorScheme: 'light' });
   await page.waitForFunction(() => document.documentElement.dataset.theme === 'constructivist-paper');
   for (const name of custom) {
-    await chooseTheme(page, name); await page.keyboard.press('Escape');
+    await chooseTheme(page, name); await closeSettings(page);
     await page.reload(); await page.locator('.topbar').waitFor(); await openSettings(page);
     assert.equal(await page.getByRole('button', { name: labels[name], exact: true }).getAttribute('aria-pressed'), 'true');
     assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), name);

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { BookOpen, ChevronLeft, ChevronRight, Copy, List, Search, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { OutlinePanel } from '../OutlinePanel';
@@ -13,6 +13,7 @@ import { EpubSearchPanel } from './EpubSearchPanel';
 import type { EpubSearchResult } from './epubSearch';
 import type { ExcerptFlowResult } from './excerptFlow';
 import { NOTE_FONT_FACES_CSS } from '../noteFonts';
+import { ReducedMotionContext, motionNumber, motionText, usePanelMotion } from '../uiMotion';
 import headingFontUrl from '../assets/SourceHanSerifSC-VF.woff2?url';
 function flattenToc(items: NavItem[], depth = 0): FlatNavItem[] {
   return items.flatMap(item => [{ href: item.href, label: item.label.trim(), depth }, ...flattenToc(item.subitems || [], depth + 1)]);
@@ -120,6 +121,15 @@ function applyEpubTheme(contentsOrView: any, theme: ThemeName, fontFamily: strin
 
 export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget, active, closing, onActivate, onClose, onMeta, onMessage, onExcerpt, onSelectionAction, excerptTarget, target }: { epub: ActiveEpub; theme: ThemeName; noteBodyFont: NoteBodyFont; readingSize: number; headerTarget: HTMLElement | null; active: boolean; closing: boolean; onActivate: () => void; onClose: () => void; onMeta: (change: (current: EpubMeta) => EpubMeta) => Promise<boolean>; onMessage: (message: string) => void; onExcerpt: (anchor: EpubAnchor, quote: string, comment: string) => Promise<ExcerptFlowResult>; onSelectionAction: (annotation: EpubAnnotation, excerpt: boolean) => Promise<ExcerptFlowResult>; excerptTarget: string | null; target: EpubAnchor | null }) {
   const host = useRef<HTMLDivElement>(null);
+  const reducedMotion = useContext(ReducedMotionContext);
+  const reducedMotionRef = useRef(reducedMotion); reducedMotionRef.current = reducedMotion;
+  const pageAnimations = useRef(new Map<HTMLBodyElement, Animation>());
+  useLayoutEffect(() => {
+    if (reducedMotion) {
+      pageAnimations.current.forEach(animation => animation.cancel());
+      pageAnimations.current.clear();
+    }
+  }, [reducedMotion]);
   const bookRef = useRef<Book | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
   const metaRef = useRef(epub.meta);
@@ -174,6 +184,9 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
   const [chapter, setChapter] = useState('');
   const [loading, setLoading] = useState(true);
   const [selection, setSelection] = useState<Pick<EpubAnnotation, 'cfiRange' | 'quote' | 'chapterHref' | 'chapterLabel'> | null>(null);
+  const lastSelection = useRef<typeof selection>(null); if (selection) lastSelection.current = selection;
+  const searchMotion = usePanelMotion(searchOpen, reducedMotion, '4px', () => headerTarget?.querySelector<HTMLElement>('[aria-label="在 EPUB 中查找"]') || host.current?.querySelector('iframe') || null, 'y', { enter: '--motion-feedback', exit: '--motion-exit' });
+  const selectionMotion = usePanelMotion(!!selection, reducedMotion, '4px', () => host.current?.querySelector('iframe') || null, 'y', { enter: '--motion-feedback', exit: '--motion-exit' });
   const [comment, setComment] = useState('');
   const [annotationsOpen, setAnnotationsOpen] = useState(() => (epub.meta.annotations?.length || 0) > 0);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
@@ -204,6 +217,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
     let locationGeneration: Promise<unknown> | undefined;
     let resizeRestoreToken = 0;
     let relocated: ((location: Location) => void) | null = null;
+    let hasInitialLocation = false, pageFadeFrame = 0;
     let selectedListener: ((cfiRange: string, contents: any) => void) | null = null;
     let flat: FlatNavItem[] = [];
     const pageInputDocuments = new Set<Document>();
@@ -339,6 +353,25 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
         setToc(flat);
         relocated = (location: Location) => {
           if (disposed || generationRef.current !== generation || reflow.current || !location?.start) return;
+          if (hasInitialLocation && positionAnchor.current === null && !reducedMotionRef.current) {
+            cancelAnimationFrame(pageFadeFrame);
+            pageFadeFrame = requestAnimationFrame(() => {
+              if (disposed || generationRef.current !== generation || reflow.current || reducedMotionRef.current) return;
+              const style = getComputedStyle(element), duration = motionNumber(style, '--motion-content', 160);
+              const easing = motionText(style, '--motion-ease-enter', 'cubic-bezier(.2,.75,.3,1)');
+              for (const content of rendition.getContents() as unknown as { document: Document }[]) {
+                const body = content.document.body as HTMLBodyElement | null;
+                if (!body?.isConnected) continue;
+                const endOpacity = Number.parseFloat(getComputedStyle(body).opacity) || 1;
+                pageAnimations.current.get(body)?.cancel();
+                const animation = body.animate([{ opacity: endOpacity * .84 }, { opacity: endOpacity }], { duration, easing });
+                pageAnimations.current.set(body, animation);
+                animation.finished.then(() => { if (pageAnimations.current.get(body) === animation) pageAnimations.current.delete(body); },
+                  () => { if (pageAnimations.current.get(body) === animation) pageAnimations.current.delete(body); });
+              }
+            });
+          }
+          hasInitialLocation = true;
           const href = location.start.href || '';
           const normalized = href.split('#')[0];
           const item = flat.find(entry => entry.href.split('#')[0] === normalized);
@@ -403,6 +436,8 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
       rendition.hooks.render.deregister(applyCurrentTheme);
       resizeObserver?.disconnect();
       if (resizeFrame) cancelAnimationFrame(resizeFrame);
+      if (pageFadeFrame) cancelAnimationFrame(pageFadeFrame);
+      pageAnimations.current.forEach(animation => animation.cancel()); pageAnimations.current.clear();
       if (relocated) rendition.off('relocated', relocated);
       if (selectedListener) rendition.off('selected', selectedListener);
       rendition.off('rendered', restoreRenderedPosition);
@@ -625,8 +660,8 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
       </div>
     </div>, headerTarget)}
     <div className="epub-content-row"><div className="epub-reader-shell"><div ref={host} className="epub-viewer"/>{loading && <div className="loading epub-loading">正在载入电子书…</div>}
-      {searchOpen && <EpubSearchPanel data={epub.data} toc={toc} onNavigate={jumpSearch} onClose={closeSearch} onClear={clearSearchHighlight}/>}
-      {selection && <div className="epub-selection-actions" role="group" aria-label="处理选中文本"><span title={selection.quote}>{selection.quote.slice(0, 72)}{selection.quote.length > 72 ? '…' : ''}</span><ActionButton aria-label="复制 EPUB 选中文字" title="复制选中文字" identity={selection.cfiRange} action={async () => { await navigator.clipboard.writeText(selection.quote); return true; }} successLabel="已复制" onError={onMessage}><Copy size={14}/>复制</ActionButton>{selectionFlow ? <><span className="epub-flow-status" role="status">{selectionFlow.error || '操作尚未完成'}</span><button className="primary" disabled={savingAnnotation || !selectionFlow.retry} onClick={() => void saveSelection(false)}>{selectionFlow.saved ? '重试摘录' : '重试保存'}</button></> : <><input aria-label="EPUB 批注" maxLength={10000} value={comment} onChange={event => setComment(event.target.value)} placeholder="可选批注"/><button className="primary" disabled={savingAnnotation} onClick={() => void saveSelection(false)}>高亮</button><button disabled={savingAnnotation} onClick={() => void saveSelection(!!excerptTarget)}>{excerptTarget ? `批注并${excerptTarget}` : '批注'}</button></>}<button disabled={savingAnnotation} onClick={() => { selectionActionGeneration.current += 1; setSelection(null); setComment(''); setSelectionFlow(null); selectionAnnotation.current = null; }}>取消</button></div>}
+      {searchMotion.present && <EpubSearchPanel open={searchOpen} motionRef={searchMotion.ref} data={epub.data} toc={toc} onNavigate={jumpSearch} onClose={closeSearch} onClear={clearSearchHighlight}/>}
+      {selectionMotion.present && lastSelection.current && <div ref={selectionMotion.ref as RefObject<HTMLDivElement | null>} className="epub-selection-actions" role="group" aria-label="处理选中文本" aria-hidden={!selection}><span title={lastSelection.current.quote}>{lastSelection.current.quote.slice(0, 72)}{lastSelection.current.quote.length > 72 ? '…' : ''}</span><ActionButton aria-label="复制 EPUB 选中文字" title="复制选中文字" identity={lastSelection.current.cfiRange} action={async () => { await navigator.clipboard.writeText(lastSelection.current!.quote); return true; }} successLabel="已复制" onError={onMessage}><Copy size={14}/>复制</ActionButton>{selectionFlow ? <><span className="epub-flow-status" role="status">{selectionFlow.error || '操作尚未完成'}</span><button className="primary" disabled={savingAnnotation || !selectionFlow.retry} onClick={() => void saveSelection(false)}>{selectionFlow.saved ? '重试摘录' : '重试保存'}</button></> : <><input aria-label="EPUB 批注" maxLength={10000} value={comment} onChange={event => setComment(event.target.value)} placeholder="可选批注"/><button className="primary" disabled={savingAnnotation} onClick={() => void saveSelection(false)}>高亮</button><button disabled={savingAnnotation} onClick={() => void saveSelection(!!excerptTarget)}>{excerptTarget ? `批注并${excerptTarget}` : '批注'}</button></>}<button disabled={savingAnnotation} onClick={() => { selectionActionGeneration.current += 1; setSelection(null); setComment(''); setSelectionFlow(null); selectionAnnotation.current = null; }}>取消</button></div>}
     </div><OutlinePanel open={outline} label="EPUB 大纲" className="epub-outline" emptyText={loading ? '正在读取目录…' : '这本电子书没有提供目录。'}
       returnFocus={() => headerTarget?.querySelector('[data-outline-toggle]') || null}
       items={toc.map((item, index) => ({ id: String(index), label: item.label, depth: item.depth, active: item.href === currentHref }))}

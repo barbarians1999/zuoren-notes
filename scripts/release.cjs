@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { createWriteStream } = require('node:fs');
-const { options, passed } = require('./release-support.cjs');
+const { options, passed, tapResult } = require('./release-support.cjs');
 const { testPlan } = require('./verification-plan.cjs');
 const { releaseDirectory } = require('./release-paths.cjs');
 const { sha256, sourceIdentity, testIdentity, readJson, writeJson, verifyReceipt, assertReusableBuild, directoryIdentity } = require('./delivery-receipt.cjs');
@@ -87,8 +87,10 @@ async function main() {
     if (checkpoint.tests[stage]?.inputsSha256 === identity.sha256 && checkpoint.tests[stage].status === 'passed') { console.log('[delivery] reuse verified ' + stage + ' tests'); continue; }
     if (stage === 'source' && (await directoryIdentity(root, 'dist')).sha256 !== checkpoint.buildOutputs.sha256) throw Error('Source UI build output changed; inspect before revalidation');
     if (stage === 'unit') {
-      const text = await node(stage, ['--test', '--test-reporter=tap', ...plan.unit]);
-      checkpoint.tests[stage] = { status: 'passed', count: passed(text), inputsSha256: identity.sha256, files: plan.unit, log: path.relative(root, path.join(logs, stage + '.log')), completedAt: new Date().toISOString() };
+      // Keep the unit suite's shared-temp-root safety checks deterministic.
+      const text = await node(stage, ['--test', '--test-reporter=tap', '--test-concurrency=1', ...plan.unit]);
+      const result = tapResult(text, { platform: process.platform, stage });
+      checkpoint.tests[stage] = { status: 'passed', count: result.passed, ...result, inputsSha256: identity.sha256, files: plan.unit, log: path.relative(root, path.join(logs, stage + '.log')), completedAt: new Date().toISOString() };
     } else {
       const fileResults = checkpoint.tests[stage]?.fileResults || {};
       checkpoint.tests[stage] = { status: 'incomplete', fileResults };

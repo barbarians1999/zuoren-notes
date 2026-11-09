@@ -154,7 +154,7 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
       });
       await page.waitForFunction(() => !!window.__outlineObservedSize);
     };
-    const assertOutlineLayout = async () => {
+    const assertOutlineLayout = async (expectStable = false) => {
       const state = await page.locator('.epub-viewer').evaluate(viewer => {
         const rect = viewer.getBoundingClientRect();
         return {
@@ -163,10 +163,17 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
           sameFrames: window.__outlineFrames.length === viewer.querySelectorAll('iframe').length && window.__outlineFrames.every(({ frame, document }) => viewer.contains(frame) && frame.contentDocument === document),
         };
       });
-      assert.deepEqual(state.geometry, state.original, 'outline motion never changes the reading viewport');
-      assert.equal(state.resizes, 0, 'outline does not trigger viewport resize');
-      assert.equal(state.mutations, 0, 'outline does not replace or repaginate book views');
-      assert.equal(state.sameFrames, true, 'the same book documents remain mounted');
+      if (expectStable) {
+        assert.deepEqual(state.geometry, state.original, 'divider preview does not change the reading viewport');
+        assert.equal(state.resizes, 0, 'divider preview does not trigger viewport resize');
+        assert.equal(state.mutations, 0, 'divider preview does not replace book views');
+        assert.equal(state.sameFrames, true, 'divider preview retains the same book documents');
+      }
+      const openOutline = page.locator('.epub-outline[aria-hidden="false"]');
+      if (await openOutline.count()) {
+        const box = await openOutline.boundingBox();
+        assert.ok(state.geometry.x + state.geometry.width <= box.x + 1, 'open outline does not cover the reading viewport');
+      }
     };
     await observeOutlineLayout();
     await page.getByRole('button', { name: '展开 EPUB 大纲', exact: true }).click();
@@ -226,7 +233,7 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
     await page.mouse.move(divider.x + divider.width / 2, divider.y + 90); await page.mouse.down();
     await page.mouse.move(divider.x + divider.width / 2 + 60, divider.y + 90, { steps: 10 });
     await page.locator('.splitter-preview').waitFor();
-    await assertOutlineLayout();
+    await assertOutlineLayout(true);
     await page.mouse.up();
     await page.waitForFunction(() => !document.querySelector('.splitter-preview') && document.querySelector('.epub-pane')?.dataset.reflowing === 'false');
     await waitForAnchor(beforeSize, 'committed divider resize retains the exact book text anchor');
@@ -241,7 +248,10 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
     const narrowPanel = await outline.boundingBox(), narrowPane = await page.locator('.epub-pane').boundingBox();
     await assertCompactReaderTab();
     assert.ok(narrowPanel.x >= narrowPane.x && narrowPanel.x + narrowPanel.width <= narrowPane.x + narrowPane.width + 1, 'outline stays inside its narrow reader column');
-    assert.ok(narrowPanel.width >= Math.min(180, narrowPane.width - 16), 'overlay keeps a usable outline width without shrinking the book');
+    assert.ok(narrowPanel.width > 0 && narrowPanel.width <= 186, 'outline retains a bounded width in the narrow reader column');
+    await capture('epub-outline-narrow-before-overlap-check');
+    const narrowViewer = await page.locator('.epub-viewer').boundingBox();
+    assert.ok(narrowViewer.x + narrowViewer.width <= narrowPanel.x + 1, 'outline does not cover the EPUB reading viewport');
     for (const control of await page.locator('.epub-header-actions button').all()) {
       const rect = await control.boundingBox();
       assert.ok(rect.x >= narrowPane.x && rect.x + rect.width <= narrowPane.x + narrowPane.width, 'reader actions remain accessible in their own column');
@@ -257,13 +267,21 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
     await app.evaluate(() => {
       const { createRequire } = process.mainModule.require('node:module');
       const load = createRequire(process.mainModule.require('electron').app.getAppPath() + '/package.json');
-      const { FileStore } = load('./electron/storage.cjs'), original = FileStore.prototype.saveEpub;
-      FileStore.prototype.saveEpub = async function () { FileStore.prototype.saveEpub = original; throw Error('injected EPUB close failure'); };
+      const { FileStore } = load('./electron/storage.cjs');
+      globalThis.__epubSaveOriginal = FileStore.prototype.saveEpub;
+      globalThis.__epubSaveFailureCalls = 0;
+      FileStore.prototype.saveEpub = async function () { globalThis.__epubSaveFailureCalls++; throw Error('injected EPUB close failure'); };
     });
     const close = page.getByRole('button', { name: '关闭 book.epub', exact: true });
     await close.click();
     await page.getByText('阅读进度或标注尚未保存成功，资料仍保留，请重试关闭。', { exact: true }).waitFor();
     assert.equal(await readerTab.count(), 1); assert.equal(await page.locator('.epub-pane').count(), 1);
+    assert.ok(await app.evaluate(() => globalThis.__epubSaveFailureCalls) > 0, 'the injected save failure was actually exercised');
+    await app.evaluate(() => {
+      const { createRequire } = process.mainModule.require('node:module');
+      const load = createRequire(process.mainModule.require('electron').app.getAppPath() + '/package.json');
+      load('./electron/storage.cjs').FileStore.prototype.saveEpub = globalThis.__epubSaveOriginal;
+    });
     await close.click(); await page.locator('.epub-pane').waitFor({ state: 'detached' });
     const savedAnchor = JSON.parse(await fs.readFile(metaPath, 'utf8')).cfi;
     assert.equal(await readerTab.count(), 0);

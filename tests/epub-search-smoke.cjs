@@ -41,6 +41,8 @@ test('EPUB whole-book search crosses inline nodes, navigates safely and isolates
   await page.locator('.epub-loading').waitFor({ state: 'hidden' });
   await page.getByRole('button', { name: '在 EPUB 中查找', exact: true }).click();
   const panel = page.locator('.epub-search-panel'), input = panel.getByRole('textbox', { name: 'EPUB 搜索文本', exact: true });
+  await page.waitForFunction(() => document.querySelector('.epub-search-panel')?.getAnimations().length > 0);
+  assert.equal(await panel.evaluate(el => el.getAnimations()[0]?.effect.getTiming().duration), 140, 'EPUB search enters with the shared feedback timing');
   async function search(query, count) {
     await input.fill(query);
     await page.waitForFunction(expected => document.querySelector('.epub-search-status')?.textContent === `${expected} 项结果`, count);
@@ -48,8 +50,14 @@ test('EPUB whole-book search crosses inline nodes, navigates safely and isolates
   }
   await t.test('literal search, case sensitivity, cross-node Chinese and correct chapter navigation', async () => {
     await search('needle', 2);
+    const pageFadePromise = page.waitForFunction(() => {
+      const animation = [...document.querySelectorAll('.epub-viewer iframe')].flatMap(frame => [...(frame.contentDocument?.body?.getAnimations() || [])]).find(item => item.effect.getTiming().duration === 160);
+      return animation ? animation.effect.getKeyframes().map(frame => ({ opacity: frame.opacity })) : false;
+    });
     await panel.locator('.epub-search-results > button').nth(1).click();
+    const pageFade = await (await pageFadePromise).jsonValue();
     await page.waitForFunction(() => document.querySelector('.epub-pane')?.dataset.currentChapter === 'Chapter 2');
+    assert.ok(pageFade && pageFade[0].opacity < pageFade.at(-1).opacity, 'EPUB page content fades in after navigation without translation');
     await page.locator('.zuoren-epub-search-hit').waitFor();
     await panel.getByRole('button', { name: 'EPUB 搜索区分大小写', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('.epub-search-status')?.textContent === '1 项结果');
@@ -65,7 +73,10 @@ test('EPUB whole-book search crosses inline nodes, navigates safely and isolates
     await panel.getByText('没有找到匹配内容', { exact: true }).waitFor();
     await search('needle', 2); await input.press('Enter');
     await page.waitForFunction(() => document.querySelector('.epub-pane')?.dataset.currentChapter === 'Chapter 1');
-    await input.press('Escape'); await panel.waitFor({ state: 'detached' });
+    await input.press('Escape'); await page.waitForFunction(() => document.querySelector('.epub-search-panel')?.inert === true);
+    const exit = await panel.evaluate(el => ({ hidden: el.getAttribute('aria-hidden'), duration: el.getAnimations()[0]?.effect.getTiming().duration }));
+    assert.deepEqual(exit, { hidden: 'true', duration: 110 });
+    await panel.waitFor({ state: 'detached' });
     assert.equal(await page.locator('.zuoren-epub-search-hit').count(), 0);
     await page.locator('.zhaoye-epub-highlight').waitFor();
   });

@@ -113,7 +113,7 @@ test('fullscreen chrome reveals without resizing readers and preserves settings,
     assert.equal(exit.duration, 240);
     assert.ok(exit.fraction > .4 && exit.fraction < .6, 'toolbar remains in view halfway through exit instead of disappearing offscreen immediately');
     await page.getByRole('button', { name: '设置', exact: true }).click();
-    await page.locator('.settings-popover').waitFor();
+    await page.locator('.settings-popover[aria-hidden="false"]').waitFor();
     assert.equal(await page.locator('.settings-row').filter({ hasText: '全屏阅读' }).locator('svg.lucide-minimize-2').count(), 1, 'settings shows the same fullscreen exit icon');
     await screenshot('note-fullscreen-settings');
     await page.mouse.move(500, 450); await page.waitForTimeout(800);

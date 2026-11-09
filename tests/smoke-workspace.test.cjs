@@ -47,7 +47,11 @@ test('smoke workspaces are unique and cleanup cannot reach outside allocated roo
     await fs.writeFile(path.join(second.fixture, 'second.txt'), 'second');
     await assert.rejects(cleanupSmokeWorkspace({ root: externalRoot }), /Refusing to clean/);
     await cleanupSmokeWorkspace(first);
-    await assert.rejects(fs.access(first.root));
+    if (process.env.ZHAOYE_KEEP_SMOKE_ARTIFACTS === '1') {
+      await fs.access(first.root);
+    } else {
+      await assert.rejects(fs.access(first.root));
+    }
     assert.equal(await fs.readFile(path.join(second.fixture, 'second.txt'), 'utf8'), 'second');
     assert.equal(await fs.readFile(externalSentinel, 'utf8'), 'preserve');
   } finally {

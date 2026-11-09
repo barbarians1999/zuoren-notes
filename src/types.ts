@@ -136,6 +136,7 @@ export interface Settings {
   recentFiles: string[];
   roots: string[];
   warning?: string;
+  settingsReadFailed?: boolean;
   window?: { x?: number; y?: number; width?: number; height?: number };
   session: ReaderSession | null;
 }
@@ -182,6 +183,8 @@ export interface NoteSessionTab {
 }
 export interface NoteSessionGroup { tabs: NoteSessionTab[]; activeId: string | null }
 export interface RecoveryReference { sourcePath: string; recoveryId: string }
+export type NoteSessionDocument = { path: string; recoveryId: string; retainedRecoveries: RecoveryReference[] }
+  | { path: string; recoveryId: string; retainedRecoveryIds: string[] };
 export interface ReaderSessionV3 extends Omit<ReaderSessionV2, 'version'> {
   version: 3;
   // Legacy fields above are derived projections, never additional owners.
@@ -189,8 +192,10 @@ export interface ReaderSessionV3 extends Omit<ReaderSessionV2, 'version'> {
   activeNoteGroup: 'primary' | 'secondary';
   // retainedRecoveries is path-qualified in new V3 snapshots. Legacy V3
   // snapshots with retainedRecoveryIds remain accepted at the session boundary.
-  noteDocuments: ({ path: string; recoveryId: string; retainedRecoveries: RecoveryReference[] }
-    | { path: string; recoveryId: string; retainedRecoveryIds: string[] })[];
+  noteDocuments: NoteSessionDocument[];
+  // References for unopened/unavailable notes survive explicit launch choices.
+  // This catalog contains no note text and does not restore unwanted tabs.
+  pendingNoteDocuments?: NoteSessionDocument[];
 }
 export type ReaderSession = ReaderSessionV1 | ReaderSessionV2 | ReaderSessionV3;
 
@@ -227,6 +232,7 @@ export interface OcrProgress {
 }
 
 export interface ReaderApi {
+  getAppInfo(): Promise<{ name: string; version: string }>;
   getLaunchItems(): Promise<{ root?: string; files: WorkspaceFile[] }>;
   listWorkspace(root: string): Promise<{ files: WorkspaceFile[]; truncated: boolean }>;
   listDirectory(input: { root: string; directory: string }): Promise<DirectoryListing>;

@@ -186,6 +186,7 @@ function installHandlers() {
     return callback(event, ...args);
   });
   handle('get-launch-items', () => launchItems);
+  handle('get-app-info', () => ({ name: app.getName(), version: app.getVersion() }));
   handle('choose-workspace', chooseWorkspace);
   handle('choose-files', chooseFiles);
   handle('list-workspace', async (_event, root) => store.list(await store.checked(root)));
@@ -223,7 +224,7 @@ function installHandlers() {
   handle('search', async (_event, input) => store.search(await store.checked(input.root), input.query));
   handle('get-settings', async () => {
     try { return { ...await readSettings(), warning: settingsWarning || undefined }; }
-    catch (error) { return { ...emptySettings(), warning: `无法读取或保留设置文件，设置写入已停止：${error instanceof Error ? error.message : String(error)}` }; }
+    catch (error) { return { ...emptySettings(), settingsReadFailed: true, warning: `无法读取或保留设置文件，设置写入已停止：${error instanceof Error ? error.message : String(error)}` }; }
   });
   handle('get-window-state', event => windowState(BrowserWindow.fromWebContents(event.sender)));
   handle('window-control', (event, action) => {

@@ -11,7 +11,7 @@ export function OutlinePanel({ open, label, items, emptyText, introduction, onSe
   onSelect: (item: OutlineItem) => void; returnFocus: () => HTMLElement | null; className?: string;
 }) {
   const reduced = useContext(ReducedMotionContext);
-  const panel = usePanelMotion(open, reduced, '100%', 200, returnFocus);
+  const panel = usePanelMotion(open, reduced, '100%', returnFocus);
   if (!panel.present) return null;
   return <aside ref={panel.ref} aria-hidden={!open} className={'note-outline ' + className} aria-label={label}>
     <div className="outline-title">大纲</div>

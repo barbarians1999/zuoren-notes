@@ -14,13 +14,15 @@ test('nested Markdown presentation maps clicks to source and preserves paste, ou
   const errors = [];
   try {
     await fs.mkdir(workspace.fixture, { recursive: true });
-    const note = path.join(workspace.fixture, 'structure.md'), pasteNote = path.join(workspace.fixture, 'paste.md'), outlineNote = path.join(workspace.fixture, 'outline.md'), guidesNote = path.join(workspace.fixture, 'guides.md');
+    const note = path.join(workspace.fixture, 'structure.md'), pasteNote = path.join(workspace.fixture, 'paste.md'), outlineNote = path.join(workspace.fixture, 'outline.md'), guidesNote = path.join(workspace.fixture, 'guides.md'), prefixesNote = path.join(workspace.fixture, 'prefixes.md');
     const guidesSource = 'cursor\n\n  - Parent\n    Continued ' + 'wrapped words '.repeat(18) + '\n\n    Second paragraph\n    - Child\n      Child continuation\n      - Grandchild\n        Deep continuation\n  - Sibling\n\n> - Quoted parent\n>   - Quoted child\n>     Quoted continuation\n\n  - Block parent\n\n    ```text\n    literal code\n    ```\n\n    | A | B |\n    | --- | --- |\n    | x | y |\n\n  Ordinary prose\n';
     const outlineSource = '<h2 data-zuoren-heading="fake:2">HTML heading</h2>\n\n## <span id="first-md"></span>Same heading\n\n<h2>Another HTML heading</h2>\n\n<span id="second-md"></span>Same heading\n---\n\n> ## Quoted heading\n\n~~~md\n## Code only\n~~~\n';
     const pasteBase = '# Paste base\n';
+    const prefixesSource = '# \n\n- bullet body\n\n12. ordered body\n';
     await fs.writeFile(note, source); await fs.writeFile(pasteNote, pasteBase);
     await fs.writeFile(outlineNote, outlineSource);
     await fs.writeFile(guidesNote, guidesSource);
+    await fs.writeFile(prefixesNote, prefixesSource);
     const packaged = process.env.ZHAOYE_SMOKE_EXECUTABLE || process.env.ZHAOYE_EXE;
     const launch = async file => {
       app = await _electron.launch({ executablePath: packaged || path.join(root, 'node_modules/electron/dist/electron.exe'),
@@ -228,6 +230,32 @@ test('nested Markdown presentation maps clicks to source and preserves paste, ou
       await content.focus(); await page.keyboard.press('Control+z'); await waitForFile(guidesNote, text => text === guidesSource);
       await toPreview(); await pane.locator('.markdown-preview li').first().waitFor(); await toEdit();
       assert.equal(await sourceText(), guidesSource, 'guides never rewrite spaces, containers or code');
+    });
+    await t.test('unfinished heading/list prefixes do not overlap their rendered marker while editing', async () => {
+      await row('prefixes.md').dblclick();
+      await pane.getByRole('tab', { name: 'prefixes.md', exact: true }).waitFor();
+      await page.waitForFunction(() => document.querySelector('.cm-content')?.textContent.includes('ordered body'));
+      const line = text => content.locator('.cm-line').filter({ hasText: text });
+      await content.click(); await page.keyboard.press('Control+Home'); await page.keyboard.press('End');
+      assert.ok((await line('#').locator('.cm-md-heading').textContent()).includes('#'), 'the end caret keeps the unfinished ATX marker editable');
+      for (const [body, prefix] of [['bullet body', '- '], ['ordered body', '12. ']]) {
+        const item = line(body), marker = item.locator('.cm-md-list-marker');
+        assert.equal(await marker.count(), 1, `${prefix} has one rendered marker while inactive`);
+        assert.equal(await item.locator('.cm-md-list-prefix').count(), 0, `${prefix} has no overlapping red source marker while inactive`);
+        const geometry = await item.evaluate(el => {
+          const marker = el.querySelector('.cm-md-list-marker'), walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT); let node;
+          while ((node = walker.nextNode())) if (node.textContent.trim() && !node.parentElement.closest('.cm-md-list-marker')) break;
+          const markerRange = document.createRange(); markerRange.selectNodeContents(marker);
+          const range = document.createRange(); range.setStart(node, node.textContent.search(/\S/)); range.setEnd(node, node.textContent.search(/\S/) + 1);
+          return { markerRight: markerRange.getBoundingClientRect().right, bodyLeft: range.getBoundingClientRect().left };
+        });
+        assert.ok(geometry.bodyLeft > geometry.markerRight, `${prefix} marker and body text do not overlap: ${JSON.stringify(geometry)}`);
+      }
+      await line('bullet body').click();
+      assert.equal(await line('bullet body').locator('.cm-md-list-marker').count(), 1, 'moving the caret into list text retains a single marker');
+      assert.equal(await line('bullet body').locator('.cm-md-list-prefix').count(), 0, 'raw list syntax never overlays the live marker');
+      await content.focus(); await page.keyboard.press('Control+End');
+      assert.equal(await fs.readFile(prefixesNote, 'utf8'), prefixesSource, 'live preview never changes Markdown source');
     });
     await row('structure.md').dblclick(); assert.equal(await sourceText(), source); await waitForFile(note, value => value === source);
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close()); await app.waitForEvent('close'); app = undefined;

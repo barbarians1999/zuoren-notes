@@ -52,7 +52,7 @@ export function PaneSplitter({ container, ratio, onChange, label, deferred = fal
     window.addEventListener('blur', cancel); window.addEventListener('resize', cancel); document.addEventListener('keydown', escape, true);
     cleanupEvents.current = () => { window.removeEventListener('blur', cancel); window.removeEventListener('resize', cancel); document.removeEventListener('keydown', escape, true); };
   };
-  const move = (event: PointerEvent<HTMLDivElement>) => {
+  const move = (event: globalThis.PointerEvent) => {
     const session = drag.current, root = container.current;
     if (!session || !root || session.pointer !== event.pointerId || session.width <= 0) return;
     const delta = event.clientX - session.x;
@@ -67,10 +67,26 @@ export function PaneSplitter({ container, ratio, onChange, label, deferred = fal
       handle.current?.setAttribute('aria-valuenow', String(Math.round(session.next)));
     });
   };
+  const downWithWindowTracking = (event: PointerEvent<HTMLDivElement>) => {
+    down(event);
+    if (!drag.current || drag.current.pointer !== event.pointerId) return;
+    const moveOnWindow = (pointer: globalThis.PointerEvent) => move(pointer);
+    const upOnWindow = (pointer: globalThis.PointerEvent) => { if (pointer.pointerId === drag.current?.pointer) finish(true); };
+    const cancelOnWindow = (pointer: globalThis.PointerEvent) => { if (pointer.pointerId === drag.current?.pointer) finish(false); };
+    window.addEventListener('pointermove', moveOnWindow, { passive: false });
+    window.addEventListener('pointerup', upOnWindow);
+    window.addEventListener('pointercancel', cancelOnWindow);
+    const previousCleanup = cleanupEvents.current;
+    cleanupEvents.current = () => {
+      previousCleanup();
+      window.removeEventListener('pointermove', moveOnWindow);
+      window.removeEventListener('pointerup', upOnWindow);
+      window.removeEventListener('pointercancel', cancelOnWindow);
+    };
+  };
   return <><div ref={handle} className="splitter" role="separator" tabIndex={0} aria-label={label} aria-orientation="vertical"
     aria-valuemin={25} aria-valuemax={75} aria-valuenow={Math.round(ratio)} title="拖动调整宽度；双击均分；Esc 撤销拖动；左右键微调"
-    onPointerDown={down} onPointerMove={move} onPointerUp={event => { if (event.pointerId === drag.current?.pointer) finish(true); }}
-    onPointerCancel={() => finish(false)} onLostPointerCapture={() => finish(false)} onDoubleClick={() => { finish(false); onChange(clamp(50)); }}
+    onPointerDown={downWithWindowTracking} onLostPointerCapture={() => finish(false)} onDoubleClick={() => { finish(false); onChange(clamp(50)); }}
     onKeyDown={event => {
       if (drag.current || event.nativeEvent.isComposing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey) return;
       const next = event.key === 'ArrowLeft' ? ratio - (event.shiftKey ? 10 : 2) : event.key === 'ArrowRight' ? ratio + (event.shiftKey ? 10 : 2) : event.key === 'Home' ? 25 : event.key === 'End' ? 75 : null;

@@ -14,15 +14,14 @@ export function ResponsiveToolGroup({ container, label, children }: { container:
     const observer = new ResizeObserver(resize); observer.observe(root); resize();
     return () => observer.disconnect();
   }, [container]);
-  if (!compact) return <div className="pdf-tools" role="toolbar" aria-label={label}>{children}</div>;
   const box = trigger.current?.getBoundingClientRect();
-  return <div className="toolbar-overflow"><button ref={trigger} className="icon-button" title={label} aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(value => !value)}><MoreHorizontal size={16}/></button>
-    {open && <ContextMenu x={box?.left || 0} y={box?.bottom || 0} returnFocus={trigger.current} label={label} onClose={() => setOpen(false)}>
-      {Children.map(children, child => isValidElement<ButtonHTMLAttributes<HTMLButtonElement>>(child) && child.type === 'button' ? cloneElement(child, {
+  const menuItems = Children.map(children, child => isValidElement<ButtonHTMLAttributes<HTMLButtonElement>>(child) && child.type === 'button' ? cloneElement(child, {
         role: child.props['aria-pressed'] !== undefined ? 'menuitemcheckbox' : 'menuitem', 'aria-checked': child.props['aria-pressed'],
         'aria-pressed': undefined,
         onClick: event => { child.props.onClick?.(event); setOpen(false); },
-      }) : child)}
-    </ContextMenu>}
-  </div>;
+      }) : child);
+  return <>
+    {compact ? <div className="toolbar-overflow"><button ref={trigger} className="icon-button" title={label} aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(value => !value)}><MoreHorizontal size={16}/></button></div> : <div className="pdf-tools" role="toolbar" aria-label={label}>{children}</div>}
+    <ContextMenu open={compact && open} x={box?.left || 0} y={box?.bottom || 0} returnFocus={trigger.current} label={label} onClose={() => setOpen(false)}>{menuItems}</ContextMenu>
+  </>;
 }

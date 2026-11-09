@@ -2,6 +2,7 @@ import { countColumn, Facet, StateField, type EditorState } from '@codemirror/st
 import { ensureSyntaxTree, syntaxTree } from '@codemirror/language';
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view';
 import { renderMarkdown } from './markdownRendering';
+import { bindMarkdownTableResources } from './markdownTableResources';
 import { isResolvedMarkdownLink, markdownLinkURL } from './markdownLinks';
 import { decodeMarkdownEntity, projectCodeBlock, projectInlineText, projectTable, projectedSourcePosition, type BlockProjection, type CodeProjection, type TableProjection, type TextProjection, type MarkdownNode } from './markdownProjection';
 import { reader, resolveLocal } from '../readerContext';
@@ -144,16 +145,26 @@ class TaskWidget extends WidgetType {
   ignoreEvent() { return true; }
 }
 
+// CodeMirror may let a new, equal Widget instance take over an existing DOM
+// node without calling toDOM again. Cleanup must follow that node, not an instance.
+const tableResourceCleanup = new WeakMap<HTMLElement, () => void>();
 class TableWidget extends WidgetType {
-  constructor(readonly projection: TableProjection, readonly guides: ListGuide[]) { super(); }
+  constructor(readonly projection: TableProjection, readonly guides: ListGuide[], readonly config?: MarkdownLivePreviewConfig) { super(); }
   get source() { return this.projection.content.text; }
   get from() { return this.projection.from; }
   get cells() { return this.projection.cells.map(cell => cell.anchor); }
-  eq(other: TableWidget) { return sameBlock(other.projection, this.projection) && sameGuides(other.guides, this.guides) && other.projection.references === this.projection.references
+  eq(other: TableWidget) { return other.config === this.config && sameBlock(other.projection, this.projection) && sameGuides(other.guides, this.guides) && other.projection.references === this.projection.references
     && other.projection.cells.length === this.projection.cells.length && other.projection.cells.every((cell, index) => sameText(cell, this.projection.cells[index])); }
   toDOM(view: EditorView) {
     const el = document.createElement('div'); el.className = 'cm-md-table';
     el.innerHTML = renderMarkdown(this.source + this.projection.references);
+    const config = this.config;
+    const cleanup = config && bindMarkdownTableResources(el, {
+      notePath: config.notePath, assetUrl: path => reader().assetUrl(path),
+      openLink: href => reader().openMarkdownLink({ sourcePath: config.notePath, href }),
+      isCurrent: () => view.state.facet(markdownLivePreviewConfig) === config,
+      requestMeasure: () => view.requestMeasure(), onError: config.onError,
+    });
     el.tabIndex = 0; el.setAttribute('aria-label', '表格，点击单元格编辑 Markdown');
     const activate = (position: number) => { view.dispatch({ selection: { anchor: position }, scrollIntoView: true }); view.focus(); };
     let press: { x: number; y: number } | null = null;
@@ -178,8 +189,11 @@ class TableWidget extends WidgetType {
     });
     el.addEventListener('mouseup', () => setTimeout(() => { press = null; dragged = false; }, 0));
     el.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); activate(this.from); } });
-    return wrapBlock(view, el, this.projection, this.guides);
+    const dom = wrapBlock(view, el, this.projection, this.guides);
+    if (cleanup) tableResourceCleanup.set(dom, cleanup);
+    return dom;
   }
+  destroy(dom: HTMLElement) { tableResourceCleanup.get(dom)?.(); tableResourceCleanup.delete(dom); }
   ignoreEvent() { return true; }
 }
 
@@ -244,7 +258,7 @@ class InlineCodeWidget extends WidgetType {
   eq(other: InlineCodeWidget) { return sameText(this.projection, other.projection); }
   toDOM(view: EditorView) {
     const code = document.createElement('code'); code.className = 'cm-md-inline-code-content';
-    code.textContent = this.projection.text || '\u200b';
+    const text = document.createElement('span'); text.className = 'cm-md-inline-code-text'; text.textContent = this.projection.text || '\u200b'; code.append(text);
     const ownerDocument = code.ownerDocument;
     let stopDrag = () => {};
     this.cleanup.set(code, () => stopDrag());
@@ -316,16 +330,19 @@ class ImageWidget extends WidgetType {
   ignoreEvent() { return true; }
 }
 
-export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120): DecorationSet {
+export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120, motionLines?: Set<number>): DecorationSet {
   const ranges: ReturnType<Decoration['range']>[] = [];
   const blocks: ReturnType<Decoration['range']>[] = [];
   const quoteDepths = new Map<number, number>();
   const guideLines = new Map<number, ListGuide[]>(), codeLines = new Set<number>();
+  const headingTokens: { from: number; to: number }[] = [];
   const listLines = new Map<number, { steps: number; columns: number; markers: number }>();
   // Initial hydration may parse briefly. Typing has a smaller budget and
   // selection-only updates never force a synchronous full-document parse.
   // Language-worker tree updates finish the remaining decorations safely.
   const tree = (parseBudget > 0 && ensureSyntaxTree(state, state.doc.length, parseBudget)) || syntaxTree(state);
+  motionLines ??= state.selection.ranges.length === 1 && state.selection.main.empty
+    ? new Set([state.doc.lineAt(state.selection.main.head).from]) : new Set();
   const activeItems = new Set<number>();
   for (const range of state.selection.ranges) {
     for (let node: MarkdownNode | null = tree.resolveInner(state.doc.lineAt(range.head).to, -1); node; node = node.parent) {
@@ -338,6 +355,8 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
   });
   const active = (from: number, to: number) => state.selection.ranges.some(range => range.empty
     ? range.head >= from && range.head < to : range.from <= to && range.to >= from);
+  const activeAtPrefixEnd = (from: number, to: number) => state.selection.ranges.some(range => range.empty
+    ? range.head >= from && range.head <= to : range.from <= to && range.to >= from);
   const hide = (from: number, to: number, widget?: WidgetType, block = false) => {
     if (to > from) {
       const range = Decoration.replace({ widget, block }).range(from, to);
@@ -382,7 +401,7 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
     }
     if (name === 'Table' && !activeLine(from, to)) {
       const projection = projectTable(state, node, tree);
-      hide(projection.from, projection.to, new TableWidget(projection, listGuides(state, node, activeItems)), true);
+      hide(projection.from, projection.to, new TableWidget(projection, listGuides(state, node, activeItems), state.facet(markdownLivePreviewConfig)), true);
       return false;
     }
     if (name === 'HorizontalRule' && !active(from, to)) {
@@ -402,25 +421,46 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
     if (name === 'Entity' && !active(from, to)) { hide(from, to, new LiteralWidget(decodeMarkdownEntity(state.sliceDoc(from, to)))); return false; }
     if (/^(ATX|Setext)Heading/.test(name)) {
       const level = Number(name.slice(-1));
-      mark(from, to, 'cm-md-heading cm-md-heading-' + level);
-      if (!active(from, to)) for (let child = node.firstChild; child; child = child.nextSibling) {
+      const headingActive = activeAtPrefixEnd(from, to);
+      mark(from, to, `cm-md-heading cm-md-heading-${level}${headingActive ? ' cm-md-format-active' : ''}`);
+      // Line decorations have one owner even when inline formatting splits
+      // the heading mark. The level label never becomes editable source.
+      ranges.push(Decoration.line({ class: 'cm-md-heading-line', attributes: {
+        'data-md-heading-level': String(level),
+      } }).range(state.doc.lineAt(from).from));
+      // Keep the body measurable before the first cross-line entry, not only
+      // after the caret has already visited this heading.
+      for (let number = state.doc.lineAt(from).number; number <= state.doc.lineAt(to).number; number++) {
+        motionLines.add(state.doc.line(number).from);
+      }
+      const header = node.getChild('HeaderMark');
+      const hasHeadingText = !!header && /\S/.test(state.sliceDoc(header.to, to));
+      if (hasHeadingText) for (let child = node.firstChild; child; child = child.nextSibling) {
         if (child.name === 'HeaderMark') {
           let end = child.to;
-          while (end < to && state.sliceDoc(end, end + 1) === ' ') end++;
-          hide(child.from, end);
+          while (end < to && /[\t ]/.test(state.sliceDoc(end, end + 1))) end++;
+          headingTokens.push({ from: child.from, to: end });
+          if (headingActive) mark(child.from, end, 'cm-md-format-token');
+          else hide(child.from, end);
         }
       }
     }
     const inlineClass: Record<string, string> = { StrongEmphasis: 'strong', Emphasis: 'emphasis', Strikethrough: 'strikethrough', InlineCode: 'inline-code', Highlight: 'highlight' };
     if (inlineClass[name]) {
+      const formatActive = active(from, to);
       if (name === 'InlineCode') {
-        if (active(from, to)) mark(from, to, 'cm-md-inline-code');
+        if (formatActive) {
+          mark(from, to, 'cm-md-inline-code cm-md-format-active');
+          for (let child = node.firstChild; child; child = child.nextSibling) if (child.name === 'CodeMark') mark(child.from, child.to, 'cm-md-format-token');
+        }
         else hide(from, to, new InlineCodeWidget(projectInlineText(state, node, tree)));
         return false;
       }
-      mark(from, to, 'cm-md-' + inlineClass[name]);
-      if (!active(from, to)) for (let child = node.firstChild; child; child = child.nextSibling) {
-        if (/^(EmphasisMark|StrikethroughMark|CodeMark|HighlightMark)$/.test(child.name)) hide(child.from, child.to);
+      mark(from, to, `cm-md-${inlineClass[name]}${formatActive ? ' cm-md-format-active' : ''}`);
+      for (let child = node.firstChild; child; child = child.nextSibling) {
+        if (!/^(EmphasisMark|StrikethroughMark|CodeMark|HighlightMark)$/.test(child.name)) continue;
+        if (formatActive) mark(child.from, child.to, 'cm-md-format-token');
+        else hide(child.from, child.to);
       }
     }
     if (name === 'ListItem') {
@@ -443,10 +483,22 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
         const line = state.doc.lineAt(marker.from);
         let end = task?.to ?? marker.to; while (end < line.to && /[\t ]/.test(state.sliceDoc(end, end + 1))) end++;
         mark(end, line.to, 'cm-md-list');
-        const prefixActive = active(marker.from, end);
-        if (!task && prefixActive) mark(marker.from, end, 'cm-md-list-prefix');
+        const prefixActive = marker.to === end
+          ? activeAtPrefixEnd(marker.from, end)
+          : active(marker.from, end);
+        const gapFrom = task?.to ?? marker.to;
+        const before = countColumn(state.sliceDoc(line.from, gapFrom), state.tabSize);
+        if (prefixActive) {
+          const after = countColumn(state.sliceDoc(line.from, end), state.tabSize);
+          mark(marker.from, end, 'cm-md-list-prefix cm-md-format-token', { style: `--md-prefix-space-columns: ${after - before}` });
+        }
         if (!prefixActive) {
-          if (task) hide(marker.from, task.to, new TaskWidget(task.from + 1, /x/i.test(state.sliceDoc(task.from, task.to))));
+          if (task) {
+            // The gap is presentation-only whitespace while the task is inactive.
+            // Replace it with the widget's fixed half-em margin so spaces and tabs
+            // render consistently without changing the Markdown source.
+            hide(marker.from, end, new TaskWidget(task.from + 1, /x/i.test(state.sliceDoc(task.from, task.to))));
+          }
           else {
             const label = node.parent?.name === 'OrderedList' ? state.sliceDoc(marker.from, marker.to) : '•';
             hide(marker.from, end, new MarkerWidget(label, label === '•' ? end - marker.from : 0));
@@ -473,13 +525,60 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
       }
     }
   } });
+  // A whitespace-only active continuation is outside the parser's ListItem
+  // until text is typed. Give it the same visual context without changing it.
+  const selectedLines = new Set(state.selection.ranges.map(range => state.doc.lineAt(range.head).number));
+  for (const number of selectedLines) {
+    if (listLines.has(number) || codeLines.has(number) || number <= 1) continue;
+    const line = state.doc.line(number);
+    if (!/^[\t ]+$/.test(line.text)) continue;
+    let previousNumber = number - 1;
+    while (previousNumber > 1 && !state.doc.line(previousNumber).text.trim()) previousNumber--;
+    const previous = state.doc.line(previousNumber);
+    if (!previous.text.trim()) continue;
+    const separated = previousNumber < number - 1, indentColumns = countColumn(line.text, state.tabSize);
+    let candidate: MarkdownNode | null = tree.resolveInner(previous.to, -1);
+    let followsParagraph = false;
+    for (; candidate; candidate = candidate.parent) {
+      if (candidate.name === 'CodeBlock') break;
+      if (candidate.name === 'FencedCode') {
+        const fences = candidate.getChildren('CodeMark');
+        // Only a parser-confirmed closing fence permits a new list paragraph.
+        // An open fence still owns the whitespace line as literal code.
+        if (fences.length < 2 || state.doc.lineAt(fences[fences.length - 1].from).number !== previous.number) break;
+      }
+      if (candidate.name === 'Paragraph' || candidate.name === 'Task') followsParagraph = !separated;
+      if (candidate.name !== 'ListItem') continue;
+      const marker = candidate.getChild('ListMark'); if (!marker) continue;
+      const markerLine = state.doc.lineAt(marker.from);
+      let end = marker.to; while (end < markerLine.to && /[\t ]/.test(state.sliceDoc(end, end + 1))) end++;
+      const required = countColumn(state.sliceDoc(markerLine.from, end).replace(/>[\t ]?/g, ''), state.tabSize);
+      if (!followsParagraph && indentColumns < required) continue;
+      // A new paragraph after a blank line needs the container's actual
+      // indentation. Four more columns start code, and a missing quote marker
+      // cannot continue a blockquote after that blank line.
+      if (!followsParagraph && indentColumns >= required + 4) break;
+      let quoted = false;
+      for (let parent = candidate.parent; parent; parent = parent.parent) if (parent.name === 'Blockquote') quoted = true;
+      if (separated && quoted) break;
+      const prefixes = listPrefixes(state, candidate).filter(prefix => prefix.line < number);
+      listLines.set(number, { steps: prefixes.length, columns: prefixes.reduce((sum, prefix) => sum + prefix.columns, 0), markers: 0 });
+      break;
+    }
+  }
   for (const [number, guides] of guideLines) if (!codeLines.has(number)) {
     const line = state.doc.line(number), attributes = guideAttributes(guides);
     ranges.push(Decoration.line({ class: 'cm-md-list-guides', attributes }).range(line.from));
   }
   for (const [number, layout] of listLines) if (!codeLines.has(number)) {
     const line = state.doc.line(number);
-    const indent = countColumn((line.text.match(/^[\t >]*/)?.[0] || '').replace(/>[\t ]?/g, ''), state.tabSize);
+    const prefix = line.text.match(/^[\t >]*/)?.[0] || '';
+    const columns = (value: string) => countColumn(value.replace(/>[\t ]?/g, ''), state.tabSize);
+    const indent = columns(prefix);
+    for (let index = 0; index < prefix.length; index++) if (prefix[index] === '\t') {
+      const width = columns(prefix.slice(0, index + 1)) - columns(prefix.slice(0, index));
+      if (width > 0) mark(line.from + index, line.from + index + 1, 'cm-md-indent-tab', { style: `--md-tab-columns: ${width}` });
+    }
     ranges.push(Decoration.line({ class: 'cm-md-list-layout', attributes: { style:
       `--md-list-offset: calc(${layout.steps} * var(--md-list-gutter, 2em) - ${layout.columns} * var(--md-list-space-width, .5ch)); --md-list-wrap-indent: calc(${indent} * var(--md-list-space-width, .5ch) + ${layout.markers} * var(--md-list-gutter, 2em))`,
     } }).range(line.from));
@@ -487,6 +586,35 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120):
   for (const [number, depth] of quoteDepths) ranges.push(Decoration.line({ class: 'cm-md-quote', attributes: {
     'data-quote-depth': String(depth), style: `--md-quote-depth: ${depth}`,
   } }).range(state.doc.line(number).from));
+  const motionExclusions = [...ranges.filter(range => range.to > range.from && (range.value.point
+    || range.value.spec.class?.split(' ').includes('cm-md-list-prefix'))), ...headingTokens]
+    .sort((left, right) => left.from - right.from || left.to - right.to);
+  let exclusionIndex = 0;
+  for (const lineStart of [...motionLines].sort((left, right) => left - right)) {
+    const line = state.doc.lineAt(lineStart), excluded: { from: number; to: number }[] = [];
+    while (exclusionIndex < motionExclusions.length && motionExclusions[exclusionIndex].to <= line.from) exclusionIndex++;
+    for (let index = exclusionIndex; index < motionExclusions.length && motionExclusions[index].from < line.to; index++) {
+      if (motionExclusions[index].to > line.from) excluded.push(motionExclusions[index]);
+    }
+    const leadingIndent = /^[\t ]+/.exec(line.text)?.[0];
+    if (leadingIndent) excluded.push({ from: line.from, to: line.from + leadingIndent.length });
+    tree.iterate({ from: line.from, to: line.to, enter(ref) {
+      const { from, to, name } = ref;
+      if (/^(FencedCode|CodeBlock|InlineCode|Image|Table|HorizontalRule|HTMLBlock|CommentBlock)$/.test(name)) {
+        excluded.push({ from, to }); return false;
+      }
+      if (!ref.node.firstChild && to > from && /(?:Mark|Marker)$/.test(name)) excluded.push({ from, to });
+    } });
+    excluded.sort((left, right) => left.from - right.from || left.to - right.to);
+    let cursor = line.from;
+    for (const part of excluded) {
+      const from = Math.max(line.from, part.from), to = Math.min(line.to, part.to);
+      if (to <= cursor) continue;
+      if (from > cursor) mark(cursor, from, 'cm-md-motion-run', { 'data-md-motion-key': `${cursor}:${from}` });
+      cursor = Math.max(cursor, to);
+    }
+    if (cursor < line.to) mark(cursor, line.to, 'cm-md-motion-run', { 'data-md-motion-key': `${cursor}:${line.to}` });
+  }
   // A whole-line replacement owns its container prefix. Do not also paint a
   // hidden list marker or an orphan quote line above the rendered block.
   blocks.sort((left, right) => left.from - right.from);
@@ -507,7 +635,14 @@ export const livePreview = StateField.define<DecorationSet>({
     if (!transaction.docChanged && !treeChanged) {
       if (!transaction.selection || activeLineKey(transaction.startState) === activeLineKey(transaction.state)) return value;
     }
-    return buildMarkdownLivePreview(transaction.state, transaction.docChanged ? 20 : 0);
+    const motionLines = new Set<number>();
+    if (transaction.state.selection.ranges.length === 1 && transaction.state.selection.main.empty) {
+      motionLines.add(transaction.state.doc.lineAt(transaction.state.selection.main.head).from);
+      if (!transaction.docChanged && transaction.startState.selection.ranges.length === 1 && transaction.startState.selection.main.empty) {
+        motionLines.add(transaction.startState.doc.lineAt(transaction.startState.selection.main.head).from);
+      }
+    }
+    return buildMarkdownLivePreview(transaction.state, transaction.docChanged ? 20 : 0, motionLines);
   },
   provide: field => EditorView.decorations.from(field),
 });
@@ -516,18 +651,31 @@ function activeLineKey(state: EditorState) {
   const tree = syntaxTree(state);
   return state.selection.ranges.map(range => {
     if (!range.empty) return `selection:${range.from}:${range.to}`;
+    // Heading source is also disclosed at its line-end caret. Resolve the
+    // left side for that inclusive endpoint, matching activeAtPrefixEnd.
+    for (let node: MarkdownNode | null = tree.resolveInner(range.head, -1); node; node = node.parent) {
+      if (/^(ATX|Setext)Heading/.test(node.name) && range.head === node.to) return `${node.name}:${node.from}:${node.to}`;
+    }
     for (let node: MarkdownNode | null = tree.resolveInner(range.head, 1); node; node = node.parent) {
       if (node.name === 'ListItem') {
         const marker = node.getChild('ListMark'), task = node.getChild('Task')?.getChild('TaskMarker');
         if (marker) {
           const line = state.doc.lineAt(marker.from); let end = task?.to ?? marker.to;
           while (end < line.to && /[\t ]/.test(state.sliceDoc(end, end + 1))) end++;
-          if (range.head >= marker.from && range.head < end) return `list-prefix:${marker.from}:${end}`;
+          if (range.head >= marker.from && (range.head < end || (marker.to === end && range.head === end))) return `list-prefix:${marker.from}:${end}`;
         }
       }
+      // Rule replacement uses a half-open source range. Its line-end caret
+      // must not share a cache key with a caret editing the rule itself.
+      if (node.name === 'HorizontalRule' && range.head >= node.from && range.head < node.to) return `${node.name}:${node.from}:${node.to}`;
       if (/^(InlineCode|StrongEmphasis|Emphasis|Strikethrough|Highlight|Link|Image|ATXHeading|SetextHeading|Autolink|QuoteMark|HardBreak|Escape|Entity)/.test(node.name)) return `${node.name}:${node.from}:${node.to}`;
       if (/^(Paragraph|Document)$/.test(node.name)) break;
     }
     return `${state.doc.lineAt(range.head).number}`;
   }).join(',');
+}
+
+export function markdownMotionVisibilityKey(state: EditorState) {
+  const key = activeLineKey(state);
+  return key.includes(':') ? key : null;
 }

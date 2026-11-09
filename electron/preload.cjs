@@ -9,6 +9,7 @@ ipcRenderer.on('open-launch-items', (_event, items) => {
 });
 const api = {
   getLaunchItems: () => invoke('get-launch-items'),
+  getAppInfo: () => invoke('get-app-info'),
   listWorkspace: root => invoke('list-workspace', root),
   listDirectory: input => invoke('list-directory', input),
   chooseWorkspace: () => invoke('choose-workspace'),

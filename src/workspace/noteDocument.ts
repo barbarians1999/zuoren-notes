@@ -50,6 +50,8 @@ export class NoteDocument {
   private imageWaiters: Array<() => void> = [];
   private imageAccepting = true;
   private imageBytes = 0;
+  private saveRetryAttempt = 0;
+  private saveFailureNotified = false;
   constructor(note: NoteRead, recoveryId: string, private api: () => ReaderApi,
     private barrier: { has(path: string): boolean }, private notify: () => void,
     private edited: (doc: NoteDocument) => void, private message: (text: string) => void,
@@ -89,6 +91,12 @@ export class NoteDocument {
         annotations.push(Transaction.time.of(transaction.annotation(Transaction.time)!));
         const add = transaction.annotation(Transaction.addToHistory);
         if (add !== undefined) annotations.push(Transaction.addToHistory.of(add));
+        // Pane-only cursor moves are not broadcast, but history must record
+        // the selection that actually preceded this edit in its source pane.
+        if (!this.state.selection.eq(transaction.startState.selection)) {
+          this.state = this.state.update({ selection: transaction.startState.selection,
+            annotations: Transaction.addToHistory.of(false) }).state;
+        }
         const change = this.state.update({ changes: transaction.changes, selection: transaction.newSelection, annotations });
         this.state = change.state;
         view.update([transaction]); tab.selection = view.state.selection;
@@ -253,19 +261,34 @@ export class NoteDocument {
       recoveryId: this.recoveryId, baseHash: this.note.hash, content: this.text, encoding: { bom: this.note.bom, eol: this.note.eol } });
     this.trace('recovery', { revision });
   };
-  save = () => this.persistence.save({ snapshot: this.snapshot, blocked: this.blocked, recovery: this.flushRecovery,
+  private clearSaveRetry() { this.saveRetryAttempt = 0; this.saveFailureNotified = false; this.saveDue = Infinity; }
+  private scheduleSaveRetry() {
+    const delays = [2000, 5000, 15000];
+    if (this.blocked() || this.saveRetryAttempt >= delays.length) return;
+    this.saveDue = Math.min(this.saveDue, Date.now() + delays[this.saveRetryAttempt++]);
+  }
+  save = () => {
+    this.saveDue = Infinity;
+    return this.persistence.save({ snapshot: this.snapshot, blocked: this.blocked, recovery: this.flushRecovery,
     recoveryError: () => this.message('恢复稿暂时无法更新，正在继续保存正文。'),
     write: snapshot => { this.trace('save.submit', { submittedRevision: snapshot.revision }); return this.api().saveNote({ ...snapshot.note!, content: snapshot.text, recoveryId: this.recoveryId }); },
-    saving: () => this.setLabel('保存中'), clean: () => this.setLabel('已保存'),
+    saving: () => this.setLabel('保存中'), clean: () => { this.clearSaveRetry(); this.setLabel('已保存'); },
     conflict: result => { this.conflictRef.current = result; this.label = '外部冲突'; this.trace('save.conflict'); this.notify(); },
     commit: (result, submitted) => {
       this.noteRef.current = { ...submitted.note!, content: result.content, hash: result.hash };
       this.committedRevision = submitted.revision;
+      this.clearSaveRetry();
       this.label = sameNoteContent(this.text, result.content) ? '已保存' : '编辑中';
       this.trace('save.commit', { submittedRevision: submitted.revision }); this.notify();
     },
-    error: error => { this.label = '保存失败'; this.trace('save.error'); this.message(`保存失败：${String(error)}`); this.notify(); },
+    error: error => {
+      if (this.disposed) return;
+      this.label = '保存失败'; this.trace('save.error');
+      if (!this.saveFailureNotified) { this.saveFailureNotified = true; this.message(`保存失败：${String(error)}`); }
+      this.scheduleSaveRetry(); this.notify();
+    },
   });
+  };
   async poll() {
     if (this.polling || this.blocked()) return;
     this.polling = true; this.lastPoll = Date.now();
@@ -306,7 +329,7 @@ export class NoteDocument {
     else await this.clearRecovery(this.text);
     this.replaceText(this.note.content);
     this.conflictRef.current = null; this.recoveryConflict = null;
-    this.label = '已保存'; this.notify();
+    this.clearSaveRetry(); this.label = '已保存'; this.notify();
   }
   async completeSaveAs(note: NoteRead, submitted: string, submittedRevision: number, recovering: boolean) {
     const oldPath = this.note.path, oldId = this.recoveryConflict?.recoveryId || this.recoveryId;
@@ -317,6 +340,7 @@ export class NoteDocument {
     // Do not replace text typed while the Save As dialog/write was pending.
     if (recovering && this.revision === submittedRevision) this.replaceText(submitted);
     this.label = sameNoteContent(this.text, note.content) ? '已保存' : '编辑中';
+    this.clearSaveRetry();
     this.saveDue = this.label === '已保存' ? Infinity : Date.now() + 900;
     this.recoveryDue = this.label === '已保存' ? Infinity : Date.now() + 400;
     this.notify();
@@ -338,7 +362,7 @@ export class NoteDocument {
   relocate(note: NoteRead) {
     this.persistence.invalidate(); this.documentId.current = ++sequence; this.noteRef.current = note; this.notify();
   }
-  dispose() { this.disposed = true; this.persistence.disposed = true; this.persistence.invalidate(); }
+  dispose() { this.disposed = true; this.clearSaveRetry(); this.persistence.disposed = true; this.persistence.invalidate(); }
 }
 
 function imageExtension(name: string) {
