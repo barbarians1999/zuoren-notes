@@ -36,6 +36,9 @@ async function assertGlyphActions(page, buttons) {
     assert.equal(result.color, result.expected, 'active actions retain red; inactive actions use theme hover ink: ' + await button.getAttribute('aria-label') + ' (hovered=' + result.hovered + ')');
     assert.equal(result.icon, result.color, 'icon inherits the same feedback');
     await button.focus();
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await button.evaluate(element => element.matches(':focus-visible')), true, 'keyboard navigation returns focus to the action');
     assert.equal(await button.evaluate(element => getComputedStyle(element).outlineStyle), 'solid', 'keyboard focus remains visible');
   }
   await page.mouse.move(1, 1);
