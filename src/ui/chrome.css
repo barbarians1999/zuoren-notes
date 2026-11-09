@@ -13,6 +13,7 @@
 .app[data-motion="reduced"] :is(.workspace-icon-action, .workspace-mode-switch button, .pdf-navigation button, .epub-header-actions button, .epub-navigation > button):hover { transform: none; }
 .app .workspace-mode-switch button.active:not(:disabled):hover { color: var(--accent); }
 .app :is(.workspace-icon-action, .workspace-mode-switch button, .pdf-navigation button, .epub-header-actions button, .epub-navigation > button) > :is(svg, span) { transition: color var(--motion-feedback) var(--motion-ease-enter), transform var(--motion-press) var(--motion-ease-enter); }
+.app :is(.workspace-icon-action, .workspace-mode-switch button, .pdf-navigation button, .epub-header-actions button, .epub-navigation > button):focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .app[data-motion="full"] :is(.workspace-icon-action, .workspace-mode-switch button, .pdf-navigation button, .epub-header-actions button, .epub-navigation > button):not(:disabled):hover > :is(svg, span) { transform: translateY(-1px); }
 .app[data-motion="full"] :is(.workspace-icon-action, .workspace-mode-switch button, .pdf-navigation button, .epub-header-actions button, .epub-navigation > button):not(:disabled):active > :is(svg, span) { transform: translateY(1px); }
 .app :is(.workspace-icon-action, .pdf-navigation .icon-button, .epub-header-actions button) { width: var(--control-height); min-width: var(--control-height); padding: 6px; }
