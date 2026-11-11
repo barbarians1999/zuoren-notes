@@ -18,5 +18,7 @@
       "name": "SHA256SUMS.txt"
     }
   ],
-  "macReports": []
+  "macReports": [],
+  "artifactSourceCommit": "e1a7c9f5b0185356f5b4d17933a94c7db14f0975",
+  "tagCommit": "cd44d97b911a2bc05557b1749b1f607e21314c82"
 }
