@@ -13,3 +13,36 @@ exports/
 .reader/
 .DS_Store
 Thumbs.db
+
+# Private baseline: local credentials and authentication state
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.template
+*.pem
+*.key
+*.p12
+*.pfx
+.auth/
+playwright/.auth/
+
+# Local user data and exported/backup packages
+/user-data/
+/userData/
+/notes/
+/books/
+/backups/
+*.sqlite
+*.sqlite3
+*.db
+*.bak
+*.zip
+*.zip.part*
+*.7z
+*.tar
+*.tar.gz
+
+# Legacy transfer wrappers are not current source manifests
+/CLOUD_HANDOFF_README.md
+/HANDOFF-MANIFEST.json

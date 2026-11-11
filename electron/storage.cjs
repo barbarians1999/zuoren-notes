@@ -3,6 +3,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { normalizeEpubMeta, validAnnotation } = require('./epub-meta.cjs');
 const { normalizePdfMeta } = require('./pdf-meta.cjs');
+const { fileMoveVersion } = require('./file-moves.cjs');
 
 const digest = data => crypto.createHash('sha256').update(data).digest('hex');
 const inside = (root, file) => { const rel = path.relative(root, file); return rel === '' || (!rel.startsWith('..' + path.sep) && rel !== '..' && !path.isAbsolute(rel)); };
@@ -87,7 +88,8 @@ async function realPathOrParent(file) {
 }
 
 class FileStore {
-  constructor() { this.roots = new Set(); this.files = new Set(); this.lastBackup = new Map(); this.queues = new Map(); this.identities = new Map(); }
+  validMoveRecovery(value, id) { return validRecovery(value, id, value?.sourcePath); }
+  constructor() { this.entryQueue = Promise.resolve(); this.roots = new Set(); this.rootIdentities = new Map(); this.files = new Set(); this.lastBackup = new Map(); this.queues = new Map(); this.identities = new Map(); }
   async contentIdentity(file) {
     const fingerprint = stat => [stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(':');
     const before = fingerprint(await fs.stat(file));
@@ -98,16 +100,22 @@ class FileStore {
     this.identities.set(key, { fingerprint: before, id });
     return id;
   }
-  async grantRoot(dir) { const real = await fs.realpath(dir); this.roots.add(real); return real; }
+  async grantRoot(dir) {
+    const real = await fs.realpath(dir), stat = await fs.lstat(real, { bigint: true });
+    if (!stat.isDirectory() || stat.isSymbolicLink() || !stat.ino) throw new Error('资料根目录必须有可核验的目录身份');
+    this.roots.add(real); this.rootIdentities.set(real, [stat.dev, stat.ino].join(':')); return real;
+  }
   async grantFile(file) { const real = await fs.realpath(file); this.files.add(real); return real; }
-  async checked(file, { create = false, asset = false } = {}) {
+  async checked(file, { create = false, asset = false, mutation = false, inspect = false } = {}) {
     if (typeof file !== 'string' || !path.isAbsolute(file)) throw new Error('需要绝对文件路径');
+    await this.moveGuard?.(file, { mutation, inspect });
     let real;
     try { real = await fs.realpath(file); }
     catch (e) {
       if (!create || e.code !== 'ENOENT') throw e;
       real = path.join(await fs.realpath(path.dirname(file)), path.basename(file));
     }
+    await this.moveGuard?.(real, { mutation, inspect });
     if (this.files.has(real) || [...this.roots].some(root => inside(root, real))) return real;
     if (asset && [...this.files].some(f => inside(path.dirname(f), real))) return real;
     throw new Error('请先通过“打开文件”或“打开文件夹”选择这个位置');
@@ -148,7 +156,10 @@ class FileStore {
       if (entry.isSymbolicLink() || entry.name.startsWith('.') || ['node_modules', '$RECYCLE.BIN', 'System Volume Information'].includes(entry.name)) continue;
       const full = path.join(directory, entry.name);
       if (entry.isDirectory()) entries.push({ path: full, name: entry.name, kind: 'folder' });
-      else if (/\.(pdf|epub|md|markdown)$/i.test(entry.name)) entries.push({ path: full, name: entry.name, relative: path.relative(root, full), kind: 'file', type: /\.pdf$/i.test(entry.name) ? 'pdf' : /\.epub$/i.test(entry.name) ? 'epub' : 'md' });
+      else if (/\.(pdf|epub|md|markdown)$/i.test(entry.name)) {
+        let snapshot; try { snapshot = await fs.lstat(full, { bigint: true }); } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+        if (snapshot.isFile() && !snapshot.isSymbolicLink()) entries.push({ path: full, name: entry.name, relative: path.relative(root, full), kind: 'file', type: /\.pdf$/i.test(entry.name) ? 'pdf' : /\.epub$/i.test(entry.name) ? 'epub' : 'md', moveVersion: fileMoveVersion(snapshot) });
+      }
     }
     entries.sort((a, b) => a.kind === b.kind ? a.name.localeCompare(b.name, 'zh-CN', { numeric: true }) : a.kind === 'folder' ? -1 : 1);
     const breadcrumbs = [{ name: path.basename(root) || root.replace(/[\\/]+$/, '') || root, path: root }];
@@ -161,26 +172,32 @@ class FileStore {
     return { directory, parent: directory === root ? null : path.dirname(directory), breadcrumbs, entries };
   }
   async createNoteAt(directory, requestedName, content = '') {
-    directory = await this.checked(directory);
-    if (!(await fs.stat(directory)).isDirectory()) throw new Error('当前地址不是文件夹');
-    let name = safeEntryName(requestedName);
-    if (!/\.(md|markdown)$/i.test(name)) name += '.md';
-    const file = path.join(directory, name);
-    await this.checked(file, { create: true });
-    try { await fs.writeFile(file, typeof content === 'string' ? content : '', { encoding: 'utf8', flag: 'wx', mode: 0o600 }); }
-    catch (error) { if (error.code === 'EEXIST') throw new Error('同名笔记已经存在'); throw error; }
-    const granted = await this.grantFile(file);
-    return this.readNote(granted);
+    return this.entryMutation(async () => {
+      directory = await this.checked(directory, { mutation: true });
+      if (!(await fs.stat(directory)).isDirectory()) throw new Error('当前地址不是文件夹');
+      let name = safeEntryName(requestedName);
+      if (!/\.(md|markdown)$/i.test(name)) name += '.md';
+      const file = path.join(directory, name);
+      await this.checked(file, { create: true });
+      try { await fs.writeFile(file, typeof content === 'string' ? content : '', { encoding: 'utf8', flag: 'wx', mode: 0o600 }); }
+      catch (error) { if (error.code === 'EEXIST') throw new Error('同名笔记已经存在'); throw error; }
+      const granted = await this.grantFile(file);
+      return this.readNote(granted);
+    });
   }
+
   async createFolderAt(directory, requestedName) {
-    directory = await this.checked(directory);
-    if (!(await fs.stat(directory)).isDirectory()) throw new Error('当前地址不是文件夹');
-    const folder = path.join(directory, safeEntryName(requestedName));
-    await this.checked(folder, { create: true });
-    try { await fs.mkdir(folder); }
-    catch (error) { if (error.code === 'EEXIST') throw new Error('同名文件或文件夹已经存在'); throw error; }
-    return { path: await fs.realpath(folder), name: path.basename(folder), kind: 'folder' };
+    return this.entryMutation(async () => {
+      directory = await this.checked(directory, { mutation: true });
+      if (!(await fs.stat(directory)).isDirectory()) throw new Error('当前地址不是文件夹');
+      const folder = path.join(directory, safeEntryName(requestedName));
+      await this.checked(folder, { create: true });
+      try { await fs.mkdir(folder); }
+      catch (error) { if (error.code === 'EEXIST') throw new Error('同名文件或文件夹已经存在'); throw error; }
+      return { path: await fs.realpath(folder), name: path.basename(folder), kind: 'folder' };
+    });
   }
+
   async recoveryMigrations(source, target, isDirectory) {
     const directories = [];
     if (!isDirectory) directories.push(path.join(path.dirname(source), '.reader', 'recovery'));
@@ -225,66 +242,71 @@ class FileStore {
   }
   writeRecoveryRecord(file, data) { return atomicWrite(file, data); }
   async renameEntry(source, requestedName) {
-    source = await this.checked(source);
-    const stat = await fs.stat(source);
-    let name = safeEntryName(requestedName);
-    if (stat.isFile()) {
-      const oldExtension = path.extname(source);
-      const newExtension = path.extname(name);
-      if (!newExtension) name += oldExtension;
-      else if (newExtension.toLocaleLowerCase() !== oldExtension.toLocaleLowerCase()) throw new Error('重命名时不能更改文件类型');
-    } else if (!stat.isDirectory()) throw new Error('只能重命名文件或文件夹');
-    const target = path.join(path.dirname(source), name);
-    if (target === source) {
-      const real = await fs.realpath(source);
-      if (stat.isDirectory()) return { path: real, name: path.basename(real), kind: 'folder' };
-      return { path: real, name: path.basename(real), relative: real, kind: 'file', type: /\.pdf$/i.test(real) ? 'pdf' : /\.epub$/i.test(real) ? 'epub' : 'md' };
-    }
-    let sameIdentity = false;
-    try {
-      const existing = await fs.stat(target);
-      const sameEntity = stat.ino && existing.ino ? stat.dev === existing.dev && stat.ino === existing.ino
-        : await fs.realpath(target) === source;
-      sameIdentity = target.toLocaleLowerCase() === source.toLocaleLowerCase() && sameEntity;
-      if (!sameIdentity) throw new Error('同名文件或文件夹已经存在');
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-    }
-    const migrations = stat.isFile() && /\.(md|markdown)$/i.test(source)
-      ? await this.recoveryMigrations(source, target, false)
-      : stat.isDirectory() ? await this.recoveryMigrations(source, target, true) : [];
-    let moved = false;
-    const moveEntity = async (from, to) => {
-      if (sameIdentity && from !== to) {
-        const temporary = path.join(path.dirname(source), `.__zuoren_rename_${crypto.randomUUID()}`);
-        await fs.rename(from, temporary);
-        try { await fs.rename(temporary, to); } catch (error) { await fs.rename(temporary, from).catch(() => {}); throw error; }
-      } else await fs.rename(from, to);
-    };
-    await moveEntity(source, target); moved = true;
-    const committed = [];
-    try {
-      for (const item of migrations) {
-        const relative = path.relative(source, item.file);
-        const movedFile = stat.isDirectory() ? path.join(target, relative) : item.file;
-        committed.push({ file: movedFile, raw: item.raw });
-        await this.writeRecoveryRecord(movedFile, item.next);
+    return this.entryMutation(async () => {
+      source = await this.checked(source, { mutation: true });
+      const stat = await fs.stat(source);
+      let name = safeEntryName(requestedName);
+      if (stat.isFile()) {
+        const oldExtension = path.extname(source);
+        const newExtension = path.extname(name);
+        if (!newExtension) name += oldExtension;
+        else if (newExtension.toLocaleLowerCase() !== oldExtension.toLocaleLowerCase()) throw new Error('重命名时不能更改文件类型');
+      } else if (!stat.isDirectory()) throw new Error('只能重命名文件或文件夹');
+      const target = path.join(path.dirname(source), name);
+      await this.checked(target, { create: true, mutation: true });
+      if (target === source) {
+        const real = await fs.realpath(source);
+        if (stat.isDirectory()) return { path: real, name: path.basename(real), kind: 'folder' };
+        return { path: real, name: path.basename(real), relative: real, kind: 'file', type: /\.pdf$/i.test(real) ? 'pdf' : /\.epub$/i.test(real) ? 'epub' : 'md' };
       }
-    } catch (error) {
-      const rollbackErrors = [];
-      for (const item of committed.reverse()) try { await this.writeRecoveryRecord(item.file, item.raw); } catch (rollbackError) { rollbackErrors.push(rollbackError); }
-      if (moved) try { await moveEntity(target, source); } catch (rollbackError) { rollbackErrors.push(rollbackError); }
-      if (rollbackErrors.length) throw new Error(`恢复稿路径迁移失败且回滚未完全成功：${error.message}；${rollbackErrors.map(item => item.message).join('；')}`);
-      throw new Error(`恢复稿路径迁移失败，文件名已回滚：${error.message}`);
-    }
-    const remapSet = values => new Set([...values].map(item => inside(source, item) ? path.join(target, path.relative(source, item)) : item));
-    this.files = remapSet(this.files);
-    this.roots = remapSet(this.roots);
-    const real = await fs.realpath(target);
-    if (stat.isDirectory()) return { path: real, name: path.basename(real), kind: 'folder' };
-    const type = /\.pdf$/i.test(real) ? 'pdf' : /\.epub$/i.test(real) ? 'epub' : 'md';
-    return { path: real, name: path.basename(real), relative: real, kind: 'file', type };
+      let sameIdentity = false;
+      try {
+        const existing = await fs.stat(target);
+        const sameEntity = stat.ino && existing.ino ? stat.dev === existing.dev && stat.ino === existing.ino
+          : await fs.realpath(target) === source;
+        sameIdentity = target.toLocaleLowerCase() === source.toLocaleLowerCase() && sameEntity;
+        if (!sameIdentity) throw new Error('同名文件或文件夹已经存在');
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+      const migrations = stat.isFile() && /\.(md|markdown)$/i.test(source)
+        ? await this.recoveryMigrations(source, target, false)
+        : stat.isDirectory() ? await this.recoveryMigrations(source, target, true) : [];
+      let moved = false;
+      const moveEntity = async (from, to) => {
+        if (sameIdentity && from !== to) {
+          const temporary = path.join(path.dirname(source), `.__zuoren_rename_${crypto.randomUUID()}`);
+          await fs.rename(from, temporary);
+          try { await fs.rename(temporary, to); } catch (error) { await fs.rename(temporary, from).catch(() => {}); throw error; }
+        } else await fs.rename(from, to);
+      };
+      await moveEntity(source, target); moved = true;
+      const committed = [];
+      try {
+        for (const item of migrations) {
+          const relative = path.relative(source, item.file);
+          const movedFile = stat.isDirectory() ? path.join(target, relative) : item.file;
+          committed.push({ file: movedFile, raw: item.raw });
+          await this.writeRecoveryRecord(movedFile, item.next);
+        }
+      } catch (error) {
+        const rollbackErrors = [];
+        for (const item of committed.reverse()) try { await this.writeRecoveryRecord(item.file, item.raw); } catch (rollbackError) { rollbackErrors.push(rollbackError); }
+        if (moved) try { await moveEntity(target, source); } catch (rollbackError) { rollbackErrors.push(rollbackError); }
+        if (rollbackErrors.length) throw new Error(`恢复稿路径迁移失败且回滚未完全成功：${error.message}；${rollbackErrors.map(item => item.message).join('；')}`);
+        throw new Error(`恢复稿路径迁移失败，文件名已回滚：${error.message}`);
+      }
+      const remapSet = values => new Set([...values].map(item => inside(source, item) ? path.join(target, path.relative(source, item)) : item));
+      this.files = remapSet(this.files);
+      this.roots = remapSet(this.roots);
+      this.rootIdentities = new Map([...this.rootIdentities].map(([key, value]) => [inside(source, key) ? path.join(target, path.relative(source, key)) : key, value]));
+      const real = await fs.realpath(target);
+      if (stat.isDirectory()) return { path: real, name: path.basename(real), kind: 'folder' };
+      const type = /\.pdf$/i.test(real) ? 'pdf' : /\.epub$/i.test(real) ? 'epub' : 'md';
+      return { path: real, name: path.basename(real), relative: real, kind: 'file', type };
+    });
   }
+
   forgetEntry(entry) {
     this.files = new Set([...this.files].filter(file => !inside(entry, file)));
     this.roots = new Set([...this.roots].filter(root => !inside(entry, root)));
@@ -295,11 +317,21 @@ class FileStore {
     const stat = await fs.stat(file);
     if (stat.size > 20 * 1024 * 1024) throw new Error('这份 Markdown 超过 20 MB，请拆分后打开');
     const buffer = await fs.readFile(file);
+    // Reject a read that crossed an in-place write or atomic replacement.
+    // Keep the caller's existing document and retry on a later poll/F5.
+    const after = await fs.stat(file);
+    if (await this.checked(file) !== file || [stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(':') !==
+        [after.dev, after.ino, after.size, after.mtimeMs, after.ctimeMs].join(':') || buffer.length !== after.size)
+      throw new Error('文件正在被其他程序修改，请稍后重试');
+    if (buffer.length > 20 * 1024 * 1024) throw new Error('这份 Markdown 超过 20 MB，请拆分后打开');
     if (buffer[0] === 0xff && buffer[1] === 0xfe || buffer[0] === 0xfe && buffer[1] === 0xff) throw new Error('请先将 Markdown 转存为 UTF-8 编码');
     const hasBom = buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf;
     let content;
     try { content = new TextDecoder('utf-8', { fatal: true }).decode(buffer); } catch { throw new Error('这份文件不是 UTF-8 编码，请先在原编辑器中转换编码'); }
     return { path: file, content, hash: digest(buffer), bom: hasBom, eol: content.includes('\r\n') ? '\r\n' : '\n' };
+  }
+  entryMutation(job) {
+    const task = this.entryQueue.catch(() => {}).then(job); this.entryQueue = task; return task;
   }
   queueKey(file) {
     // Windows paths are case-insensitive.  Without a canonical queue key,
@@ -318,6 +350,7 @@ class FileStore {
     file = await this.checked(file);
     if (!/\.(md|markdown)$/i.test(file) || typeof content !== 'string') throw new Error('无效的笔记');
     return this.serialized(file, async () => {
+      await this.checked(file, { mutation: true });
       const old = await fs.readFile(file);
       if (digest(old) !== hash) return { conflict: true, ...(await this.readNote(file)) };
       const normalized = content.replace(/\r\n/g, '\n').replace(/\n/g, eol === '\r\n' ? '\r\n' : '\n');
@@ -366,6 +399,7 @@ class FileStore {
     const { recoveryId, paneHint } = input;
     const sourcePath = await this.checked(input.sourcePath);
     return this.serialized(sourcePath, async () => {
+      await this.checked(sourcePath, { mutation: true });
       const { file, target } = await this.recoveryLocation(sourcePath, recoveryId, { create: true });
       let previous = null;
       try {
@@ -393,7 +427,10 @@ class FileStore {
     const location = await this.recoveryLocation(file, recoveryId);
     if (location.missing) return null;
     let raw;
+    await this.checked(location.target, { create: true, asset: true });
     try { raw = await fs.readFile(location.target, 'utf8'); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+    await this.checked(file);
+    await this.checked(location.target, { asset: true });
     let recovery;
     try { recovery = JSON.parse(raw); } catch { return { corrupt: true, recoveryId, sourcePath: location.file }; }
     if (!validRecovery(recovery, recoveryId, location.file)) return { corrupt: true, recoveryId, sourcePath: location.file };
@@ -402,6 +439,7 @@ class FileStore {
   async checkRecovery(file, recoveryId) {
     file = await this.checked(file);
     return this.serialized(file, async () => {
+      await this.checked(file, { mutation: true });
       const recovery = await this.readRecovery(file, recoveryId);
       if (!recovery) return { status: 'none' };
       if (recovery.corrupt) return { status: 'corrupt' };
@@ -419,6 +457,7 @@ class FileStore {
   async deleteRecoveryIfHash(file, recoveryId, draftHash) {
     file = await this.checked(file);
     return this.serialized(file, async () => {
+      await this.checked(file, { mutation: true });
       const recovery = await this.readRecovery(file, recoveryId);
       if (!recovery || recovery.corrupt || recovery.draftHash !== draftHash) return false;
       const { target } = await this.recoveryLocation(file, recoveryId);
@@ -437,9 +476,12 @@ class FileStore {
       if (inside(path.dirname(file), await fs.realpath(dir))) {
         const p = path.join(dir, `${id}.json`);
         if (!inside(dir, await fs.realpath(p))) throw new Error('标记文件路径异常');
+        await this.checked(p, { asset: true });
         meta = normalizePdfMeta(JSON.parse(await fs.readFile(p, 'utf8')), id);
+        await this.checked(p, { asset: true });
       }
     } catch (e) { if (e.code !== 'ENOENT') throw new Error('PDF 标记文件无法读取，已保留原文件：' + e.message); }
+    await this.checked(file);
     return { data: new Uint8Array(data), meta, path: file };
   }
   async savePdf(file, meta) {
@@ -447,10 +489,12 @@ class FileStore {
     file = await this.checked(file);
     if (!/\.pdf$/i.test(file)) throw new Error('只能为 PDF 保存标记');
     return this.serialized(file, async () => {
+      await this.checked(file, { mutation: true });
       const currentId = await this.contentIdentity(file);
       if (currentId !== normalized.id) throw new Error('PDF 内容已变化，请重新打开后再保存标记');
       const dir = await this.auxiliary(file);
       const target = path.join(dir, normalized.id + '.json');
+      await this.checked(target, { create: true, asset: true, mutation: true });
       try { if (!inside(dir, await fs.realpath(target))) throw new Error('标记文件指向资料目录以外'); } catch(e) { if(e.code !== 'ENOENT') throw e; }
       try {
         // The sidecar may have changed after opening (another app or version).
@@ -473,12 +517,15 @@ class FileStore {
       if (inside(path.dirname(file), await fs.realpath(dir))) {
         const target = path.join(dir, `${id}.epub.json`);
         if (!inside(dir, await fs.realpath(target))) throw new Error('阅读进度文件路径异常');
+        await this.checked(target, { asset: true });
         const saved = JSON.parse(await fs.readFile(target, 'utf8'));
+        await this.checked(target, { asset: true });
         const normalized = normalizeEpubMeta(saved, id);
         meta = normalized.meta;
         warnings = normalized.warnings;
       }
     } catch (error) { if (error.code !== 'ENOENT') throw new Error('EPUB 阅读进度无法读取，已保留原文件：' + error.message); }
+    await this.checked(file);
     return { data: new Uint8Array(data), meta, warnings, path: file };
   }
   async saveEpub(file, meta) {
@@ -486,10 +533,12 @@ class FileStore {
     file = await this.checked(file);
     if (!/\.epub$/i.test(file)) throw new Error('只能为 EPUB 保存阅读进度');
     return this.serialized(file, async () => {
+      await this.checked(file, { mutation: true });
       const currentId = await this.contentIdentity(file);
       if (currentId !== normalized.id) throw new Error('EPUB 内容已变化，请重新打开后继续阅读');
       const dir = await this.auxiliary(file);
       const target = path.join(dir, `${normalized.id}.epub.json`);
+      await this.checked(target, { create: true, asset: true, mutation: true });
       try { if (!inside(dir, await fs.realpath(target))) throw new Error('阅读进度文件指向资料目录以外'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
       let preserved = [];
       if (await fs.access(target).then(() => true, error => error.code === 'ENOENT' ? false : Promise.reject(error))) {

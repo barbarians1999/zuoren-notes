@@ -127,9 +127,75 @@ test('motion tokens accept seconds and milliseconds and reject unusable duration
   }
 });
 
-test('decorative control lift is restricted to enabled controls', () => {
-  const css = fs.readFileSync(path.join(__dirname, '../src/styles.css'), 'utf8');
-  const liftRules = css.split('\n').filter(line => line.startsWith('.app[data-motion="full"]') && line.includes('transform: translateY('));
-  assert.ok(liftRules.length > 0);
-  for (const rule of liftRules) assert.match(rule, /:not\(:disabled\):(hover|active) >/, rule);
+test('frequent controls stay still on hover and use only a brief enabled press response', () => {
+  const src = path.join(__dirname, '../src');
+  const collectCss = directory => fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+    const file = path.join(directory, entry.name);
+    return entry.isDirectory() ? collectCss(file) : entry.isFile() && file.endsWith('.css') ? [file] : [];
+  });
+  const css = collectCss(src).map(file => fs.readFileSync(file, 'utf8')).join('\n');
+  const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/gs)].map(([, selector, declarations]) => ({ selector, declarations }));
+  const hoverMoves = rules.filter(rule => /:hover\b/.test(rule.selector) && /transform\s*:\s*translateY\(\s*-1px\s*\)/.test(rule.declarations));
+  assert.deepEqual(hoverMoves, [], 'hover feedback changes color or surface without shifting controls');
+  const verticalPresses = rules.filter(rule => /:active/.test(rule.selector) && /transform\s*:\s*translateY/.test(rule.declarations));
+  assert.deepEqual(verticalPresses, [], 'controls do not bounce vertically');
+  const pressMoves = rules.filter(rule => /transform\s*:\s*scale\(1\.025\)/.test(rule.declarations));
+  assert.ok(pressMoves.length > 0, 'direct press feedback remains available');
+  for (const rule of pressMoves) assert.match(rule.selector, /:not\(:disabled\):active/, rule.selector);
+});
+
+test('settings controls share compact chrome corners and context menus expose a clear focus ring', () => {
+  const styles = fs.readFileSync(path.join(__dirname, '../src/styles.css'), 'utf8');
+  const chrome = fs.readFileSync(path.join(__dirname, '../src/ui/chrome.css'), 'utf8');
+  assert.match(styles, /\.font-size-control button[^\n]*border-radius: var\(--control-radius\)/);
+  assert.match(styles, /\.note-font-control select[^\n]*border-radius: var\(--control-radius\)/);
+  assert.match(chrome, /\.settings-popover \.settings-row, \.app \.settings-popover \.theme-options button \{ border-radius: var\(--control-radius\); \}/);
+  assert.match(chrome, /\.app \.file-context-menu button:focus-visible \{[^}]*outline: 2px solid var\(--accent\)/s);
+});
+
+function productionFunction(file, name) {
+  const source = fs.readFileSync(path.join(__dirname, '../src', file), 'utf8');
+  const marker = source.includes(`async function ${name}(`) ? `async function ${name}(` : `function ${name}(`;
+  const start = source.indexOf(marker); assert.ok(start >= 0, marker);
+  let end = source.indexOf('{', start) + 1, depth = 1;
+  for (; end < source.length && depth; end++) {
+    if (source[end] === '{') depth++;
+    if (source[end] === '}') depth--;
+  }
+  assert.equal(depth, 0, 'production callback has a complete body');
+  return stripTypeScriptTypes(source.slice(start, end));
+}
+
+test('a late file move preserves unrelated entries from the newly selected root', () => {
+  const operations = require('../src/fileOperations.cjs');
+  const other = Object.freeze({ path: '/root-B/other.md', name: 'other.md', relative: 'other.md', moveVersion: 'new-root-version' });
+  let files = [other, { path: '/root-A/source.md', name: 'source.md', relative: 'source.md' }];
+  const remap = vm.runInNewContext(`(${productionFunction('main.tsx', 'remapWorkspacePath')})`, {
+    root: '/root-A', ...operations,
+    sessionRecovery: { current: { remap(_old, _next, apply) { apply(); } } }, workspace: { remap() {} }, readerSession: { remapPath() {} },
+    setFiles: update => { files = update(files); }, setDirectory: update => update(null), setScrollMemory: update => update([]),
+  });
+  remap('/root-A/source.md', '/root-A/destination/source.md');
+  assert.equal(files[0], other, 'an unaffected entry keeps its identity and all metadata');
+  assert.equal(files[0].relative, 'other.md');
+  assert.equal(files[1].path, '/root-A/destination/source.md');
+  assert.equal(files[1].relative, 'destination/source.md');
+});
+
+test('a late old-root move names its paths without promising an unavailable undo', async () => {
+  const messages = [], undo = [], received = [];
+  const current = { current: { root: '/root-B', message: value => messages.push(value), reload: async () => {} } };
+  const accept = vm.runInNewContext(`(${productionFunction('workspace/fileMoveUi.tsx', 'accept')})`, {
+    current, setIssue() {}, setProposal() {}, setUndo: value => undo.push(value), setReceived: value => received.push(value),
+    sameOrDescendantPath: require('../src/fileOperations.cjs').sameOrDescendantPath,
+    parentPath: value => value.replace(/[\\/][^\\/]*$/, ''),
+  });
+  const outcome = { status: 'moved', result: { oldPath: '/root-A/source.md', entry: { path: '/root-A/destination/source.md', name: 'source.md' }, undoToken: 'receipt', warning: '附件仍在原位置。' } };
+  assert.equal(await accept(outcome, '/root-A'), true);
+  assert.equal(undo.length, 0); assert.equal(received.length, 0);
+  assert.ok(messages[0].includes(outcome.result.oldPath)); assert.ok(messages[0].includes(outcome.result.entry.path));
+  assert.match(messages[0], /当前资料目录已切换/); assert.doesNotMatch(messages[0], /可撤销/); assert.match(messages[0], /附件仍在原位置/);
+  current.current.root = '/root-A'; delete outcome.result.warning;
+  assert.equal(await accept(outcome, '/root-A'), true);
+  assert.equal(undo.length, 1); assert.equal(received.length, 1); assert.match(messages.at(-1), /可撤销/);
 });

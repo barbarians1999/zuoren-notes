@@ -14,6 +14,7 @@ import { tableNextCell, tablePreviousCell } from './markdownTableNavigation';
 import { keyHabitsEnter, keyHabitsNonemptyListBackspace, keyHabitsShiftEnter, keyHabitsTab } from './markdownKeyHabits';
 import { markdownTextSelection } from './markdownSelection';
 import { attachMarkdownMotion, detachMarkdownMotion, updateMarkdownMotion } from './markdownMotion';
+import { sourceOutlineScrollMotion } from './outlineScrollMotion';
 import { continueMarkdown, exitEmptyBlockquote, exitEmptyIndent, exitEmptyListItem, formatSourceSelection } from './markdownCommands';
 import { undoNoteView, redoNoteView, type NoteDocument, type NoteViewState } from '../workspace/noteDocument';
 
@@ -22,11 +23,10 @@ function withoutViewHistory(extension: Extension): Extension {
   return extension === historyField ? [] : Array.isArray(extension) ? extension.map(withoutViewHistory) : extension;
 }
 const documentViewSetup = withoutViewHistory(basicSetup);
-// The default code highlight style underlines headings. Override its heading
-// rule at the syntax source (which can wrap our decorations), retaining links,
-// strike and code colors instead of attempting descendant-only CSS resets.
+// Heading appearance belongs to live preview, which can defer an ambiguous
+// Setext underline while the user is starting a list.
 const proseHighlighting = syntaxHighlighting(HighlightStyle.define(defaultHighlightStyle.specs.map(spec =>
-  spec.textDecoration === 'underline' && spec.fontWeight === 'bold' ? { ...spec, textDecoration: 'none' } : spec
+  spec.textDecoration === 'underline' && spec.fontWeight === 'bold' ? { ...spec, textDecoration: 'none', fontWeight: 'inherit' } : spec
 )));
 
 export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, onMessage, sharedDocument, tab }: { notePath: string; onView: (view: EditorView | null) => void; onSelectionChange: (selection: { from: number; to: number; left: number; top: number; width: number; height: number } | null) => void; onMessage: (text: string) => void; sharedDocument: NoteDocument; tab: NoteViewState }) {
@@ -97,7 +97,7 @@ export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, onMe
           { key: 'Mod-Shift-z', run: redoNoteView, preventDefault: true }, { key: 'Mod-z', run: undoNoteView }, { key: 'Mod-y', run: redoNoteView }])),
         keymap.of([indentWithTab]),
         Prec.highest(keymap.of([{ key: 'Mod-b', run: view => formatSourceSelection(view, 'bold') }, { key: 'Mod-i', run: view => formatSourceSelection(view, 'italic') }, { key: 'Mod-Shift-x', run: view => formatSourceSelection(view, 'strike') }])),
-        EditorView.lineWrapping,
+        EditorView.lineWrapping, sourceOutlineScrollMotion,
         EditorView.updateListener.of(update => {
           updateMarkdownMotion(update);
           if (update.geometryChanged || update.docChanged || update.selectionSet) measureListSpace(update.view);
@@ -155,7 +155,11 @@ export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, onMe
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
+    // setState rebuilds CM plugins without notifying the update listener.
+    // Remove the previous document's visual effects before replacing state.
+    detachMarkdownMotion(view);
     view.setState(EditorState.create({ doc: sharedDocument.state.doc, selection: tab.selection, extensions: extensionsRef.current }));
+    attachMarkdownMotion(view);
     return sharedDocument.attach(view, tab);
   }, [sharedDocument, tab]);
   useEffect(() => {

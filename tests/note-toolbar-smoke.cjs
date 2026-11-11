@@ -158,6 +158,21 @@ test('single-row chrome routes to the focused view and stays usable across width
     assert.equal(await left.locator('.find-bar').count(), 0);
     await right.getByRole('button', { name: '关闭查找', exact: true }).click();
   });
+  await t.test('two open notes hide in reading mode without a PDF and return intact in note mode', async () => {
+    const layout = name => page.locator('.layout-tabs').getByRole('button', { name, exact: true });
+    const groups = ['primary', 'secondary'].map(group => page.locator(`[data-note-group="${group}"]`));
+    const before = await Promise.all(groups.map(group => group.locator('.cm-content').innerText()));
+    await layout('阅读').click();
+    await page.waitForFunction(() => document.querySelector('.app')?.dataset.layout === 'read');
+    assert.equal(await page.locator('.note-workspace-bar').evaluate(bar => getComputedStyle(bar).display), 'none', 'note controls are hidden when reading without an active reader');
+    assert.equal(await page.locator('.note-group:visible').count(), 0);
+    await layout('笔记').click();
+    await page.waitForFunction(() => document.querySelector('.panes.note.dual-notes') && document.querySelectorAll('.note-group:not([style*="display: none"])').length === 2);
+    assert.equal(await page.locator('.note-workspace-bar').isVisible(), true);
+    assert.deepEqual(await Promise.all(groups.map(group => group.locator('.cm-content').innerText())), before);
+    await groups[1].locator('.cm-content').focus();
+    assert.equal(await groups[1].locator('.cm-content').evaluate(editor => editor === document.activeElement), true, 'the restored secondary note can receive keyboard focus');
+  });
   await t.test('save retry and direct outline toggle preserve focus, data and editor history', async () => {
     await application.evaluate(() => {
       const { createRequire } = process.mainModule.require('node:module');

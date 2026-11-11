@@ -20,6 +20,13 @@ const api = {
   createNoteAt: input => invoke('create-note-at', input),
   createFolderAt: input => invoke('create-folder-at', input),
   renameEntry: input => invoke('rename-entry', input),
+  moveFile: input => invoke('move-file', input),
+  fileMoveCapability: () => invoke('file-move-capability'),
+  undoFileMove: input => invoke('undo-file-move', input),
+  fileMoveStatus: operationId => invoke('file-move-status', operationId),
+  pendingFileMove: () => invoke('pending-file-move'),
+  finalizeFileMove: operationId => invoke('finalize-file-move', operationId),
+  recoverFileMove: operationId => invoke('recover-file-move', operationId),
   trashEntry: file => invoke('trash-entry', file),
   createNote: input => invoke('create-note', input),
   saveAs: input => invoke('save-as', input),
@@ -66,6 +73,11 @@ const api = {
     const wrapped = (_event, state) => listener(state);
     ipcRenderer.on('window-state', wrapped);
     return () => ipcRenderer.removeListener('window-state', wrapped);
+  },
+  onRefreshNote: listener => {
+    const wrapped = () => listener();
+    ipcRenderer.on('refresh-note-request', wrapped);
+    return () => ipcRenderer.removeListener('refresh-note-request', wrapped);
   },
   confirmClose: () => ipcRenderer.send('confirm-close'),
 };

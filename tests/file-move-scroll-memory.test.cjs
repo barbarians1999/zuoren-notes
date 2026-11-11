@@ -1,0 +1,20 @@
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+const vm=require('node:vm');
+const {stripTypeScriptTypes}=require('node:module');
+const {MutationBarrier}=require('../src/fileOperations.cjs');
+const {upsertScrollMemory}=require('../src/sessionState.cjs');
+test('late scroll callbacks cannot resurrect a moved or transaction-protected source in session memory',()=>{
+ const main=fs.readFileSync(path.join(__dirname,'../src/main.tsx'),'utf8');
+ const start=main.indexOf('  const rememberScroll = useCallback('),end=main.indexOf('\n\n  const saveSessionNow',start);assert.ok(start>=0&&end>start);
+ const barrier=new MutationBarrier();let entries=[];
+ const context=vm.createContext({useCallback:fn=>fn,mutationBarrier:{current:barrier},setScrollMemory:fn=>{entries=fn(entries);},upsertScrollMemory});
+ vm.runInContext(stripTypeScriptTypes(main.slice(start,end))+'\nglobalThis.rememberScroll=rememberScroll;',context);
+ const old='C:\\notes\\child\\owned.md',current='C:\\notes\\owned.md';
+ barrier.block(old);context.rememberScroll({pane:'primary',path:old,mode:'edit',scrollTop:42,ratio:.2});assert.equal(entries.length,0);
+ context.rememberScroll({pane:'primary',path:current,mode:'edit',scrollTop:42,ratio:.2});assert.equal(entries.length,1);assert.equal(entries[0].path,current);
+ barrier.pin(current);context.rememberScroll({pane:'primary',path:current,mode:'edit',scrollTop:80,ratio:.4});assert.equal(entries[0].scrollTop,42);
+ barrier.unpin(current);context.rememberScroll({pane:'primary',path:current,mode:'edit',scrollTop:80,ratio:.4});assert.equal(entries[0].scrollTop,80);
+});

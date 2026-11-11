@@ -11,6 +11,57 @@ export const motionNumber = (style: CSSStyleDeclaration, name: string, fallback:
 };
 export const motionText = (style: CSSStyleDeclaration, name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback;
 
+// Decorative targets only: callers keep button/row hit boxes and editable text still.
+export function pulseControl(node: HTMLElement, kind: 'control' | 'task' = 'control', from?: string) {
+  const app = node.closest<HTMLElement>('.app'), win = node.ownerDocument.defaultView;
+  if (!node.isConnected || app?.dataset.motion === 'reduced' || win?.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return () => {};
+  let animation: Animation;
+  try {
+    const style = getComputedStyle(node);
+    animation = node.animate([
+      { transform: from || (style.transform === 'none' || !style.transform ? 'scale(1)' : style.transform) },
+      { transform: kind === 'task' ? 'scale(1.16)' : 'scale(1.06)', offset: .35 },
+      { transform: kind === 'task' ? 'scale(.97)' : 'scale(.995)', offset: .72 },
+      { transform: 'scale(1)' },
+    ], { duration: motionNumber(style, kind === 'task' ? '--motion-task' : '--motion-feedback', kind === 'task' ? 240 : 180),
+      easing: motionText(style, '--motion-ease-enter', 'cubic-bezier(.2,.75,.3,1)') });
+  } catch { return () => {}; } // Feedback never vetoes an accepted operation.
+  return () => animation.cancel();
+}
+
+export function useControlFeedback(host: RefObject<HTMLElement | null>, reduced: boolean, page: string) {
+  useLayoutEffect(() => {
+    const root = host.current;
+    if (!root || reduced) return;
+    const active = new Map<Element, () => void>();
+    const clear = () => { active.forEach(cancel => cancel()); active.clear(); };
+    const click = (event: MouseEvent) => {
+      if (!(event.target instanceof Element)) return;
+      const button = event.target.closest<HTMLButtonElement>('button');
+      if (!button || !root.contains(button) || button.disabled || button.closest('[inert]')) return;
+      // File labels and drag/drop targets stay fixed, including during selection.
+      const glyph = button.querySelector<HTMLElement>(':scope > svg, :scope > .folder-icon, :scope > .file-icon, :scope > .action-label, :scope > span:not(.file-name):not(.sr-only)');
+      if (!glyph || !glyph.isConnected) return;
+      const from = getComputedStyle(glyph).transform;
+      active.get(glyph)?.();
+      const cancel = pulseControl(glyph, 'control', from); active.set(glyph, cancel);
+      // Release references when this short animation ends; do not use a timer.
+      void Promise.allSettled(glyph.getAnimations().map(animation => animation.finished)).then(() => {
+        if (active.get(glyph) === cancel) active.delete(glyph);
+      });
+    };
+    root.addEventListener('click', click);
+    root.addEventListener('dragstart', clear, true);
+    root.addEventListener('pointercancel', clear, true);
+    root.ownerDocument.defaultView?.addEventListener('blur', clear);
+    const preference = root.ownerDocument.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)');
+    const preferenceChanged = () => { if (preference?.matches) clear(); };
+    preference?.addEventListener('change', preferenceChanged);
+    return () => { clear(); root.removeEventListener('click', click); root.removeEventListener('dragstart', clear, true);
+      root.removeEventListener('pointercancel', clear, true); root.ownerDocument.defaultView?.removeEventListener('blur', clear); preference?.removeEventListener('change', preferenceChanged); };
+  }, [host, reduced, page]);
+}
+
 // Layout changes are immediate; only their shared surface moves. A newer
 // request continues from the visible position, and accessibility changes stop
 // in-flight motion even when the selected layout has not changed.
@@ -52,8 +103,8 @@ export function usePanelMotion(
   reduced: boolean,
   direction: string,
   returnFocus: () => HTMLElement | null,
-  axis: 'x' | 'y' = 'x',
-  durationVariables: { enter?: string; exit?: string } = {},
+  axis: 'x' | 'y' | 'scale' | 'opacity' = 'x',
+  durationVariables: { enter?: string; exit?: string; initial?: boolean } = {},
 ) {
   const [present, setPresent] = useState(open);
   const ref = useRef<HTMLElement>(null);
@@ -84,21 +135,24 @@ export function usePanelMotion(
     }
     const enterEasing = motionText(style, '--motion-ease-enter', 'cubic-bezier(.2,.75,.3,1)');
     const exitEasing = motionText(style, '--motion-ease-exit', 'cubic-bezier(.4,0,.6,1)');
-    const translate = (offset: string) => `translate${axis.toUpperCase()}(${offset})`;
+    const translate = (offset: string) => axis === 'scale' ? `scale(${offset === '0' ? '1' : '.975'})` : axis === 'opacity' ? 'none' : `translate${axis.toUpperCase()}(${offset})`;
     const from = previous ? { transform: style.transform, opacity: style.opacity } :
       { transform: open ? translate(direction) : translate('0'), opacity: open ? 0 : 1 };
     previous?.cancel(); animation.current = null;
-    if (reduced || preferenceChanged || !initialized.current) {
+    if (reduced || preferenceChanged || !initialized.current && !durationVariables.initial) {
       initialized.current = true;
       if (!open) setPresent(false);
       return;
     }
-    const frames = open ? [from, { transform: translate('0'), opacity: 1 }] :
+    initialized.current = true;
+    const frames = open ? axis === 'scale' ? [from, { transform: 'scale(1.008)', opacity: 1, offset: .72 }, { transform: 'scale(1)', opacity: 1 }] : [from, { transform: translate('0'), opacity: 1 }] :
       [from, { opacity: from.opacity, offset: .35 }, { transform: translate(direction), opacity: 0 }];
     const duration = open
       ? motionNumber(style, durationVariables.enter || '--motion-panel', 200)
       : motionNumber(style, durationVariables.exit || '--motion-panel', 200);
-    const next = node.animate(frames, { duration, easing: open ? enterEasing : exitEasing, fill: 'both' });
+    let next: Animation;
+    try { next = node.animate(frames, { duration, easing: open ? enterEasing : exitEasing, fill: 'both' }); }
+    catch { if (!open) setPresent(false); return; }
     animation.current = next;
     next.finished.then(() => {
       if (animation.current !== next) return;
@@ -108,7 +162,7 @@ export function usePanelMotion(
         setPresent(false);
       } else { animation.current = null; next.cancel(); }
     }).catch(() => {});
-  }, [open, present, reduced, direction]);
+  }, [open, present, reduced, direction, axis, durationVariables.enter, durationVariables.exit, durationVariables.initial]);
   useLayoutEffect(() => () => { animation.current?.cancel(); }, []);
   return { present, ref };
 }

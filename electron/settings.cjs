@@ -14,10 +14,11 @@ class SettingsStore {
     this.queue = Promise.resolve();
   }
 
-  update(mutator) {
+  update(mutator, { read = this.read } = {}) {
+    if (typeof read !== 'function') return Promise.reject(new TypeError('SettingsStore reader requires a function'));
     if (typeof mutator !== 'function') return Promise.reject(new TypeError('SettingsStore update requires a mutator'));
     const operation = this.queue.catch(() => undefined).then(async () => {
-      const current = await this.read();
+      const current = await read();
       const next = await mutator(current);
       return this.write(next);
     });

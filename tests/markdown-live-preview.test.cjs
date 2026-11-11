@@ -63,6 +63,42 @@ test('heading body motion identity exists before first entry and survives repeat
   }
  }
 });
+
+test('an active single dash after a paragraph stays ordinary text while a list is being started', async () => {
+ for (const suffix of ['-', '- ', '-\t']) {
+  const text = '正文😀\n第二行\n' + suffix;
+  const active = await plan(text, { anchor: text.length });
+  assert.equal(active.state.doc.toString(), text);
+  assert.equal(active.result.some(item => item.spec.class?.split(/\s+/).includes('cm-md-heading')), false, suffix);
+  assert.equal(active.result.some(item => item.spec.attributes?.['data-md-heading-level']), false, suffix);
+  const inactive = await plan(text, { anchor: 0 });
+  assert.equal(inactive.result.some(item => item.spec.class?.split(/\s+/).includes('cm-md-heading')), true, 'completed Setext remains visible as a heading');
+ }
+ for (const suffix of ['--', '---', '=']) {
+  const text = '正文\n' + suffix;
+  const result = (await plan(text, { anchor: text.length })).result;
+  assert.equal(result.some(item => item.spec.class?.split(/\s+/).includes('cm-md-heading')), true, suffix);
+ }
+});
+
+test('moving into and out of a tentative dash updates heading presentation without changing text', async () => {
+ const { EditorState } = await import('@codemirror/state');
+ const { markdownSyntax } = await import('../src/editor/markdownLanguage.ts');
+ const { livePreview } = await import('../src/editor/markdownLivePreview.ts');
+ const text = '正文😀\n第二行\n- ';
+ let state = EditorState.create({ doc: text, selection: { anchor: text.length }, extensions: [markdownSyntax(), livePreview] });
+ const hasHeading = () => {
+  let found = false;
+  state.field(livePreview).between(0, text.length, (_from, _to, value) => { if (value.spec.class?.split(/\s+/).includes('cm-md-heading')) found = true; });
+  return found;
+ };
+ assert.equal(hasHeading(), false);
+ state = state.update({ selection: { anchor: 0 } }).state;
+ assert.equal(hasHeading(), true);
+ state = state.update({ selection: { anchor: text.length } }).state;
+ assert.equal(hasHeading(), false);
+ assert.equal(state.doc.toString(), text);
+});
 test('table becomes one block widget only while selection is outside it',async()=>{
  const text='cursor\n\n| A | B |\n| :--- | ---: |\n| x | y |';
  const inactive=await plan(text);assert.equal(inactive.result.filter(x=>x.spec.widget?.constructor.name==='TableWidget').length,1);
@@ -110,7 +146,8 @@ test('ordered list items can contain multi-line blockquotes in live preview', as
  assert.deepEqual(inactive.result.filter(x => x.source === '>' && !x.spec.class).map(x => x.source), ['>', '>'], 'quote syntax is hidden while the item is inactive');
 
  const active = await plan(text, { anchor: text.indexOf('first quoted line') });
- assert.equal(active.result.some(x => x.spec.widget?.constructor.name === 'MarkerWidget'), true, 'the list marker stays in live preview while editing item text');
+ assert.equal(active.result.filter(x => x.spec.class?.split(/\s+/).includes('cm-md-ordered-marker')).length, 1, 'the active ordered item displays its source marker once');
+ assert.equal(active.result.some(x => x.spec.widget?.constructor.name === 'MarkerWidget'), false, 'the active source marker has no competing widget');
  assert.equal(active.result.filter(x => x.spec.class === 'cm-md-quote').length, 2, 'live preview styling remains while the caret is inside the item');
  assert.equal(active.result.some(x => x.source === '>' && !x.spec.class), true, 'the quote marker is editable while the item is active');
 });
@@ -228,11 +265,37 @@ test('ordered marker source remains editable when the caret sits directly after 
  assert.equal(result.filter(item => item.spec.widget?.constructor.name === 'MarkerWidget').length, 0, 'the end caret must not be replaced with a preview widget');
 });
 
-for (const prefix of ['- ', '12. ']) test(`list prefix ${JSON.stringify(prefix)} becomes one marker at its separator-end caret`, async () => {
+test('active ordered-list text keeps its source marker in one presentation', async () => {
+ for (const text of ['1. ', '1. wo', '1. 我', '12) 中文']) {
+  const { result } = await plan(text, { anchor: text.length });
+  const prefixes = result.filter(item => item.spec.class?.split(/\s+/).includes('cm-md-ordered-marker'));
+  const widgets = result.filter(item => item.spec.widget?.constructor.name === 'MarkerWidget');
+  assert.equal(prefixes.length, 1, text);
+  assert.equal(prefixes[0].source, text.slice(0, text.indexOf(' ') >= 0 ? text.indexOf(' ') : text.length), 'the colored marker excludes the input separator');
+  assert.equal(widgets.length, 0, text);
+ }
+});
+
+test('ordered list number stays separate from each editable gap', async () => {
+ for (const text of ['1.  正文', '12.\t正文', '123)    正文']) {
+  const { result } = await plan(text, { anchor: text.length });
+  const marker = result.find(item => item.spec.class === 'cm-md-ordered-marker');
+  const gap = text.slice(marker?.to, text.search(/正文/));
+  assert.ok(marker, text);
+  assert.match(marker.source, /^\d+[.)]$/);
+  assert.match(gap, /^[\t ]+$/);
+  assert.equal(result.some(item => item.from < text.indexOf('正文') && item.to > marker.to && item.spec.class?.includes('cm-md-ordered-marker')), false);
+  assert.equal(result.some(item => item.spec.widget?.constructor.name === 'MarkerWidget'), false);
+ }
+});
+
+for (const prefix of ['- ', '12. ']) test(`list prefix ${JSON.stringify(prefix)} has one marker at its separator-end caret`, async () => {
  const text = prefix + '\nbody', caret = prefix.length;
  const { result } = await plan(text, { anchor: caret });
- assert.equal(result.some(item => item.spec.class === 'cm-md-list-prefix'), false, JSON.stringify(prefix));
- assert.equal(result.filter(item => item.spec.widget?.constructor.name === 'MarkerWidget').length, 1, JSON.stringify(prefix));
+ const sourceMarkers = result.filter(item => item.spec.class?.split(/\s+/).includes('cm-md-ordered-marker')).length;
+ const widgetMarkers = result.filter(item => item.spec.widget?.constructor.name === 'MarkerWidget').length;
+ assert.equal(sourceMarkers, prefix.startsWith('12') ? 1 : 0, JSON.stringify(prefix));
+ assert.equal(widgetMarkers, prefix.startsWith('12') ? 0 : 1, JSON.stringify(prefix));
 });
 
 test('moving from a list body to the prefix end refreshes the single rendered marker', async () => {
@@ -411,6 +474,37 @@ test('horizontal-rule selection updates agree with fresh preview at either sourc
    assert.equal(state.doc.toString(), source, 'revealing source never edits the document');
   }
  }
+});
+
+test('horizontal rule animates both disclosure directions without replaying inside its source', async () => {
+ const { EditorState } = await import('@codemirror/state');
+ const { markdownSyntax } = await import('../src/editor/markdownLanguage.ts');
+ const { livePreview, buildMarkdownLivePreview } = await import('../src/editor/markdownLivePreview.ts');
+ const source = 'before\n\n---\n\nafter', from = source.indexOf('---');
+ let state = EditorState.create({ doc: source, selection: { anchor: from + 1 }, extensions: [markdownSyntax(), livePreview] });
+ const animatedRule = decorations => {
+  let found = false;
+  decorations.between(0, source.length, (_from, _to, value) => {
+   if (value.spec.widget?.constructor.name === 'HorizontalRuleWidget' && value.spec.widget.animateEntry) found = true;
+  });
+  return found;
+ };
+ state = state.update({ selection: { anchor: 0 } }).state;
+ assert.equal(animatedRule(state.field(livePreview)), true, 'leaving source reveals the rendered rule with one bounded entrance');
+ assert.equal(animatedRule(buildMarkdownLivePreview(state)), false, 'a fresh initial render does not replay the entrance');
+ state = state.update({ selection: { anchor: source.length } }).state;
+ assert.equal(animatedRule(state.field(livePreview)), false, 'ordinary cursor movement does not animate other rules');
+ state = state.update({ selection: { anchor: from + 2 } }).state;
+ assert.equal(animatedRule(state.field(livePreview)), false, 'the editable source stays unobscured when focus enters it');
+ const sourceMotion = [];
+ state.field(livePreview).between(from, from + 3, (a, b, value) => {
+  if (value.spec.class?.includes('cm-md-horizontal-rule-source-enter')) sourceMotion.push({from:a,to:b});
+ });
+ assert.deepEqual(sourceMotion, [{from,to:from+3}], 'entering the rule source animates only its editable delimiter');
+ const beforeMove=state.field(livePreview);
+ state = state.update({ selection: { anchor: from + 1 } }).state;
+ assert.equal(state.field(livePreview),beforeMove,'moving within the same rule reuses its DOM without replaying');
+ assert.equal(state.doc.toString(), source, 'focus transitions never change Markdown');
 });
 
 test('blank list paragraphs and lazy task continuations predict the parsed text edge', async () => {

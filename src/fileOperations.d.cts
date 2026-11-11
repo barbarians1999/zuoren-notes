@@ -4,6 +4,9 @@ export function remapDescendantPath(candidate: string, previousRoot: string, nex
 export class MutationBarrier {
   constructor(ttlMs?: number);
   block(path: string, now?: number): void;
+  pin(path: string): void;
+  unpin(path: string): void;
   release(path: string, now?: number): void;
+  releaseExact(path: string): void;
   has(path: string, now?: number): boolean;
 }

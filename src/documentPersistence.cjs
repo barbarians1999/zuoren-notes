@@ -6,14 +6,25 @@ class DocumentPersistence {
   constructor() { this.pending = null; this.epoch = 0; this.disposed = false; }
   invalidate() { this.epoch++; }
   async poll({ snapshot, read, apply, blocked }) {
-    if (this.pending || this.disposed || blocked?.()) return;
+    if (this.pending || this.disposed || blocked?.()) return 'skipped';
     const before = snapshot(), epoch = this.epoch;
-    if (!before.note) return;
-    const disk = await read(before.note.path);
-    const after = snapshot();
-    if (this.disposed || this.pending || epoch !== this.epoch || blocked?.() ||
-        before.note !== after.note || before.text !== after.text || before.revision !== after.revision) return;
-    if (disk.hash !== before.note.hash) apply(disk, !sameNoteContent(after.text, before.note.content) && !sameNoteContent(after.text, disk.content));
+    if (!before.note) return 'skipped';
+    const current = () => {
+      const after = snapshot();
+      return !this.disposed && !this.pending && epoch === this.epoch && !blocked?.() &&
+        before.note === after.note && before.text === after.text && before.revision === after.revision;
+    };
+    let disk;
+    try { disk = await read(before.note.path); }
+    catch (error) { if (!current()) return 'stale'; throw error; }
+    if (!current()) return 'stale';
+    // A refresh must never adopt a different path (for example, a replaced
+    // symlink). Selecting a new file still goes through the normal open gate.
+    if (disk.path !== before.note.path) throw new Error('笔记路径已变化，请重新选择文件');
+    if (disk.hash === before.note.hash) return 'unchanged';
+    const conflict = !sameNoteContent(before.text, before.note.content) && !sameNoteContent(before.text, disk.content);
+    apply(disk, conflict);
+    return conflict ? 'conflict' : 'reloaded';
   }
   save(options) {
     if (this.pending) return this.pending;

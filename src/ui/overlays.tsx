@@ -76,7 +76,7 @@ export function ContextMenu({ open, x, y, children, onClose, returnFocus, label 
   const reducedMotion = useContext(ReducedMotionContext);
   const savedReturnFocus = useRef<HTMLElement | null>(returnFocus || null);
   if (open && returnFocus) savedReturnFocus.current = returnFocus;
-  const motion = usePanelMotion(open, reducedMotion, '4px', () => savedReturnFocus.current, 'y', { enter: '--motion-overlay', exit: '--motion-exit' });
+  const motion = usePanelMotion(open, reducedMotion, '.975', () => savedReturnFocus.current, 'scale', { enter: '--motion-overlay', exit: '--motion-exit' });
   const ref = motion.ref as RefObject<HTMLDivElement | null>;
   const restore = useOverlayFocus(open && motion.present, ref, { kind: 'menu', onDismiss: onClose, returnFocus: () => returnFocus || null });
   const previousChildren = useRef(children); if (open) previousChildren.current = children;
@@ -129,11 +129,18 @@ export function ToastMessage({ open, message, onDismiss }: { open: boolean; mess
   </div>;
 }
 
-export function DialogFrame({ children, labelledBy, describedBy, className = '', onCancel, busy = false, returnFocus }: {
+export function DialogFrame({ children, labelledBy, describedBy, className = '', onCancel, busy = false, returnFocus, open = true, exitImmediately = false }: {
   children: ReactNode; labelledBy: string; describedBy?: string; className?: string; onCancel?: () => void; busy?: boolean; returnFocus?: () => HTMLElement | null;
+  open?: boolean; exitImmediately?: boolean;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  useOverlayFocus(true, ref, { kind: 'modal', onDismiss: busy ? undefined : onCancel, returnFocus });
-  return <div className="modal-backdrop"><div ref={ref} className={'dialog ' + className} role="dialog" aria-modal="true"
-    aria-labelledby={labelledBy} aria-describedby={describedBy} aria-busy={busy} tabIndex={-1}>{children}</div></div>;
+  const reduced = useContext(ReducedMotionContext) || exitImmediately;
+  const options = { enter: '--motion-overlay', exit: '--motion-exit', initial: true };
+  const panel = usePanelMotion(open, reduced, '.975', returnFocus || (() => null), 'scale', options);
+  const backdrop = usePanelMotion(open, reduced, '0', () => null, 'opacity', options);
+  const ref = panel.ref as RefObject<HTMLDivElement | null>;
+  useOverlayFocus(open && panel.present, ref, { kind: 'modal', onDismiss: busy ? undefined : onCancel, returnFocus });
+  if (!panel.present) return null;
+  return <div ref={backdrop.ref as RefObject<HTMLDivElement | null>} className="modal-backdrop" aria-hidden={!open} data-state={open ? 'open' : 'closing'}>
+    <div ref={ref} className={'dialog ' + className} role="dialog" aria-modal={open || undefined}
+      aria-labelledby={labelledBy} aria-describedby={describedBy} aria-busy={busy} tabIndex={-1}>{children}</div></div>;
 }

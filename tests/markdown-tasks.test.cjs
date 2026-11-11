@@ -49,3 +49,16 @@ test('heading provenance preserves ATX/Setext containers and coexists with origi
     assert.equal(source[tasks[0].position], ' ', 'task identity still addresses the original source');
   }
 });
+
+test('preview keeps parser-confirmed empty nested list items instead of turning their parent into a heading', async () => {
+  const { markdownPreviewSource } = await load();
+  const { parseMarkdown } = await import('../src/editor/markdownParser.ts');
+  for (const source of ['- parent\n\t- ', '- parent\n  - ', '1. parent\n\t1. ', '- parent\n\t-', '- parent\r\n\t- \r\n']) {
+    const html = parseMarkdown(markdownPreviewSource(source, [], 'test'));
+    assert.equal((html.match(/<li>/g) || []).length, 2, source);
+    assert.doesNotMatch(html, /<h[1-6]>/, source);
+  }
+  for (const source of ['~~~\n- parent\n\t- \n~~~', 'A heading\n- ', '- parent\n\t- child']) {
+    assert.equal(markdownPreviewSource(source, [], 'test'), source, source);
+  }
+});

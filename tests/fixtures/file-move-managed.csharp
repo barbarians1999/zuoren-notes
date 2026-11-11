@@ -1,0 +1,226 @@
+// Managed-only platform/JSON fixture. Every File/Directory operation maps below
+// a freshly created TEMP root owned by this fixture. No PInvoke or user process.
+internal static class FixturePath {
+    internal static string GetFileName(string path) { return path.Substring(path.LastIndexOf('\\') + 1); }
+    internal static string GetDirectoryName(string path) { int at = path.LastIndexOf('\\'); return at < 0 ? "" : at == 2 && path[1] == ':' ? path.Substring(0, 3) : path.Substring(0, at); }
+    internal static bool IsPathRooted(string path) { return path.StartsWith("\\") || path.Length >= 2 && path[1] == ':'; }
+    internal static string Combine(string a, string b) { return b.Length == 0 ? a.TrimEnd('\\') : a.TrimEnd('\\') + "\\" + b; }
+    internal static string Combine(string a, string b, string c) { return Combine(Combine(a, b), c); }
+}
+internal static class FixtureJson {
+    private sealed class Reader {
+        private readonly string text; private int at;
+        internal Reader(string text) { this.text = text; }
+        private void Space() { while (at < text.Length && Char.IsWhiteSpace(text[at])) at++; }
+        private char Take() { if (at >= text.Length) throw new IOException("Bad fixture JSON"); return text[at++]; }
+        internal object Value() {
+            Space(); char c = Take();
+            if (c == '{') {
+                var value = new Dictionary<string, object>(); Space(); if (at < text.Length && text[at] == '}') { at++; return value; }
+                while (true) { Space(); if (Take() != '"') throw new IOException("Bad fixture JSON key"); var key = String(); Space(); if (Take() != ':') throw new IOException("Bad fixture JSON colon"); value[key] = Value(); Space(); c = Take(); if (c == '}') return value; if (c != ',') throw new IOException("Bad fixture JSON object"); }
+            }
+            if (c == '[') { var list = new List<object>(); Space(); if (at < text.Length && text[at] == ']') { at++; return list; } while (true) { list.Add(Value()); Space(); c = Take(); if (c == ']') return list; if (c != ',') throw new IOException("Bad fixture JSON array"); } }
+            if (c == '"') return String();
+            int start = at - 1; while (at < text.Length && ",]} \r\n\t".IndexOf(text[at]) < 0) at++;
+            var token = text.Substring(start, at - start); if (token == "null") return null; if (token == "true") return true; if (token == "false") return false;
+            int number; if (Int32.TryParse(token, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out number)) return number;
+            throw new IOException("Bad fixture JSON scalar");
+        }
+        private string String() { var value = new StringBuilder(); while (true) { char c = Take(); if (c == '"') return value.ToString(); if (c < 32) throw new IOException("Bad fixture JSON string"); if (c == '\\') { c = Take(); switch (c) { case '"': case '\\': case '/': break; case 'n': c = '\n'; break; case 'r': c = '\r'; break; case 't': c = '\t'; break; case 'b': c = '\b'; break; case 'f': c = '\f'; break; case 'u': var hex = text.Substring(at, 4); at += 4; c = (char)Int32.Parse(hex, System.Globalization.NumberStyles.HexNumber); break; default: throw new IOException("Bad fixture JSON escape"); } } value.Append(c); } }
+        internal object Complete() { var value = Value(); Space(); if (at != text.Length) throw new IOException("Trailing fixture JSON"); return value; }
+    }
+    internal static object Parse(string text) { return new Reader(text).Complete(); }
+    internal static object Convert(object value, Type type) {
+        if (value == null) return null;
+        if (type == typeof(object) || type.IsInstanceOfType(value)) return value;
+        if (type.IsArray) { var source = (List<object>)value; var array = Array.CreateInstance(type.GetElementType(), source.Count); for (int i = 0; i < source.Count; i++) array.SetValue(Convert(source[i], type.GetElementType()), i); return array; }
+        var dictionary = value as Dictionary<string, object>; if (dictionary == null) throw new IOException("Bad fixture field type");
+        var result = Activator.CreateInstance(type); foreach (var field in type.GetFields()) { object next; if (dictionary.TryGetValue(field.Name, out next)) field.SetValue(result, Convert(next, field.FieldType)); } return result;
+    }
+    internal static string Encode(object value) {
+        if (value == null) return "null"; if (value is string) { var b = new StringBuilder("\""); foreach (char c in (string)value) { switch (c) { case '"': b.Append("\\\""); break; case '\\': b.Append("\\\\"); break; case '\r': b.Append("\\r"); break; case '\n': b.Append("\\n"); break; case '\t': b.Append("\\t"); break; default: if (c < 32) b.Append("\\u" + ((int)c).ToString("x4")); else b.Append(c); break; } } return b.Append('"').ToString(); }
+        if (value is bool) return (bool)value ? "true" : "false"; if (value is int) return value.ToString();
+        var dictionary = value as IDictionary<string, object>; if (dictionary == null) { var enumerable = value as System.Collections.IEnumerable; if (enumerable != null) { var items = new List<string>(); foreach (var item in enumerable) items.Add(Encode(item)); return "[" + String.Join(",", items) + "]"; } dictionary = new Dictionary<string, object>(); foreach (var property in value.GetType().GetProperties()) dictionary.Add(property.Name, property.GetValue(value, null)); foreach (var field in value.GetType().GetFields()) dictionary.Add(field.Name, field.GetValue(value)); }
+        var entries = new List<string>(); foreach (var pair in dictionary) entries.Add(Encode(pair.Key) + ":" + Encode(pair.Value)); return "{" + String.Join(",", entries) + "}";
+    }
+}
+namespace System.Web.Script.Serialization {
+    public sealed class JavaScriptSerializer {
+        public int MaxJsonLength = Int32.MaxValue, RecursionLimit;
+        public T Deserialize<T>(string text) { if (text.Length > MaxJsonLength) throw new IOException("Fixture JSON bound"); return (T)FixtureJson.Convert(FixtureJson.Parse(text), typeof(T)); }
+        public string Serialize(object value) { if (Native.FailStdoutSerialize && FileMoveWorker.ResultStatus(value) == "moved") throw new IOException("fixture output serialization"); return FixtureJson.Encode(value); }
+    }
+}
+internal static class Native {
+    internal const uint Read = 0x00100081, ReadDelete = 0x00110081, ReadWriteDelete = 0x00110083, DirRead = 0x001000a0, ProbeDirectoryAccess = 0x001101a0;
+    internal const int NotFound = unchecked((int)0xc0000034), PathNotFound = unchecked((int)0xc000003a);
+    internal sealed class Info { internal uint Attributes, SizeHigh, SizeLow, Links = 1; internal string Identity; }
+    internal sealed class Entry { internal string Name, Identity; internal bool Directory; internal FileStream Stream; }
+    internal static readonly Dictionary<long, Entry> Open = new Dictionary<long, Entry>();
+    internal static readonly Dictionary<string, string> Identities = new Dictionary<string, string>();
+    internal static readonly List<string> Calls = new List<string>(), Events = new List<string>();
+    internal static string OwnedRoot, Mode, ReceiptName; internal static int NextIdentity, NextDirectoryHandle, ProbeCalls, BodyCalls, PublishCalls, UserCalls, StageCalls;
+    internal static uint DriveKind = 3;
+    internal static bool ProbeSupported, FailReceiptWrite, FailReceiptFlush, FailInvalidate, FailStdoutSerialize, FailStdoutWrite, FailStdoutFlush, ThrowDelete, FalseDelete, ThrowClose, FalseClose, ReceiptCloseFailure, UserCloseFailed, FailClaimWrite, FailClaimFlush;
+    internal static string Real(string name) { if (!name.StartsWith("C:\\", StringComparison.Ordinal)) throw new IOException("Fixture path escaped"); var relative = name.Substring(3).Replace('\\', System.IO.Path.DirectorySeparatorChar); var result = System.IO.Path.GetFullPath(System.IO.Path.Combine(OwnedRoot, relative)); if (!result.StartsWith(OwnedRoot + System.IO.Path.DirectorySeparatorChar, StringComparison.Ordinal)) throw new IOException("Fixture root escaped"); return result; }
+    internal static string Id(string name) { string value; if (!Identities.TryGetValue(name, out value)) { value = "9:" + (++NextIdentity); Identities.Add(name, value); } return value; }
+    internal static bool ReceiptLocked() { try { using (var test = new FileStream(Real(ReceiptName), FileMode.Open, FileAccess.Read, FileShare.None)) {} return false; } catch (IOException) { return true; } }
+    internal static void UserIo(string name) { if (name == "C:\\fixture" || name.StartsWith("C:\\fixture\\", StringComparison.Ordinal)) { UserCalls++; if (!ReceiptLocked()) throw new IOException("User I/O escaped its receipt lease"); } }
+    internal static void Leaf(string name) { if (name.Length == 0 || name.IndexOfAny(new[] {'\\','/',':'}) >= 0) throw new IOException("Fixture leaf invalid"); }
+    internal static int OpenRelative(IntPtr parent, string leaf, bool directory, bool create, uint access, uint share, out IntPtr handle) {
+        handle = IntPtr.Zero; var name = FixturePath.Combine(Open[parent.ToInt64()].Name, leaf); Leaf(leaf); UserIo(name);
+        if (directory) { if (create) System.IO.Directory.CreateDirectory(Real(name)); if (!System.IO.Directory.Exists(Real(name))) return NotFound; handle = new IntPtr(++NextDirectoryHandle); Open.Add(handle.ToInt64(), new Entry { Name = name, Identity = Id(name), Directory = true }); return 0; }
+        if (!create && !File.Exists(Real(name))) return NotFound;
+        try { var stream = new FileStream(Real(name), create ? FileMode.CreateNew : FileMode.Open, (access & 2) != 0 ? FileAccess.ReadWrite : FileAccess.Read, (FileShare)share); handle = stream.SafeFileHandle.DangerousGetHandle(); Open.Add(handle.ToInt64(), new Entry { Name = name, Identity = Id(name), Stream = stream }); if (leaf.StartsWith(".__zuoren_move_meta_")) StageCalls++; return 0; }
+        catch (IOException) { return unchecked((int)0xc0000043); }
+    }
+    internal static Info Information(IntPtr handle) { var entry = Open[handle.ToInt64()]; long size = entry.Directory ? 0 : entry.Stream.Length; return new Info { Attributes = entry.Directory ? 0x10u : 0u, Identity = entry.Identity, SizeHigh = (uint)(size >> 32), SizeLow = (uint)size }; }
+    internal static uint GetDriveTypeW(string root) { return DriveKind; }
+    internal static bool GetVolumeInformationByHandleW(IntPtr handle, StringBuilder name, uint a, out uint serial, out uint component, out uint flags, StringBuilder fs, uint size) { serial = 9; component = 255; flags = 0; fs.Append("NTFS"); return true; }
+    internal static bool Rename(IntPtr handle, IntPtr directory, string leaf) {
+        var file = Open[handle.ToInt64()]; var target = FixturePath.Combine(Open[directory.ToInt64()].Name, leaf); UserIo(file.Name); UserIo(target);
+        bool metadata = FixturePath.GetFileName(file.Name).StartsWith(".__zuoren_move_meta_");
+        if (metadata) { PublishCalls++; Events.Add("publish"); if (Mode == "publish-fail" || Mode == "second-publish-fail" && PublishCalls == 2) return false; }
+        else { BodyCalls++; Events.Add("body"); if (Mode == "body-false") return false; }
+        if (File.Exists(Real(target)) || System.IO.Directory.Exists(Real(target))) return false;
+        File.Move(Real(file.Name), Real(target)); Identities.Remove(file.Name); Identities[target] = file.Identity; file.Name = target;
+        if (metadata && Mode == "publish-throw-after-commit") throw new IOException("PRIVATE METADATA MUST NOT LEAK");
+        if (!metadata && Mode == "body-throw-after-commit") throw new IOException("PRIVATE BODY MUST NOT LEAK");
+        return true;
+    }
+    internal static bool DeleteOwned(IntPtr handle) { Calls.Add("D" + handle); if (ThrowDelete) throw new IOException("owned delete fault"); if (FalseDelete) return false; Entry entry; if (Open.TryGetValue(handle.ToInt64(), out entry)) { Events.Add("delete:" + entry.Name); if (entry.Directory) System.IO.Directory.Delete(Real(entry.Name)); else File.Delete(Real(entry.Name)); } return true; }
+    internal static bool CloseHandle(IntPtr handle) {
+        Calls.Add("C" + handle); if (handle.ToInt64() == 2 && ThrowClose) throw new IOException("owned close fault"); if (handle.ToInt64() == 2 && FalseClose) return false;
+        Entry entry; if (Open.TryGetValue(handle.ToInt64(), out entry)) {
+            if (entry.Name == ReceiptName && ReceiptCloseFailure) return false;
+            if (Mode == "user-close-fail" && !UserCloseFailed && entry.Name.StartsWith("C:\\fixture\\", StringComparison.Ordinal)) { UserCloseFailed = true; return false; }
+            Events.Add("close:" + entry.Name); if (entry.Stream != null) entry.Stream.Dispose(); Open.Remove(handle.ToInt64());
+        } return true;
+    }
+    internal static string FinalPath(IntPtr handle) { return Open[handle.ToInt64()].Name; }
+    internal static bool RenameFlags(IntPtr a, IntPtr b, string c, uint d, bool e) { throw new IOException("No native probe allowed"); }
+    internal static bool DeleteOwnedPosix(IntPtr a) { throw new IOException("No native probe allowed"); }
+    internal static int LinkOwnedProbe(IntPtr a, IntPtr b, string c) { throw new IOException("No native probe allowed"); }
+    internal static bool SetJunction(IntPtr a, string b) { throw new IOException("No native probe allowed"); }
+    internal static void Reset() {
+        foreach (var entry in Open.Values) if (entry.Stream != null) entry.Stream.Dispose(); Open.Clear();
+        if (OwnedRoot != null) System.IO.Directory.Delete(OwnedRoot, true);
+        OwnedRoot = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "zuoren-managed-transaction-" + Guid.NewGuid().ToString("N")); System.IO.Directory.CreateDirectory(OwnedRoot);
+        Identities.Clear(); Calls.Clear(); Events.Clear(); NextIdentity = 0; NextDirectoryHandle = 100000; ProbeCalls = BodyCalls = PublishCalls = UserCalls = StageCalls = 0;
+        ProbeSupported = true; DriveKind = 3; Mode = ""; ReceiptName = "C:\\receipts\\operation.json";
+        FailReceiptWrite = FailReceiptFlush = FailInvalidate = FailStdoutSerialize = FailStdoutWrite = FailStdoutFlush = ThrowDelete = FalseDelete = ThrowClose = FalseClose = ReceiptCloseFailure = UserCloseFailed = FailClaimWrite = FailClaimFlush = false;
+        System.IO.Directory.CreateDirectory(Real("C:\\receipts")); File.WriteAllBytes(Real(ReceiptName), new byte[0]); Id(ReceiptName); Id("C:\\receipts");
+    }
+    internal static void Finish() { foreach (var entry in Open.Values) if (entry.Stream != null) entry.Stream.Dispose(); Open.Clear(); if (OwnedRoot != null) System.IO.Directory.Delete(OwnedRoot, true); OwnedRoot = null; }
+}
+internal sealed class OwnedHandle { internal IntPtr Value; internal bool Delete; internal string Name; }
+internal sealed class SealedDirectories : IDisposable {
+    internal readonly List<OwnedHandle> Handles = new List<OwnedHandle>(); internal string Root, RootIdentity, CleanupWarning = ""; internal bool RootVerified;
+    internal static string Full(string name) { if (!name.StartsWith("C:\\", StringComparison.Ordinal)) throw new IOException("Fixture absolute path invalid"); return name.TrimEnd('\\'); }
+    internal bool Inside(string name) { return name == Root || name.StartsWith(Root + "\\", StringComparison.Ordinal); }
+    internal void Deadline() {}
+    internal OwnedHandle Keep(IntPtr handle, string name, bool delete) { var item = new OwnedHandle { Value = handle, Name = name, Delete = delete }; Handles.Add(item); return item; }
+    internal OwnedHandle Directory(string name, bool create) {
+        Native.UserIo(name); if (create) System.IO.Directory.CreateDirectory(Native.Real(name)); if (!System.IO.Directory.Exists(Native.Real(name))) throw new IOException("Fixture directory missing");
+        var handle = new IntPtr(++Native.NextDirectoryHandle); Native.Open.Add(handle.ToInt64(), new Native.Entry { Name = name, Identity = Native.Id(name), Directory = true }); return Keep(handle, name, false);
+    }
+    internal OwnedHandle Relative(OwnedHandle parent, string name, bool directory, bool create, uint access, uint share, bool owned) { IntPtr handle; if (Native.OpenRelative(parent.Value, name, directory, create, access, share, out handle) < 0) throw new IOException("Fixture relative open refused"); return Keep(handle, FixturePath.Combine(parent.Name, name), owned); }
+    internal void ValidateAll() {}
+    internal OwnedHandle Protect(OwnedHandle directory) { throw new IOException("No native sentinel probe allowed"); }
+    internal void CloseOwnedProbe(OwnedHandle handle, bool delete) { throw new IOException("No native probe allowed"); }
+// INSERT_SCOPE_METHODS
+}
+internal static class ManagedReview {
+    private static int count;
+    internal static void Check(bool valid, string name) { if (!valid) throw new Exception(name); Console.WriteLine("PASS " + (++count) + " " + name); }
+    private sealed class Writer : StringWriter {
+        public override void WriteLine(string text) { if (text.StartsWith("{\"status\"")) { Native.Events.Add("stdout"); if (Native.FailStdoutWrite) throw new IOException("fixture stdout fault"); } base.WriteLine(text); }
+        public override void Flush() { if (Native.FailStdoutFlush && Native.BodyCalls != 0) { Native.FailStdoutFlush = false; throw new IOException("fixture flush fault"); } base.Flush(); }
+    }
+    private static MoveInput Input(bool history = false) {
+        var source = "C:\\fixture\\source." + (history ? "md" : "pdf"); var target = "C:\\fixture\\dest\\" + FixturePath.GetFileName(source);
+        System.IO.Directory.CreateDirectory(Native.Real("C:\\fixture\\dest")); System.IO.Directory.CreateDirectory(Native.Real("C:\\fixture\\.reader"));
+        File.WriteAllText(Native.Real(source), "PRIVATE BODY MUST NOT LEAK", new UTF8Encoding(false));
+        var result = new MoveInput { Root = "C:\\fixture", Source = source, Target = target, RootIdentity = Native.Id("C:\\fixture"), ExpectedIdentity = Native.Id(source), ExpectedHash = FileMoveWorker.Sha(File.ReadAllBytes(Native.Real(source))), OperationId = Guid.NewGuid().ToString("D"), ReceiptNonce = new string('a',64), RequestBinding = new string('b',64), ReceiptPath = Native.ReceiptName, ReceiptIdentity = Native.Id(Native.ReceiptName), ReceiptDirectoryIdentity = Native.Id("C:\\receipts") };
+        var records = new List<RecordInput>(); for (int n = 1; n <= (history ? 2 : 1); n++) {
+            var relative = history ? "history\\0011223344556677-" + n + ".md" : result.ExpectedHash + ".json"; var file = FixturePath.Combine("C:\\fixture\\.reader", relative);
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Native.Real(file))); var bytes = Encoding.UTF8.GetBytes("PRIVATE METADATA " + n); File.WriteAllBytes(Native.Real(file), bytes); Native.Id(file);
+            records.Add(new RecordInput { Source = file, Relative = relative, RawHash = FileMoveWorker.Sha(bytes), NextBase64 = Convert.ToBase64String(bytes) });
+        } result.Records = records.ToArray(); return result;
+    }
+    private static string TargetRecord(MoveInput input, int index = 0) { return FixturePath.Combine(FixturePath.GetDirectoryName(input.Target), ".reader", input.Records[index].Relative); }
+    private static string Invoke(string command, ReceiptInput input, out int code) {
+        var writer = new Writer(); var oldOut = Console.Out; var oldIn = Console.In;
+        try { Console.SetOut(writer); Console.SetIn(new StringReader(FixtureJson.Encode(input))); code = FileMoveWorker.Run(command.Length == 0 ? new string[0] : new[] { command }); }
+        finally { Console.SetOut(oldOut); Console.SetIn(oldIn); }
+        return writer.ToString();
+    }
+    private static string FinalStatus(string output) { var lines = output.Trim().Split('\n'); var value = (Dictionary<string, object>)FixtureJson.Parse(lines[lines.Length-1].Trim()); return (string)value["status"]; }
+    private static byte[] ReceiptBytes() { return File.ReadAllBytes(Native.Real(Native.ReceiptName)); }
+    private static void AssertCleanReceiptResult(MoveInput input, string status) {
+        var envelope = (Dictionary<string, object>)ReceiptProtocol.Decode(ReceiptBytes(), input); Check((string)((Dictionary<string,object>)envelope["result"])["status"] == status, "receipt contains expected bound terminal " + status);
+        Check(Encoding.UTF8.GetString(ReceiptBytes()).IndexOf("PRIVATE", StringComparison.Ordinal) < 0, "receipt excludes body and metadata plaintext");
+    }
+    private static void CleanupCases() {
+        Native.Reset(); var scope = new SealedDirectories(); scope.Handles.Add(new OwnedHandle { Value=new IntPtr(1),Delete=true }); scope.Handles.Add(new OwnedHandle { Value=new IntPtr(2),Delete=true }); Native.ThrowDelete=true; scope.Dispose();
+        Check(String.Join(",",Native.Calls)=="D2,C2,D1,C1" && scope.Handles.Count==0 && scope.CleanupWarning!="", "delete exception closes all owned handles");
+        Native.Reset(); scope=new SealedDirectories(); scope.Handles.Add(new OwnedHandle { Value=new IntPtr(1),Delete=true }); Native.FalseDelete=true; scope.Dispose(); Check(String.Join(",",Native.Calls)=="D1,C1" && scope.CleanupWarning!="", "false delete still closes handle");
+        Native.Reset(); scope=new SealedDirectories(); scope.Handles.Add(new OwnedHandle { Value=new IntPtr(1) }); scope.Handles.Add(new OwnedHandle { Value=new IntPtr(2) }); Native.ThrowClose=true; scope.Dispose(); Check(String.Join(",",Native.Calls)=="C2,C1" && scope.Handles.Count==1, "close exception continues and retains unresolved handle");
+        Native.Reset(); scope=new SealedDirectories(); scope.Handles.Add(new OwnedHandle { Value=new IntPtr(2) }); Native.FalseClose=true; scope.Dispose(); Check(scope.Handles.Count==1 && scope.CleanupWarning!="", "false close is not confirmed cleanup");
+        Native.Reset(); scope=new SealedDirectories(); scope.Handles.Add(new OwnedHandle { Value=new IntPtr(1),Delete=false }); scope.Dispose(); scope.Dispose(); Check(String.Join(",",Native.Calls)=="C1", "nonowned handles never delete and cleanup is idempotent");
+    }
+    private static void TransactionCases() {
+        int code; string output; MoveInput input;
+        Native.Reset(); input=Input(); Native.Mode="body-false"; output=Invoke("",input,out code); Check(code==4 && FinalStatus(output)=="failed" && Native.StageCalls==1 && Native.PublishCalls==0 && !File.Exists(Native.Real(TargetRecord(input))), "body refusal cannot publish staged metadata"); Check(File.Exists(Native.Real(input.Source)), "body refusal preserves original source"); AssertCleanReceiptResult(input,"failed");
+        Native.Reset(); input=Input(true); var collision=TargetRecord(input,1); System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Native.Real(collision))); File.WriteAllText(Native.Real(collision),"foreign"); output=Invoke("",input,out code); Check(code==4 && Native.BodyCalls==0 && Native.StageCalls==0 && Native.PublishCalls==0 && !File.Exists(Native.Real(TargetRecord(input))), "all collisions checked before any staging or body commit");
+        Native.Reset(); input=Input(true); Native.Mode="second-publish-fail"; output=Invoke("",input,out code); Check(code==5 && FinalStatus(output)=="uncertain" && File.Exists(Native.Real(input.Target)) && !File.Exists(Native.Real(input.Source)), "partial publication after body remains uncertain with body at target"); Check(File.Exists(Native.Real(TargetRecord(input))) && !File.Exists(Native.Real(TargetRecord(input,1))) && File.Exists(Native.Real(input.Records[0].Source)) && File.Exists(Native.Real(input.Records[1].Source)), "partial metadata publication preserves every original record"); AssertCleanReceiptResult(input,"uncertain");
+        Native.Reset(); input=Input(); Native.Mode="body-throw-after-commit"; output=Invoke("",input,out code); Check(code==5 && Native.PublishCalls==0 && File.Exists(Native.Real(input.Target)), "body commit exception is uncertain and does not publish metadata"); AssertCleanReceiptResult(input,"uncertain");
+        Native.Reset(); input=Input(); output=Invoke("",input,out code); Check(code==0 && FinalStatus(output)=="moved" && Native.Events.IndexOf("body")<Native.Events.IndexOf("publish"), "successful flow commits body before publishing metadata"); Check(File.Exists(Native.Real(TargetRecord(input))) && FileMoveWorker.Sha(File.ReadAllBytes(Native.Real(TargetRecord(input))))==input.Records[0].RawHash, "successful PDF sidecar is published at its exact target path"); Check(Native.Events.IndexOf("stdout")<Native.Events.LastIndexOf("close:"+Native.ReceiptName) && !Native.ReceiptLocked(), "receipt lease remains through stdout and releases last"); AssertCleanReceiptResult(input,"moved");
+        var old=ReceiptBytes(); int oldCalls=Native.UserCalls; output=Invoke("",input,out code); Check(code==5 && Native.UserCalls==oldCalls && ReceiptBytes().Length==old.Length && Encoding.UTF8.GetString(ReceiptBytes())==Encoding.UTF8.GetString(old), "late worker rejects nonempty receipt without user I/O or overwrite");
+        int probes=Native.ProbeCalls; oldCalls=Native.UserCalls; output=Invoke("--read-receipt",input,out code); Check(code==0 && FinalStatus(output)=="receipt" && Native.ProbeCalls==probes && Native.UserCalls==oldCalls && !Native.ReceiptLocked(), "exclusive receipt reader is read-only and never runs probe or user I/O");
+    }
+    private static void ReceiptCases() {
+        int code; string output; MoveInput input;
+        Native.Reset(); input=Input(); using(var held=ReceiptLease.Acquire(input,true)) { output=Invoke("",input,out code); Check(code==5 && Native.ProbeCalls==0 && Native.UserCalls==0, "busy writer lease prevents probe and every user-root write"); output=Invoke("--read-receipt",input,out code); Check(code==6 && FinalStatus(output)=="unresolved", "busy receipt query is unresolved"); }
+        Native.Reset(); input=Input(); output=Invoke("--read-receipt",input,out code); Check(code==6 && Native.ProbeCalls==0 && Native.UserCalls==0 && ReceiptBytes().Length==0, "empty receipt is never inferred failed");
+        File.WriteAllText(Native.Real(Native.ReceiptName),"{bad"); output=Invoke("--read-receipt",input,out code); Check(code==6 && Encoding.UTF8.GetString(ReceiptBytes())=="{bad", "bad receipt is read-only unresolved");
+        Native.Reset(); input=Input(); input.ReceiptIdentity="9:99999"; output=Invoke("",input,out code); Check(code==5 && Native.ProbeCalls==0 && Native.UserCalls==0 && ReceiptBytes().Length==0, "wrong receipt file identity cannot acquire move authority");
+        Native.Reset(); input=Input(); input.ReceiptDirectoryIdentity="9:99999"; output=Invoke("--read-receipt",input,out code); Check(code==6 && Native.ProbeCalls==0 && Native.UserCalls==0, "wrong receipt directory identity is unresolved");
+        Native.Reset(); input=Input(); Native.FailReceiptWrite=true; output=Invoke("",input,out code); Check(code==5 && FinalStatus(output)=="uncertain" && ReceiptBytes().Length==1 && ReceiptBytes()[0]==0 && File.Exists(Native.Real(input.Target)), "partial receipt write invalidates receipt and cannot report definite result");
+        Native.Reset(); input=Input(); Native.FailReceiptFlush=true; output=Invoke("",input,out code); Check(code==5 && ReceiptBytes().Length==1 && ReceiptBytes()[0]==0 && File.Exists(Native.Real(input.Target)), "receipt flush failure remains uncertain and invalidates known receipt");
+        Native.Reset(); input=Input(); Native.FailStdoutSerialize=true; output=Invoke("",input,out code); Check(code==5 && FinalStatus(output)=="uncertain", "postcommit stdout serializer failure is uncertain"); Native.FailStdoutSerialize=false; AssertCleanReceiptResult(input,"moved");
+        Native.Reset(); input=Input(); Native.FailStdoutFlush=true; output=Invoke("",input,out code); Check(code==5 && FinalStatus(output)=="uncertain", "postcommit stdout flush failure cannot downgrade to failed");
+        Native.Reset(); input=Input(); Native.ProbeSupported=false; output=Invoke("",input,out code); Check(code==4 && Native.UserCalls==0, "same-process probe refusal is durably failed before user-root I/O"); AssertCleanReceiptResult(input,"failed");
+        Native.Reset(); input=Input(); output=Invoke("",input,out code); input.RequestBinding=new string('c',64); var before=ReceiptBytes(); output=Invoke("--read-receipt",input,out code); Check(code==6 && Encoding.UTF8.GetString(before)==Encoding.UTF8.GetString(ReceiptBytes()), "wrong binding never echoes or edits a terminal receipt");
+        Native.Reset(); input=Input(); output=Invoke("",input,out code); Native.ReceiptCloseFailure=true; output=Invoke("--read-receipt",input,out code); Check(code==6 && Native.ReceiptLocked(), "reader close failure cannot produce confirmed successful exit");
+        Native.Reset(); input=Input(); Native.ReceiptCloseFailure=true; output=Invoke("",input,out code); Check(code==5 && Native.ReceiptLocked(), "writer close failure retains unknown outcome");
+        Native.Reset(); input=Input(); input.ReceiptNonce="invalid"; output=Invoke("",input,out code); Check(code==5 && Native.ProbeCalls==0 && Native.UserCalls==0, "invalid receipt nonce cannot reach probe or user root");
+    }
+    private static void MoreCases() {
+        int code; string output; MoveInput input;
+        Native.Reset(); input=Input(true);
+        var recoveryName="recovery\\"+Guid.NewGuid().ToString("D")+".json"; var recoverySource=FixturePath.Combine(FixturePath.GetDirectoryName(input.Source),".reader",recoveryName);
+        System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Native.Real(recoverySource)));
+        var rawText=FixtureJson.Encode(new Dictionary<string,object>{{"sourcePath",input.Source},{"content","PRIVATE X"}}); var raw=Encoding.UTF8.GetBytes(rawText); for(int n=0;n<raw.Length;n++) if(raw[n]==(byte)'X')raw[n]=255; File.WriteAllBytes(Native.Real(recoverySource),raw);
+        var replacement=Encoding.UTF8.GetBytes(FixtureJson.Encode(new Dictionary<string,object>{{"sourcePath",input.Target},{"content","PRIVATE \uFFFD"}}));
+        input.Records=new[]{new RecordInput{Source=recoverySource,Relative=recoveryName,RawHash=FileMoveWorker.Sha(raw),NextBase64=Convert.ToBase64String(replacement)}};
+        output=Invoke("",input,out code); Check(code==4 && Native.BodyCalls==0 && Native.StageCalls==0, "invalid recovery UTF8 cannot be normalized into a moved draft");
+        foreach (uint drive in new uint[]{4,0}) { Native.Reset(); input=Input(); Native.DriveKind=drive; output=Invoke("",input,out code); Check(code==4 && Native.UserCalls==0 && Native.BodyCalls==0, "nonfixed drive refused before user-root open kind="+drive); }
+        Native.Reset(); input=Input(); using(var held=ReceiptLease.Acquire(input,true)) { held.Persist(new {status="failed",error="Move was refused before body commit."}); output=Invoke("--read-receipt",input,out code); Check(code==6 && Native.UserCalls==0, "a complete terminal snapshot remains unreadable while writer lease is held"); }
+        Native.Reset(); input=Input(); using(var claim=ReceiptLease.Acquire(input,true)) {} var claimed=ReceiptBytes(); output=Invoke("",input,out code); Check(code==5 && Native.ProbeCalls==0 && Native.UserCalls==0 && Encoding.UTF8.GetString(claimed)==Encoding.UTF8.GetString(ReceiptBytes()), "crashed claimed receipt rejects late worker without overwrite"); output=Invoke("--read-receipt",input,out code); Check(code==6, "nonterminal claim never inferred to be a terminal failure");
+        Native.Reset(); input=Input(); Native.FailClaimWrite=true; output=Invoke("",input,out code); Check(code==5 && Native.ProbeCalls==0 && Native.UserCalls==0 && ReceiptBytes().Length>0, "claim write fault cannot authorize any user-root I/O");
+        Native.Reset(); input=Input(); Native.FailClaimFlush=true; output=Invoke("",input,out code); Check(code==5 && Native.ProbeCalls==0 && Native.UserCalls==0, "claim flush fault cannot authorize any user-root I/O");
+        Native.Reset(); input=Input(); Native.Mode="stage-write-fail"; output=Invoke("",input,out code); Check(code==4 && Native.BodyCalls==0 && Native.PublishCalls==0 && !File.Exists(Native.Real(TargetRecord(input))), "unpublished staging failure cannot reach body or public metadata");
+        Native.Reset(); input=Input(); input.Records=new[]{input.Records[0],input.Records[0]}; output=Invoke("",input,out code); Check(code==4 && Native.BodyCalls==0 && Native.StageCalls==0, "duplicate metadata target is refused before staging and commit");
+        Native.Reset(); input=Input(); Native.Mode="publish-throw-after-commit"; output=Invoke("",input,out code); Check(code==5 && File.Exists(Native.Real(TargetRecord(input))) && File.Exists(Native.Real(input.Records[0].Source)) && File.Exists(Native.Real(input.Target)), "exceptional publish outcome preserves possibly public metadata and body");
+        Native.Reset(); input=Input(); Native.Mode="user-close-fail"; output=Invoke("",input,out code); Check(code==5 && FinalStatus(output)=="uncertain" && File.Exists(Native.Real(input.Target)), "postcommit user-handle cleanup fault cannot become definite failed");
+        Native.Reset(); input=Input(); File.WriteAllBytes(Native.Real(Native.ReceiptName),new byte[]{255}); output=Invoke("--read-receipt",input,out code); Check(code==6 && ReceiptBytes()[0]==255, "invalid UTF8 receipt stays read-only unresolved");
+        Native.Reset(); input=Input(); File.WriteAllBytes(Native.Real(Native.ReceiptName),new byte[ReceiptProtocol.MaximumBytes+1]); output=Invoke("--read-receipt",input,out code); Check(code==6 && Native.UserCalls==0, "oversize receipt is bounded unresolved");
+        Native.Reset(); input=Input(); Native.FailStdoutWrite=true; output=Invoke("",input,out code); Check(code==5 && output.IndexOf("failed",StringComparison.Ordinal)<0 && File.Exists(Native.Real(input.Target)), "stdout write fault cannot emit a false failed result");
+        Native.Reset(); input=Input(); Native.FailReceiptFlush=true; Native.FailInvalidate=true; output=Invoke("",input,out code); Check(code==5 && FinalStatus(output)=="uncertain", "failed receipt invalidation never produces a definite worker result"); Native.FailReceiptFlush=Native.FailInvalidate=false; output=Invoke("--read-receipt",input,out code); Check(code==0 && File.Exists(Native.Real(input.Target)) && FileMoveWorker.Sha(File.ReadAllBytes(Native.Real(input.Target)))==input.ExpectedHash, "complete snapshot after flush error is only a fresh lease and current-state recheck");
+    }
+    public static void Main() {
+        try { Console.WriteLine("managed-runtime: "+Environment.Version+"; pointerSize="+IntPtr.Size); CleanupCases(); TransactionCases(); ReceiptCases(); MoreCases(); Check(FileMoveWorker.ResultExitCode(new {status="receipt"})==0 && FileMoveWorker.ResultExitCode(new {status="unresolved"})==6 && FileMoveWorker.ResultExitCode(new {status="unsupported"})==3, "protocol2 receipt and unresolved exit-code contract"); Console.WriteLine("managed source-derived transaction regressions passed: "+count+"; no Windows APIs invoked"); }
+        finally { Native.Finish(); }
+    }
+}

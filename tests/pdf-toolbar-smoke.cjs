@@ -25,6 +25,7 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
   const originalPdf = Buffer.from(await pdf.save());
   await fs.writeFile(path.join(workspace.fixture, filename), originalPdf);
   await fs.writeFile(path.join(workspace.fixture, 'note.md'), '# Note\n\nKeep this note intact.\n');
+  await fs.writeFile(path.join(workspace.fixture, 'note-two.md'), '# Second note\n\nKeep the second note intact.\n');
   const executablePath = process.env.ZHAOYE_SMOKE_EXECUTABLE || path.join(appRoot, 'node_modules/electron/dist/electron.exe');
   application = await _electron.launch({ executablePath, args: process.env.ZHAOYE_SMOKE_EXECUTABLE ? [workspace.fixture] : [appRoot, workspace.fixture], env: { ...process.env, ZHAOYE_TEST_USER_DATA: workspace.userData } });
   const page = await application.firstWindow(); page.setDefaultTimeout(12000);
@@ -139,10 +140,24 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
   });
   await t.test('split and narrow panes retain one row with reachable labeled icons', async () => {
     await page.locator('.file-row').filter({ hasText: 'note.md' }).dblclick();
+    await page.locator('.file-row').filter({ hasText: 'note-two.md' }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: '在右侧打开', exact: true }).click();
+    await page.locator('[data-pane-id="secondary"] .cm-content').waitFor();
+    const primaryText = await page.locator('[data-pane-id="primary"] .cm-content').innerText();
+    const secondaryText = await page.locator('[data-pane-id="secondary"] .cm-content').innerText();
     await layout('对照').click();
-    const size = await application.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.unmaximize(); win.setSize(1000, 720); return win.getContentSize(); });
+    const size = await application.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.unmaximize(); win.setSize(760, 720); return win.getContentSize(); });
     await page.waitForFunction(([width, height]) => innerWidth === width && innerHeight === height, size);
     await sameRow();
+    const noteRow = page.locator('.note-workspace-bar'), noteSlot = page.locator('.note-header-slot');
+    const noteTools = noteSlot.locator('.markdown-workspace-actions');
+    assert.equal(await noteRow.isVisible(), true);
+    assert.equal(await page.locator('[data-note-group="primary"]').isVisible(), false, 'comparison shows only the active note pane from a dual-note workspace');
+    assert.equal(await page.locator('[data-note-group="secondary"]').isVisible(), true);
+    const [readerBox, noteBox, rowBox] = await Promise.all([bar.boundingBox(), noteTools.boundingBox(), noteRow.boundingBox()]);
+    assert.ok(readerBox && noteBox && rowBox);
+    assert.ok(Math.abs(readerBox.y - noteBox.y) <= 1, 'PDF and note tools share the same visible horizontal row');
+    for (const bounds of [readerBox, noteBox]) assert.ok(bounds.y >= rowBox.y && bounds.y + bounds.height <= rowBox.y + rowBox.height + 1, 'both tool groups fit inside the shared row');
     const overflow = bar.getByRole('button', { name: 'PDF 标记工具', exact: true });
     await overflow.waitFor();
     for (const name of ['展开 PDF 大纲', '上一页', '下一页', 'PDF 标记工具', '在 PDF 中查找', '缩小', '放大', '进入全屏阅读']) {
@@ -150,6 +165,12 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
       await button.scrollIntoViewIfNeeded();
       const rect = await button.boundingBox(), bounds = await bar.boundingBox();
       assert.ok(rect && bounds && rect.x >= bounds.x - 1 && rect.x + rect.width <= bounds.x + bounds.width + 1, name);
+    }
+    for (const name of ['查找', '源码编辑模式', '切换到预览', '展开大纲', '新建空白标签']) {
+      const button = noteTools.getByRole('button', { name, exact: true });
+      await button.scrollIntoViewIfNeeded();
+      const rect = await button.boundingBox(), bounds = await noteSlot.boundingBox();
+      assert.ok(rect && bounds && rect.x >= bounds.x - 1 && rect.x + rect.width <= bounds.x + bounds.width + 1, `note control is reachable: ${name}`);
     }
     await overflow.click();
     const menu = page.getByRole('menu', { name: 'PDF 标记工具', exact: true });
@@ -162,8 +183,29 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
     await page.screenshot({ path: path.join(output, 'pdf-toolbar-split-narrow.png') });
     assert.equal(await page.locator('.cm-content').count(), 1);
     const beforeEditing = await page.locator('.pdf-canvas-wrap').evaluate(element => element.scrollTop);
-    await page.locator('.cm-content').focus(); await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowUp');
+    const activeEditor = page.locator('[data-pane-id="secondary"] .cm-content');
+    await activeEditor.focus();
+    assert.equal(await activeEditor.evaluate(editor => editor === document.activeElement), true, 'the visible comparison note receives keyboard focus');
+    await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowUp');
     assert.equal(await page.locator('.pdf-canvas-wrap').evaluate(element => element.scrollTop), beforeEditing, 'note editing never moves the PDF');
+    await layout('阅读').click();
+    await page.waitForFunction(() => document.querySelector('.app')?.dataset.layout === 'read');
+    assert.equal(await page.locator('.note-group:visible').count(), 0, 'reading mode hides both notes');
+    const reader = page.locator('.pdf-pane'); await reader.focus();
+    assert.equal(await reader.evaluate(element => element === document.activeElement), true, 'the PDF remains keyboard-focusable after leaving comparison');
+    await layout('笔记').click();
+    await page.waitForFunction(() => document.querySelector('.panes.note.dual-notes'));
+    assert.equal(await page.locator('.note-group:visible').count(), 2, 'note mode restores both open note panes');
+    assert.equal(await page.locator('.note-workspace-bar').isVisible(), true);
+    assert.equal(await page.locator('[data-pane-id="primary"] .cm-content').innerText(), primaryText);
+    assert.equal(await page.locator('[data-pane-id="secondary"] .cm-content').innerText(), secondaryText);
+    await page.locator('[data-pane-id="secondary"] .cm-content').focus();
+    assert.equal(await page.locator('[data-pane-id="secondary"] .cm-content').evaluate(editor => editor === document.activeElement), true, 'a restored note pane can receive keyboard focus');
+    await layout('对照').click();
+    await page.waitForFunction(() => document.querySelector('.panes.split'));
+    await sameRow();
+    assert.equal(await page.locator('[data-note-group="primary"]').isVisible(), false);
+    assert.equal(await page.locator('[data-note-group="secondary"] .cm-content').innerText(), secondaryText);
   });
   await t.test('dark reading and fullscreen preserve the merged tools', async () => {
     await layout('阅读').click();

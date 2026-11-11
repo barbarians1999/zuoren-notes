@@ -130,6 +130,7 @@ class TaskWidget extends WidgetType {
   toDOM(view: EditorView) {
     const input = document.createElement('input');
     input.type = 'checkbox'; input.checked = this.checked; input.className = 'cm-md-task-checkbox';
+    input.dataset.taskPosition = String(this.position);
     input.setAttribute('aria-label', this.checked ? '取消完成任务' : '标记任务完成');
     input.disabled = view.state.readOnly;
     input.addEventListener('mousedown', event => event.preventDefault());
@@ -240,13 +241,14 @@ class CodeBlockWidget extends WidgetType {
 }
 
 class HorizontalRuleWidget extends WidgetType {
-  eq(other: HorizontalRuleWidget) { return other.constructor === HorizontalRuleWidget; }
+  constructor(readonly animateEntry = false) { super(); }
+  eq(other: HorizontalRuleWidget) { return other.constructor === HorizontalRuleWidget && other.animateEntry === this.animateEntry; }
   toDOM() {
     // Keep this an inline replacement. A block replacement changes the
     // CodeMirror line geometry and can make mouse clicks land on the next
     // Markdown line after the rule.
     const rule = document.createElement('span');
-    rule.className = 'cm-md-horizontal-rule';
+    rule.className = `cm-md-horizontal-rule${this.animateEntry ? ' cm-md-horizontal-rule-enter' : ''}`;
     rule.setAttribute('aria-label', 'Markdown 分隔线');
     return rule;
   }
@@ -330,7 +332,16 @@ class ImageWidget extends WidgetType {
   ignoreEvent() { return true; }
 }
 
-export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120, motionLines?: Set<number>): DecorationSet {
+function pendingListDash(state: EditorState, node: MarkdownNode) {
+  if (node.name !== 'SetextHeading2') return false;
+  const marker = node.getChild('HeaderMark');
+  if (!marker) return false;
+  const line = state.doc.lineAt(marker.from);
+  return /^ {0,3}-(?:[\t ]|$)/.test(line.text)
+    && state.selection.ranges.some(range => range.head >= line.from && range.head <= line.to);
+}
+
+export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120, motionLines?: Set<number>, enteringRule?: string, revealingRule?: string): DecorationSet {
   const ranges: ReturnType<Decoration['range']>[] = [];
   const blocks: ReturnType<Decoration['range']>[] = [];
   const quoteDepths = new Map<number, number>();
@@ -405,9 +416,10 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120, 
       return false;
     }
     if (name === 'HorizontalRule' && !active(from, to)) {
-      hide(from, to, new HorizontalRuleWidget());
+      hide(from, to, new HorizontalRuleWidget(enteringRule === `${from}:${to}`));
       return false;
     }
+    if (name === 'HorizontalRule' && revealingRule === `${from}:${to}`) mark(from, to, 'cm-md-horizontal-rule-source-enter');
     if (name === 'Blockquote') {
       const first = state.doc.lineAt(from).number;
       const last = state.doc.lineAt(Math.max(from, to - 1)).number;
@@ -420,6 +432,7 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120, 
     if (name === 'Escape' && !active(from, to)) { hide(from, from + 1); return false; }
     if (name === 'Entity' && !active(from, to)) { hide(from, to, new LiteralWidget(decodeMarkdownEntity(state.sliceDoc(from, to)))); return false; }
     if (/^(ATX|Setext)Heading/.test(name)) {
+      if (pendingListDash(state, node)) return;
       const level = Number(name.slice(-1));
       const headingActive = activeAtPrefixEnd(from, to);
       mark(from, to, `cm-md-heading cm-md-heading-${level}${headingActive ? ' cm-md-format-active' : ''}`);
@@ -456,6 +469,10 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120, 
         else hide(from, to, new InlineCodeWidget(projectInlineText(state, node, tree)));
         return false;
       }
+      // Preserve measurable runs before the first mouse entry into this line.
+      for (let number = state.doc.lineAt(from).number; number <= state.doc.lineAt(to).number; number++) {
+        motionLines.add(state.doc.line(number).from);
+      }
       mark(from, to, `cm-md-${inlineClass[name]}${formatActive ? ' cm-md-format-active' : ''}`);
       for (let child = node.firstChild; child; child = child.nextSibling) {
         if (!/^(EmphasisMark|StrikethroughMark|CodeMark|HighlightMark)$/.test(child.name)) continue;
@@ -486,6 +503,7 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120, 
         const prefixActive = marker.to === end
           ? activeAtPrefixEnd(marker.from, end)
           : active(marker.from, end);
+        const activeOrderedBody = !task && node.parent?.name === 'OrderedList' && activeLine(line.from, line.to);
         const gapFrom = task?.to ?? marker.to;
         const before = countColumn(state.sliceDoc(line.from, gapFrom), state.tabSize);
         if (prefixActive) {
@@ -499,7 +517,10 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120, 
             // render consistently without changing the Markdown source.
             hide(marker.from, end, new TaskWidget(task.from + 1, /x/i.test(state.sliceDoc(task.from, task.to))));
           }
-          else {
+          else if (activeOrderedBody) {
+            const after = countColumn(state.sliceDoc(line.from, end), state.tabSize);
+            mark(marker.from, marker.to, 'cm-md-ordered-marker', { style: `--md-prefix-space-columns: ${after - before}` });
+          } else {
             const label = node.parent?.name === 'OrderedList' ? state.sliceDoc(marker.from, marker.to) : '•';
             hide(marker.from, end, new MarkerWidget(label, label === '•' ? end - marker.from : 0));
           }
@@ -587,7 +608,8 @@ export function buildMarkdownLivePreview(state: EditorState, parseBudget = 120, 
     'data-quote-depth': String(depth), style: `--md-quote-depth: ${depth}`,
   } }).range(state.doc.line(number).from));
   const motionExclusions = [...ranges.filter(range => range.to > range.from && (range.value.point
-    || range.value.spec.class?.split(' ').includes('cm-md-list-prefix'))), ...headingTokens]
+    || range.value.spec.class?.split(' ').includes('cm-md-list-prefix')
+    || range.value.spec.class?.split(' ').includes('cm-md-ordered-marker'))), ...headingTokens]
     .sort((left, right) => left.from - right.from || left.to - right.to);
   let exclusionIndex = 0;
   for (const lineStart of [...motionLines].sort((left, right) => left - right)) {
@@ -642,7 +664,13 @@ export const livePreview = StateField.define<DecorationSet>({
         motionLines.add(transaction.startState.doc.lineAt(transaction.startState.selection.main.head).from);
       }
     }
-    return buildMarkdownLivePreview(transaction.state, transaction.docChanged ? 20 : 0, motionLines);
+    const previousKey = !transaction.docChanged && transaction.selection ? activeLineKey(transaction.startState) : '';
+    const nextKey = activeLineKey(transaction.state);
+    const enteringRule = previousKey.startsWith('HorizontalRule:') && nextKey !== previousKey
+      ? previousKey.slice('HorizontalRule:'.length) : undefined;
+    const revealingRule = !transaction.docChanged && transaction.selection && nextKey !== previousKey && nextKey.startsWith('HorizontalRule:')
+      ? nextKey.slice('HorizontalRule:'.length) : undefined;
+    return buildMarkdownLivePreview(transaction.state, transaction.docChanged ? 20 : 0, motionLines, enteringRule, revealingRule);
   },
   provide: field => EditorView.decorations.from(field),
 });
@@ -654,6 +682,7 @@ function activeLineKey(state: EditorState) {
     // Heading source is also disclosed at its line-end caret. Resolve the
     // left side for that inclusive endpoint, matching activeAtPrefixEnd.
     for (let node: MarkdownNode | null = tree.resolveInner(range.head, -1); node; node = node.parent) {
+      if (pendingListDash(state, node)) return `pending-list-dash:${node.from}:${node.to}`;
       if (/^(ATX|Setext)Heading/.test(node.name) && range.head === node.to) return `${node.name}:${node.from}:${node.to}`;
     }
     for (let node: MarkdownNode | null = tree.resolveInner(range.head, 1); node; node = node.parent) {

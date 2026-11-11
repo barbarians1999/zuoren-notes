@@ -102,43 +102,83 @@ export function selectedPdfPages(root: HTMLElement, selection = window.getSelect
   return [...root.querySelectorAll<HTMLElement>('[data-pdf-page]')].filter(slot => range.intersectsNode(slot)).map(slot => Number(slot.dataset.pdfPage));
 }
 type PdfPoint = { x: number; y: number };
+type PdfTextPosition = { node: Text; offset: number };
+type PdfEndpointCandidate = { element: HTMLElement; rect: DOMRect; position: PdfTextPosition; text: string };
+export type PdfTextEndpointCache = { layer: HTMLElement; revision: string; rotation: string; candidates: PdfEndpointCandidate[] };
+export type PdfTextEndpointLayerState = { layer: HTMLElement | null; revision: string; firstSpan: HTMLElement | null };
+export function pdfTextEndpointLayerState(page: HTMLElement): PdfTextEndpointLayerState {
+  const layer = page.querySelector<HTMLElement>('.canvas-holder .textLayer');
+  return { layer, revision: layer?.dataset.textRevision || '', firstSpan: layer?.querySelector<HTMLElement>('span') || null };
+}
+export function pdfTextEndpointLayerChanged(previous: PdfTextEndpointLayerState, current: PdfTextEndpointLayerState): boolean {
+  return previous.layer !== current.layer || previous.revision !== current.revision || previous.firstSpan !== current.firstSpan;
+}
+export function pdfSelectionPointsAfterScroll(anchor: PdfPoint, focus: PdfPoint, initialScroll: PdfPoint, currentScroll: PdfPoint): { anchor: PdfPoint; focus: PdfPoint } {
+  return {
+    anchor: { x: anchor.x - (currentScroll.x - initialScroll.x), y: anchor.y - (currentScroll.y - initialScroll.y) },
+    focus,
+  };
+}
+export function pdfPageNumbersBetween(start: number, end: number): number[] {
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < 1) return [];
+  const direction = end < start ? -1 : 1;
+  return Array.from({ length: Math.abs(end - start) + 1 }, (_, index) => start + index * direction);
+}
 function pointRectDistance(point: PdfPoint, rect: DOMRect): number {
   const dx = Math.max(rect.left - point.x, 0, point.x - rect.right);
   const dy = Math.max(rect.top - point.y, 0, point.y - rect.bottom);
   return dx * dx + dy * dy;
 }
-function nearestPdfTextPosition(root: HTMLElement, point: PdfPoint): { node: Text; offset: number } | null {
+export function closestPdfTextSpan(spans: readonly { element: HTMLElement; rect: DOMRect }[], point: PdfPoint, toward?: PdfPoint): HTMLElement | null {
+  let closest: HTMLElement | null = null, distance = Infinity, top = -Infinity, projection = -Infinity;
+  for (const span of spans) {
+    const nextDistance = pointRectDistance(point, span.rect);
+    const nextProjection = toward ? (span.rect.left + span.rect.width / 2) * toward.x + (span.rect.top + span.rect.height / 2) * toward.y : 0;
+    if (nextDistance < distance - .01 || (Math.abs(nextDistance - distance) <= .01 && (toward && (toward.x || toward.y)
+      ? nextProjection > projection : span.rect.top > top))) {
+      closest = span.element; distance = nextDistance; top = span.rect.top; projection = nextProjection;
+    }
+  }
+  return closest;
+}
+export function pdfCaretMatchesNearestSpan(position: { node: Node; offset: number }, nearest: HTMLElement | null): boolean {
+  const text = position.node as Text, span = text.parentElement?.closest('.textLayer span');
+  return position.node.nodeType === 3 && !!nearest && span === nearest && position.offset >= 0 && position.offset <= text.length;
+}
+export function pdfCaretCoversPoint(position: { node: Node; offset: number }, point: PdfPoint): boolean {
+  const text = position.node as Text, span = text.parentElement?.closest('.textLayer span');
+  if (position.node.nodeType !== 3 || !span || span.closest('[role="img"], .endOfContent') || position.offset < 0 || position.offset > text.length) return false;
+  const rect = span.getBoundingClientRect();
+  return point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom;
+}
+export function pdfSelectionEndpointDirections(anchor: PdfPoint, focus: PdfPoint): { start: PdfPoint; end: PdfPoint } {
+  return { start: { x: focus.x - anchor.x, y: focus.y - anchor.y }, end: { x: anchor.x - focus.x, y: anchor.y - focus.y } };
+}
+function pdfTextSpans(layer: HTMLElement) {
+  return [...layer.querySelectorAll<HTMLElement>('span')]
+    .filter(span => !span.closest('[role="img"], .endOfContent') && !!span.firstChild && span.firstChild.nodeType === Node.TEXT_NODE)
+    .map(element => ({ element, rect: element.getBoundingClientRect() }))
+    .filter(span => span.rect.width > 0 && span.rect.height > 0);
+}
+function textLayerAtPoint(root: HTMLElement, point: PdfPoint): HTMLElement | null {
   const holders = [...root.querySelectorAll<HTMLElement>('.canvas-holder')];
   const holder = holders.find(item => {
     const rect = item.getBoundingClientRect();
     return point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom;
   });
-  const layer = holder?.querySelector<HTMLElement>('.textLayer');
-  if (!layer) return null;
-
-  let span: HTMLElement | null = null, spanDistance = Infinity, spanTop = -Infinity;
-  for (const candidate of layer.querySelectorAll<HTMLElement>('span')) {
-    if (candidate.closest('[role="img"], .endOfContent') || !candidate.firstChild || candidate.firstChild.nodeType !== Node.TEXT_NODE) continue;
-    const rect = candidate.getBoundingClientRect();
-    if (!rect.width || !rect.height) continue;
-    const distance = pointRectDistance(point, rect);
-    // At an exact inter-line tie, prefer the lower visual line: that is the
-    // line the pointer is entering as the user drags down through the gap.
-    if (distance < spanDistance - .01 || (Math.abs(distance - spanDistance) <= .01 && rect.top > spanTop)) {
-      span = candidate; spanDistance = distance; spanTop = rect.top;
-    }
-  }
-  if (!span) return null;
+  return holder?.querySelector<HTMLElement>('.textLayer') || null;
+}
+function nearestPdfTextPositionInSpan(span: HTMLElement, point: PdfPoint): PdfTextPosition | null {
   const style = getComputedStyle(span), transform = style.transform === 'none' ? null : new DOMMatrixReadOnly(style.transform);
   const angle = transform ? Math.atan2(transform.b, transform.a) : 0;
   const direction = style.direction === 'rtl' ? -1 : 1;
   const axisX = Math.cos(angle) * direction, axisY = Math.sin(angle) * direction;
   let best: { node: Text; offset: number; distance: number } | null = null;
-  const walker = layer.ownerDocument.createTreeWalker(span, NodeFilter.SHOW_TEXT);
+  const walker = span.ownerDocument.createTreeWalker(span, NodeFilter.SHOW_TEXT);
   while (walker.nextNode()) {
     const node = walker.currentNode as Text;
     for (let offset = 0; offset < node.length; offset += 1) {
-      const range = layer.ownerDocument.createRange(); range.setStart(node, offset); range.setEnd(node, offset + 1);
+      const range = span.ownerDocument.createRange(); range.setStart(node, offset); range.setEnd(node, offset + 1);
       const rect = range.getBoundingClientRect();
       if (!rect.width || !rect.height) continue;
       const distance = pointRectDistance(point, rect);
@@ -150,7 +190,13 @@ function nearestPdfTextPosition(root: HTMLElement, point: PdfPoint): { node: Tex
   }
   return best && { node: best.node, offset: best.offset };
 }
-function textPositionAtPoint(root: HTMLElement, point: PdfPoint): { node: Text; offset: number } | null {
+function nearestPdfTextPosition(root: HTMLElement, point: PdfPoint, toward?: PdfPoint): PdfTextPosition | null {
+  const layer = textLayerAtPoint(root, point);
+  if (!layer) return null;
+  const span = closestPdfTextSpan(pdfTextSpans(layer), point, toward);
+  return span ? nearestPdfTextPositionInSpan(span, point) : null;
+}
+function nativePdfTextPosition(root: HTMLElement, point: PdfPoint): { node: Node; offset: number } | null {
   const document = root.ownerDocument as Document & {
     caretRangeFromPoint?: (x: number, y: number) => Range | null;
     caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
@@ -159,19 +205,72 @@ function textPositionAtPoint(root: HTMLElement, point: PdfPoint): { node: Text; 
   const caret = range ? null : document.caretPositionFromPoint?.(point.x, point.y);
   const position = range ? { node: range.startContainer, offset: range.startOffset }
     : caret ? { node: caret.offsetNode, offset: caret.offset } : null;
+  return position?.node.nodeType === Node.TEXT_NODE && root.contains(position.node) ? position : null;
+}
+function textPositionAtPoint(root: HTMLElement, point: PdfPoint, toward?: PdfPoint): PdfTextPosition | null {
+  const position = nativePdfTextPosition(root, point);
   if (position?.node.nodeType === Node.TEXT_NODE && root.contains(position.node)) {
-    const text = position.node as Text, span = text.parentElement?.closest('.textLayer span');
-    if (span && !span.closest('[role="img"], .endOfContent') && position.offset >= 0 && position.offset <= text.length) return { node: text, offset: position.offset };
+    if (pdfCaretCoversPoint(position, point)) return { node: position.node as Text, offset: position.offset };
+    const holder = root.querySelectorAll<HTMLElement>('.canvas-holder');
+    const layer = [...holder].find(item => {
+      const rect = item.getBoundingClientRect();
+      return point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom;
+    })?.querySelector<HTMLElement>('.textLayer');
+    const nearest = layer ? closestPdfTextSpan(pdfTextSpans(layer), point, toward) : null;
+    if (pdfCaretMatchesNearestSpan(position, nearest)) return { node: position.node as Text, offset: position.offset };
   }
-  return nearestPdfTextPosition(root, point);
+  return nearestPdfTextPosition(root, point, toward);
+}
+export function createPdfTextEndpointCache(root: HTMLElement, point: PdfPoint): PdfTextEndpointCache | null {
+  const layer = textLayerAtPoint(root, point);
+  if (!layer) return null;
+  const spans = pdfTextSpans(layer);
+  let minimum = Infinity;
+  for (const span of spans) minimum = Math.min(minimum, pointRectDistance(point, span.rect));
+  if (!Number.isFinite(minimum)) return null;
+  const native = nativePdfTextPosition(root, point);
+  const candidates: PdfEndpointCandidate[] = [];
+  for (const span of spans) {
+    const distance = pointRectDistance(point, span.rect);
+    if (Math.abs(distance - minimum) > .01) continue;
+    const position = native && pdfCaretMatchesNearestSpan(native, span.element)
+      ? { node: native.node as Text, offset: native.offset }
+      : nearestPdfTextPositionInSpan(span.element, point);
+    if (position) candidates.push({ element: span.element, rect: span.rect, position, text: position.node.data });
+  }
+  return candidates.length ? { layer, revision: layer.dataset.textRevision || '', rotation: layer.dataset.mainRotation || '', candidates } : null;
+}
+export function isPdfTextEndpointCacheValid(root: HTMLElement, cache: PdfTextEndpointCache): boolean {
+  if (!root.contains(cache.layer) || cache.layer.dataset.textRevision !== cache.revision || (cache.layer.dataset.mainRotation || '') !== cache.rotation) return false;
+  return cache.candidates.every(candidate => {
+    if (!root.contains(candidate.position.node) || !candidate.element.isConnected || candidate.position.node.data !== candidate.text
+      || candidate.position.node.parentElement?.closest('.textLayer span') !== candidate.element) return false;
+    const rect = candidate.element.getBoundingClientRect();
+    return Math.abs(rect.width - candidate.rect.width) < .05 && Math.abs(rect.height - candidate.rect.height) < .05;
+  });
+}
+export function pdfTextPositionFromEndpointCache(root: HTMLElement, cache: PdfTextEndpointCache, toward?: PdfPoint): PdfTextPosition | null {
+  if (!isPdfTextEndpointCacheValid(root, cache)) return null;
+  let best = cache.candidates[0], top = best.rect.top;
+  let projection = toward ? (best.rect.left + best.rect.width / 2) * toward.x + (best.rect.top + best.rect.height / 2) * toward.y : 0;
+  for (const candidate of cache.candidates.slice(1)) {
+    const nextProjection = toward ? (candidate.rect.left + candidate.rect.width / 2) * toward.x + (candidate.rect.top + candidate.rect.height / 2) * toward.y : 0;
+    if (toward && (toward.x || toward.y) ? nextProjection > projection : candidate.rect.top > top) {
+      best = candidate; top = candidate.rect.top; projection = nextProjection;
+    }
+  }
+  return best.position;
 }
 
 // Native dragging can anchor to a distant PDF.js text run when the pointer
 // starts in the whitespace between lines. Re-anchor from the actual pointer
 // endpoints so visual intent, not DOM order, defines the selected text.
-export function setPdfSelectionFromPoints(root: HTMLElement, anchor: PdfPoint, focus: PdfPoint, selection = window.getSelection()): boolean {
+export function setPdfSelectionFromPoints(root: HTMLElement, anchor: PdfPoint, focus: PdfPoint, selection = window.getSelection(), cachedAnchor?: PdfTextPosition | null): boolean {
   if (!selection) return false;
-  const start = textPositionAtPoint(root, anchor), end = textPositionAtPoint(root, focus);
+  const toward = pdfSelectionEndpointDirections(anchor, focus);
+  const start = cachedAnchor === undefined ? textPositionAtPoint(root, anchor, toward.start)
+    : cachedAnchor && root.contains(cachedAnchor.node) ? cachedAnchor : null;
+  const end = textPositionAtPoint(root, focus, toward.end);
   if (!start || !end) return false;
   try {
     selection.setBaseAndExtent(start.node, start.offset, end.node, end.offset);

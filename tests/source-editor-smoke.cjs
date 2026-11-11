@@ -98,11 +98,12 @@ test('Markdown editing keeps continuous source text like Obsidian', { timeout: 9
     // syntax and the next line's actual marker instead of obsolete DOM text.
     await waitForFile(notePath, value => value.includes(item.continued));
     const nextLine = await sourceLine.evaluate(element => ({
-      marker: element.nextElementSibling?.querySelector('.cm-md-list-marker')?.textContent,
+      marker: element.nextElementSibling?.querySelector('.cm-md-list-marker, .cm-md-ordered-marker')?.textContent,
+      markerCount: element.nextElementSibling?.querySelectorAll('.cm-md-list-marker, .cm-md-ordered-marker').length,
       quote: element.nextElementSibling?.classList.contains('cm-md-quote'),
     }));
     if (item.quote) assert.equal(nextLine.quote, true, 'the continued quote retains its visual guide');
-    else assert.equal(nextLine.marker, item.marker, `first Enter renders the continuation marker for ${item.text}`);
+    else { assert.equal(nextLine.markerCount, 1, `first Enter has one continuation marker for ${item.text}`); assert.equal(nextLine.marker, item.marker, `first Enter renders the continuation marker for ${item.text}`); }
     await page.keyboard.press('Enter'); await waitForFile(notePath, value => value.includes(item.exited));
     const afterSecondEnter = await fs.readFile(notePath, 'utf8');
     assert.ok(afterSecondEnter.includes(item.exited), `second Enter exits the empty formatted line for ${item.text}: ${JSON.stringify(afterSecondEnter.slice(-180))}`);
@@ -212,6 +213,44 @@ test('Markdown editing keeps continuous source text like Obsidian', { timeout: 9
   await page.getByRole('button', { name: '切换到源码编辑' }).click();
   await editor.waitFor(); await editor.click(); await page.keyboard.press('Control+End'); await page.keyboard.press('Shift+ArrowLeft');
   const selectionToolbar = page.getByRole('toolbar', { name: '选中文本格式' });
+  await selectionToolbar.waitFor({ state: 'visible' });
+  await page.keyboard.press('ArrowRight');
+  await selectionToolbar.waitFor({ state: 'hidden' });
+
+  const dragLine = page.locator('.markdown-source-editor .cm-line').filter({ hasText: '这是' });
+  const dragBox = await dragLine.boundingBox();
+  assert.ok(dragBox, 'source line has a drag target');
+  await page.mouse.move(dragBox.x + 8, dragBox.y + dragBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(dragBox.x + 120, dragBox.y + dragBox.height / 2, { steps: 4 });
+  assert.equal(await selectionToolbar.count(), 0, 'toolbar stays absent while the pointer is dragging');
+  await page.mouse.up();
+  await selectionToolbar.waitFor({ state: 'visible' });
+  await page.keyboard.press('ArrowRight');
+  await selectionToolbar.waitFor({ state: 'hidden' });
+
+  await page.evaluate(() => {
+    window.__selectionPointerId = null;
+    window.addEventListener('pointerdown', event => { window.__selectionPointerId = event.pointerId; }, { once: true });
+  });
+  await page.mouse.move(dragBox.x + 8, dragBox.y + dragBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(dragBox.x + 120, dragBox.y + dragBox.height / 2, { steps: 3 });
+  await page.evaluate(() => {
+    const pointerId = window.__selectionPointerId;
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId }));
+    window.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerId }));
+  });
+  await page.mouse.up();
+  await selectionToolbar.waitFor({ state: 'hidden' });
+
+  await page.mouse.move(dragBox.x + 8, dragBox.y + dragBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(dragBox.x + 120, dragBox.y + dragBox.height / 2, { steps: 3 });
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+  await page.mouse.up();
+  await selectionToolbar.waitFor({ state: 'hidden' });
+  await page.keyboard.press('Control+End'); await page.keyboard.press('Shift+ArrowLeft');
   await selectionToolbar.waitFor({ state: 'visible' });
   await page.keyboard.press('ArrowRight');
   await selectionToolbar.waitFor({ state: 'hidden' });

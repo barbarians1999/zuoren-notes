@@ -16,7 +16,7 @@ module.exports = [
   { name: 'tab-nested-bold', source: '- parent\n\t- **child**', live: '.cm-md-strong', read: 'ul ul strong', text: 'child' },
   { name: 'tab-nested-task', source: '- [ ] parent\n\t- [x] child', live: '.cm-md-task-checkbox', read: 'input[type=checkbox]', count: 2 },
   { name: 'quote-bold', source: '> **quoted**', live: '.cm-md-strong', read: 'blockquote strong', text: 'quoted' },
-  { name: 'ordered-parenthesis', source: '1) one\n2) two', live: '.cm-md-list-marker', read: 'ol li', count: 2 },
+  { name: 'ordered-parenthesis', source: '1) one\n2) two', live: '.cm-md-list-marker, .cm-md-ordered-marker', read: 'ol li', count: 2 },
   { name: 'star-and-underscore-rules', source: '* * *\n\n_ _ _', live: '.cm-md-horizontal-rule', read: 'hr', count: 2 },
   { name: 'table-short-divider', source: 'A | B\n:-- | --:\nx | y', live: '.cm-md-table table', read: 'table', text: 'A' },
   { name: 'inline-backticks', source: '``code with ` inside``', live: '.cm-md-inline-code-content', read: 'code', text: 'code with ` inside' },

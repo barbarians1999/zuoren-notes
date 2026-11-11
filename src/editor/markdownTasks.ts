@@ -16,9 +16,22 @@ export function findMarkdownTasks(source: string): MarkdownTask[] {
 }
 
 export function markdownPreviewSource(source: string, tasks: readonly MarkdownTask[], nonce: string, headings: readonly { line: number; previewAt: number }[] = []): string {
+  const emptyItems: { insertAt: number; html: string }[] = [];
+  if (/(?:^|\n)[ \t>]*(?:[-+*]|\d+[.)])[ \t]*(?:\r?\n|$)/.test(source)) {
+    markdownLanguage.parser.parse(source).iterate({ enter(node) {
+      if (node.name !== 'ListItem') return;
+      const item = node.node, mark = item.firstChild;
+      if (!mark || mark.name !== 'ListMark' || mark.nextSibling) return;
+      const end = source.indexOf('\n', mark.to), lineEnd = end < 0 ? source.length : end;
+      const tail = source.slice(mark.to, lineEnd);
+      if (!/^[ \t]*\r?$/.test(tail)) return;
+      emptyItems.push({ insertAt: lineEnd - (tail.endsWith('\r') ? 1 : 0), html: (tail.replace(/\r$/, '') ? '' : ' ') + '<span></span>' });
+    } });
+  }
   const markers = [
     ...tasks.map(task => ({ insertAt: task.insertAt, html: `<span data-zuoren-task="${nonce}:${task.position}"></span>` })),
     ...headings.map(heading => ({ insertAt: heading.previewAt, html: `${source[heading.previewAt - 1] === '#' ? ' ' : ''}<span data-zuoren-heading="${nonce}:${heading.line}"></span> ` })),
+    ...emptyItems,
   ].sort((a, b) => a.insertAt - b.insertAt);
   const parts: string[] = [];
   let from = 0;

@@ -1,7 +1,7 @@
 {
   "name": "zuoren-notes-reader",
   "productName": "左人笔记",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "type": "module",
   "description": "本地 PDF、EPUB 与 Markdown 研究阅读和笔记软件",
   "private": true,
@@ -59,6 +59,7 @@
     "appId": "com.zuoren.notes",
     "productName": "左人笔记",
     "asar": true,
+    "asarUnpack": ["electron/native/FileMoveWorker.exe"],
     "npmRebuild": false,
     "files": [
       "dist/**/*",

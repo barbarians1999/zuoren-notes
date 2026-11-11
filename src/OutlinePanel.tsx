@@ -8,7 +8,7 @@ export type OutlineItem = { id: string; label: string; depth: number; indicator?
 export function OutlinePanel({ open, label, items, emptyText, introduction, onSelect, returnFocus, className = '' }: {
   open: boolean; label: string; items: OutlineItem[]; emptyText: string;
   introduction?: string;
-  onSelect: (item: OutlineItem) => void; returnFocus: () => HTMLElement | null; className?: string;
+  onSelect: (item: OutlineItem, activation: { keyboard: boolean }) => void; returnFocus: () => HTMLElement | null; className?: string;
 }) {
   const reduced = useContext(ReducedMotionContext);
   const panel = usePanelMotion(open, reduced, '100%', returnFocus);
@@ -17,7 +17,7 @@ export function OutlinePanel({ open, label, items, emptyText, introduction, onSe
     <div className="outline-title">大纲</div>
     {introduction && <p>{introduction}</p>}
     {items.length ? items.map(item => <button key={item.id} style={{ paddingLeft: 10 + Math.min(12, Math.max(0, item.depth)) * 10 }}
-      title={item.label} aria-current={item.active ? 'location' : undefined} onClick={() => onSelect(item)}>
+      title={item.label} aria-current={item.active ? 'location' : undefined} onClick={event => onSelect(item, { keyboard: event.detail === 0 })}>
       {item.indicator && <small>{item.indicator}</small>}<span>{item.label}</span>
     </button>) : <p>{emptyText}</p>}
   </aside>;

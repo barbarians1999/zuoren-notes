@@ -170,12 +170,64 @@ test('PDF native dragging, page geometry, safe text actions, copy and menu delet
   await t.test('starting a drag in the whitespace between PDF lines does not select the remainder of the page', async () => {
     const first = await point(1, 0, 0, false), second = await point(1, 1, 0, false);
     const start = { x: first.x + 2, y: (first.y + second.y) / 2 }, end = await point(1, 1, 999, true);
+    await page.evaluate(() => {
+      window.__pdfDragHeld = false; window.__pdfLiveSelectionWrites = 0;
+      window.__pdfPointerMovePrevented = false;
+      window.__pdfLiveRangeCreates = 0;
+      window.__pdfOriginalSetBaseAndExtent = Selection.prototype.setBaseAndExtent;
+      window.__pdfOriginalCreateRange = document.createRange;
+      document.createRange = function (...args) {
+        if (window.__pdfDragHeld) window.__pdfLiveRangeCreates++;
+        return window.__pdfOriginalCreateRange.apply(this, args);
+      };
+      Selection.prototype.setBaseAndExtent = function (...args) {
+        if (window.__pdfDragHeld) window.__pdfLiveSelectionWrites++;
+        return window.__pdfOriginalSetBaseAndExtent.apply(this, args);
+      };
+      window.addEventListener('pointerdown', () => { window.__pdfDragHeld = true; }, true);
+      window.addEventListener('pointerup', () => { window.__pdfDragHeld = false; }, true);
+      window.addEventListener('pointermove', event => { window.__pdfPointerMovePrevented ||= event.defaultPrevented; });
+    });
     await page.mouse.move(start.x, start.y); await page.mouse.down();
+    const liveSelections = [];
     for (let step = 1; step <= 8; step++) {
       await page.mouse.move(start.x + (end.x - start.x) * step / 8, start.y + (end.y - start.y) * step / 8);
       await page.evaluate(() => new Promise(requestAnimationFrame));
+      liveSelections.push(await page.evaluate(() => window.getSelection()?.toString().replace(/\s+/g, ' ').trim() || ''));
     }
+    await page.evaluate(start => {
+      const selection = window.getSelection();
+      window.__pdfReleaseAnchor = { node: selection.anchorNode, offset: selection.anchorOffset };
+      window.__pdfOriginalCaretRangeFromPoint = document.caretRangeFromPoint;
+      window.__pdfReleaseAnchorQueries = 0;
+      document.caretRangeFromPoint = function (x, y) {
+        if (!window.__pdfDragHeld && Math.abs(x-start.x)<.5 && Math.abs(y-start.y)<.5) {
+          window.__pdfReleaseAnchorQueries++;
+          const range = document.createRange(), node = window.__pdfReleaseAnchor.node;
+          range.setStart(node, node.textContent.length); range.collapse(true); return range;
+        }
+        return window.__pdfOriginalCaretRangeFromPoint?.call(this,x,y) || null;
+      };
+    }, start);
     await page.mouse.up(); await toolbar.waitFor();
+    const liveState = await page.evaluate(() => {
+      Selection.prototype.setBaseAndExtent = window.__pdfOriginalSetBaseAndExtent;
+      document.createRange = window.__pdfOriginalCreateRange;
+      document.caretRangeFromPoint = window.__pdfOriginalCaretRangeFromPoint;
+      const selected=window.getSelection(), anchor=window.__pdfReleaseAnchor;
+      return { writes: window.__pdfLiveSelectionWrites, prevented: window.__pdfPointerMovePrevented, ranges: window.__pdfLiveRangeCreates,
+        releasedAnchorStable: selected.anchorNode===anchor.node && selected.anchorOffset===anchor.offset, releaseAnchorQueries: window.__pdfReleaseAnchorQueries };
+    });
+    const rangeBudget = await layer(1).evaluate(element => 4 * Math.max(...[...element.querySelectorAll('span')].map(span => span.textContent?.length || 0)));
+    assert.ok(liveState.writes > 0, 'the app re-anchors native selection before pointer release');
+    assert.equal(liveState.prevented, false, 'live selection updates preserve browser pointer defaults');
+    assert.equal(liveState.releasedAnchorStable,true,'pointer release preserves the cached anchor even when native hit testing drifts');
+    assert.equal(liveState.releaseAnchorQueries,0,'finalization does not query the native anchor again');
+    assert.ok(liveState.ranges > 0 && liveState.ranges <= rangeBudget,
+      `gap-start character geometry is resolved once, not rescanned on each frame (${liveState.ranges} Range objects; budget ${rangeBudget})`);
+    assert.ok(liveSelections.some(Boolean), 'the native selection updates while the pointer is still down');
+    assert.ok(liveSelections.every(text => !text.includes('Alpha selection') && !text.includes('Charlie selection')),
+      `a drag anchored in the inter-line gap stays on its nearest line while held: ${JSON.stringify(liveSelections)}`);
     const selected = await copy();
     assert.equal(selected, 'Bravo selection second line 1');
     assert.ok((await page.locator('.pdf-text-selection').count()) <= 2, 'a gap-start drag must stay near its intended line');

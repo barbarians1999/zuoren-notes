@@ -1,0 +1,79 @@
+{
+  "protocol": 2,
+  "release_ready": true,
+  "source_sha256": "2047f89d16642915295f12acb82a5f356cceb546728e50779933fde36853e1c6",
+  "binary_sha256": "441b0aecdde772793eaf75fa9ad9af9972fa2c2efa6b3bd73b5a36a51a90f865",
+  "reference_assembly_sha256": {
+    "mscorlib.dll": "cbba0b14d43901ff3d92cc44efe6a79149bfcaa3006c08ca05e186b2a75b54b5",
+    "System.dll": "af12577769e3b0c94fc8e4715cdfd21cbcf0f665bf63489f81e5a0934c94c7e4",
+    "System.Core.dll": "78c77c7250b6e318e69c1162980640bf7da5e8d3303d3abcc32401a52d667139",
+    "System.Web.Extensions.dll": "4ab5606b6a0cafdd5650630bafeddd96d24939f85c2a88dda2aeec69ccf274c0"
+  },
+  "compiler": "Local Windows .NET Framework C# 5 compiler; AnyCPU; explicit installed framework references; non-deterministic qualification build",
+  "runtime": ".NET Framework 4.8, Windows x64 writable fixed local NTFS/exFAT data directories; volume roots and reparse paths are refused",
+  "qualification": "Scoped Windows x64 fixed-local NTFS/exFAT activation after native probe, move/undo/metadata, concurrency and real Electron exFAT drag qualification; broader unrun cases remain documented.",
+  "layout_expected": {
+    "pointerSize": 8,
+    "unicodeSize": 16,
+    "attributesSize": 48,
+    "ioStatusSize": 16,
+    "fileInfoSize": 52,
+    "renameRootOffset": 8,
+    "renameLengthOffset": 16,
+    "renameNameOffset": 20,
+    "dispositionSize": 1
+  },
+  "exit_codes": {
+    "supported": 0,
+    "moved": 0,
+    "unsupported": 3,
+    "failed": 4,
+    "uncertain": 5,
+    "receipt": 0,
+    "unresolved": 6
+  },
+  "compiler_exe_sha256": "aae1db57f898ca8bda18590c56f86ced6d0ead80c22033b76fdfe9119706f116",
+  "qualification_evidence": [
+    {
+      "kind": "native-ntfs",
+      "path": "logs/file-move/windows-native-1794219307674-521473c1-aa60-422e-92d1-d9c09d9ece31.json",
+      "sha256": "7f33eb6e7e5b12102793ec8166f673aff140a927a537e89a2b63a55cd44883f3"
+    },
+    {
+      "kind": "native-exfat",
+      "path": "logs/file-move/windows-native-1794219099164-fa45bbe6-e353-4e52-b0f7-0310e8f46c8a.json",
+      "sha256": "1a11ac91507eb8ba496c18a6e918fe0769832220d20339fd869bb764c15c6d86"
+    },
+    {
+      "kind": "stage-and-concurrency",
+      "path": "../verification/native-stage-0c3i54/RESULT.json",
+      "sha256": "7f0eeb17bed9be7358aeb0eb57d2e3a462f0f56447d2b2f65dca18baa04bf04f"
+    },
+    {
+      "kind": "environment-negative",
+      "path": "../verification/native-environment-0Q61Un/RESULT.json",
+      "sha256": "d356d89b43cc22bee788e1028a73328c1ff41b81701bc0975bedf14a9d53aa06"
+    },
+    {
+      "kind": "electron-exfat",
+      "path": "../verification/r5-ui-runner/candidates/move-ui-exfat-042-20261109/runner/runs/2026-11-09T10-46-41-872Z-fa86add6-1454-41a6-8db6-897b8c9fc0d6/candidate-runner-result.json",
+      "sha256": "faee2b413877c26c3347fb59a536f990d436bec6e105bd2ecd5b68f7bd00f582"
+    }
+  ],
+  "qualified_scope": {
+    "filesystems": [
+      "NTFS",
+      "exFAT"
+    ],
+    "driveTypes": [
+      "fixed-local"
+    ],
+    "refused": [
+      "volume-root",
+      "removable",
+      "network",
+      "reparse"
+    ],
+    "documentation": "docs/file-move/local-qualification-042.md"
+  }
+}

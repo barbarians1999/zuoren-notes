@@ -3,7 +3,7 @@ import { isolateHistory, redo, undo } from '@codemirror/commands';
 import type { EditorView } from '@codemirror/view';
 import type { NoteRead, ReaderApi, RecoveryReference, RecoveryV1, SaveNoteResult } from '../types';
 import type { SaveLabel } from '../readerContext';
-import { DocumentPersistence } from '../documentPersistence.cjs';
+import { DocumentPersistence, type PollResult } from '../documentPersistence.cjs';
 import { sameNoteContent } from '../noteContent.cjs';
 import { diagnostics } from '../diagnostics.cjs';
 import { formatContinuation, markdownHistory } from '../editor/markdownFormatHistory';
@@ -41,6 +41,8 @@ export class NoteDocument {
   recoveryDue = Infinity;
   lastPoll = Date.now();
   polling = false;
+  externalReadError: string | null = null;
+  private pollFlight: Promise<PollResult | 'error'> | null = null;
   views = new Set<NoteViewState>();
   private mounted = new Map<EditorView, NoteViewState>();
   private persistence = new DocumentPersistence();
@@ -289,14 +291,39 @@ export class NoteDocument {
     },
   });
   };
-  async poll() {
-    if (this.polling || this.blocked()) return;
-    this.polling = true; this.lastPoll = Date.now();
-    try { await this.persistence.poll({ snapshot: this.snapshot, blocked: this.blocked, read: path => this.api().readNote(path), apply: (disk, conflict) => {
+  private refreshBlocked = () => this.blocked() || !this.allowEdits() || this.hasImageWork || [...this.mounted.keys()].some(view => view.composing || view.compositionStarted);
+  poll(): Promise<PollResult | 'error'> {
+    if (this.pollFlight) return this.pollFlight;
+    if (this.refreshBlocked()) return Promise.resolve('skipped');
+    this.polling = true; this.lastPoll = Date.now(); this.notify();
+    const task = this.persistence.poll({ snapshot: this.snapshot, blocked: this.refreshBlocked, read: path => this.api().readNote(path), apply: (disk, conflict) => {
       if (conflict) { this.conflictRef.current = { ...disk, conflict: true }; this.label = '外部冲突'; this.trace('poll.conflict'); }
       else { this.noteRef.current = disk; if (!sameNoteContent(disk.content, this.text)) this.replaceText(disk.content); this.label = '已保存'; this.trace('poll.reload'); }
       this.notify();
-    } }); } catch { this.trace('poll.error'); } finally { this.polling = false; }
+    } }).then(result => {
+      if (result !== 'stale' && result !== 'skipped') this.externalReadError = null;
+      return result;
+    }, error => {
+      const firstFailure = !this.externalReadError;
+      this.externalReadError = `无法检查外部变更：${error instanceof Error ? error.message : String(error)}。当前内容已保留；文件可能被删除、改名、占用或编码不受支持，可稍后按 F5 重试。`;
+      this.trace('poll.error');
+      if (firstFailure) this.message(this.externalReadError);
+      return 'error' as const;
+    }).finally(() => { this.polling = false; this.pollFlight = null; if (!this.disposed) this.notify(); });
+    this.pollFlight = task;
+    return task;
+  }
+  async refresh() {
+    const result = await this.poll();
+    if (this.disposed) return result;
+    const messages = {
+      reloaded: '已从磁盘更新笔记。', unchanged: sameNoteContent(this.text, this.note.content) ? '磁盘内容未变化。' : '磁盘内容未变化，当前未保存的编辑已保留。',
+      conflict: '检测到外部修改，未保存的编辑已保留，请选择冲突处理方式。',
+      skipped: '当前正在保存、输入或处理笔记变更，请完成后再刷新；现有内容已保留。',
+      stale: '刷新期间笔记已变化，本次读取未应用；可再按 F5 检查。',
+      error: this.externalReadError || '无法读取磁盘文件，当前内容已保留。',
+    };
+    this.message(messages[result]); return result;
   }
   async hydrateRecovery(id = this.recoveryId) {
     try {

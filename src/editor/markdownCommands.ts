@@ -42,7 +42,9 @@ export function exitEmptyListItem(view: EditorView) {
   }
   const replacementPrefix = sourcePrefix.slice(0, prefixEnd) + ' '.repeat(Math.max(0, targetColumn - prefixColumn));
   const from = line.from;
-  const insert = parentItem ? replacementPrefix + state.sliceDoc(mark.from, line.to) : quotePrefix;
+  const insert = parentItem && match[5] === undefined && /^[-+*]$/.test(match[2])
+    ? quotePrefix
+    : parentItem ? replacementPrefix + state.sliceDoc(mark.from, line.to) : quotePrefix;
   view.dispatch({ changes: { from, to: line.to, insert }, selection: { anchor: from + insert.length }, userEvent: 'input' });
   return true;
 }

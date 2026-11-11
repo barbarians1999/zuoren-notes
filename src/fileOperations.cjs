@@ -29,6 +29,7 @@ class MutationBarrier {
   constructor(ttlMs = 30_000) {
     this.ttlMs = Math.max(1_000, Number(ttlMs) || 30_000);
     this.entries = new Map();
+    this.pins = new Set();
   }
 
   prune(now = Date.now()) {
@@ -41,6 +42,9 @@ class MutationBarrier {
     this.prune(now);
     this.entries.set(normalized, now + this.ttlMs);
   }
+  pin(path) { const normalized = filePathKey(path); if (normalized) this.pins.add(normalized); }
+  unpin(path) { const normalized = filePathKey(path); if (normalized) this.pins.delete(normalized); }
+  releaseExact(path) { const normalized = filePathKey(path); if (normalized) this.entries.delete(normalized); }
 
   release(path, now = Date.now()) {
     const normalized = filePathKey(path);
@@ -55,7 +59,7 @@ class MutationBarrier {
     const normalized = filePathKey(path);
     if (!normalized) return false;
     this.prune(now);
-    return [...this.entries.keys()].some(blocked => sameOrDescendantPath(normalized, blocked));
+    return [...this.pins, ...this.entries.keys()].some(blocked => sameOrDescendantPath(normalized, blocked));
   }
 }
 

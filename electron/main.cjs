@@ -4,11 +4,15 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { fileURLToPath, pathToFileURL } = require('node:url');
 const { FileStore, digest, inside } = require('./storage.cjs');
+const { FileMoves } = require('./file-moves.cjs');
+const { MoveJournal } = require('./move-journal.cjs');
+const { assertMoveSession, remapMoveSettings, sessionHash } = require('./move-session.cjs');
 const { recoveryIdPattern, validateSession, sessionFilePaths } = require('./session.cjs');
 const { SettingsStore } = require('./settings.cjs');
 const { readSettingsFile } = require('./settings-file.cjs');
 const { saveNoteAndCleanup } = require('./note-service.cjs');
 const { installWindowFocus } = require('./window-focus.cjs');
+const { installFileRefreshShortcut } = require('./file-refresh-shortcut.cjs');
 const { noteImageBytes, openImage } = require('./note-image.cjs');
 
 if (process.env.ZHAOYE_TEST_USER_DATA) app.setPath('userData', process.env.ZHAOYE_TEST_USER_DATA);
@@ -19,6 +23,22 @@ app.commandLine.appendSwitch('disable-gpu');
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'reader-asset', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 const store = new FileStore();
+const fileMoves = new FileMoves(store, {
+  journal: new MoveJournal(path.join(app.getPath('userData'), 'file-move-transactions')),
+  onPrepare: async plan => {
+    await settingsStore.flush();
+    const settings = await readSettings({ strictMove: true });
+    assertMoveSession(settings, plan);
+    const mapped = remapMoveSettings(settings, { oldPath: plan.source, entry: { path: plan.target } });
+    return { beforeHash: sessionHash(settings.session), afterHash: sessionHash(mapped.session) };
+  },
+  onFinalize: (result, intent) => settingsStore.update(settings => {
+    const state = intent.plan.sessionState, current = sessionHash(settings.session);
+    if (!state || current !== state.beforeHash && current !== state.afterHash) throw new Error('工作现场与持久移动摘要不符，恢复引用保持保护；请先核对设置原件。');
+    return remapMoveSettings(settings, result);
+  }, { read: () => readSettings({ strictMove: true }) }),
+});
+store.moveGuard = (file, options) => fileMoves.assertAccess(file, options);
 const jobs = new Map();
 let mainWindow;
 let withWindowDialog;
@@ -52,9 +72,13 @@ app.on('open-file', (event, file) => {
 function settingsFile() { return path.join(app.getPath('userData'), 'settings.json'); }
 const emptySettings = () => ({ recentFiles: [], roots: [], session: null });
 let settingsWarning = '';
-async function readSettings() {
+async function readSettings({ strictMove = false } = {}) {
     const { parsed, backup } = await readSettingsFile(settingsFile());
     if (backup) settingsWarning = `设置文件损坏，原件已保留在 ${backup}；已使用空设置启动。`;
+    if (strictMove && (!parsed || backup || !Object.hasOwn(parsed, 'session') || parsed.session !== null && !validateSession(parsed.session)
+      || !Array.isArray(parsed.roots) || !parsed.roots.every(item => typeof item === 'string')
+      || !Array.isArray(parsed.recentFiles) || !parsed.recentFiles.every(item => typeof item === 'string')))
+      throw new Error('移动工作现场缺失、损坏或无效，事务保持闭锁；请保留设置原件和备份。');
     if (!parsed) return emptySettings();
     const window = parsed.window && typeof parsed.window === 'object' ? {
       ...(Number.isFinite(parsed.window.x) ? { x: Math.round(parsed.window.x) } : {}),
@@ -95,7 +119,7 @@ async function restoreGrants() {
   // notes outside the chosen root. Restore grants for the complete session.
   const sessionFiles = sessionFilePaths(settings.session);
   for (const file of new Set(sessionFiles)) try { await store.grantFile(file); } catch { /* renderer reports unavailable files */ }
-  if (roots.length !== (settings.roots || []).length || recentFiles.length !== (settings.recentFiles || []).length) {
+  if (!fileMoves.journal.hasPending && !fileMoves.journal.problem && (roots.length !== (settings.roots || []).length || recentFiles.length !== (settings.recentFiles || []).length)) {
     // Keep cleanup inside the same read -> mutate -> write queue as every
     // other settings/session update.  A direct write here could otherwise
     // race with a session save during startup and restore an old snapshot.
@@ -241,6 +265,7 @@ function installHandlers() {
       const updated = { ...current };
       if (patch?.window && typeof patch.window === 'object') updated.window = patch.window;
       if (patch && Object.hasOwn(patch, 'session')) {
+        if (fileMoves.sessionLocked) throw new Error('移动事务尚未确认，工作现场保持保护。');
         const session = patch.session === null ? null : validateSession(patch.session);
         if (session || patch.session === null) updated.session = session;
       }
@@ -248,12 +273,17 @@ function installHandlers() {
     });
   });
   handle('save-session', async (_event, session) => {
+    await fileMoves.journal.load();
+    if (fileMoves.sessionLocked) throw new Error('移动事务尚未完成，旧工作现场不会覆盖持久现场。');
     const validated = validateSession(session);
     if (!validated) throw new Error('工作现场数据无效');
-    return settingsStore.update(settings => ({ ...settings, session: validated }));
+    return settingsStore.update(settings => {
+      if (fileMoves.sessionLocked) throw new Error('移动事务尚未完成，旧工作现场不会覆盖持久现场。');
+      return { ...settings, session: validated };
+    });
   });
   handle('show-item-in-folder', async (_event, file) => {
-    const checked = await store.checked(file);
+    const checked = await store.checked(file, { inspect: true });
     shell.showItemInFolder(checked);
     return true;
   });
@@ -268,48 +298,63 @@ function installHandlers() {
     if (renamed.kind === 'file') await rememberFile(renamed.path);
     return renamed;
   });
-  handle('trash-entry', async (_event, file) => {
-    const checked = await store.checked(file);
-    await shell.trashItem(checked);
-    store.forgetEntry(checked);
-    return true;
+  const rememberMove = async result => {
+    if (result.ok) try { await rememberFile(result.entry.path); }
+    catch { return { ...result, warning: [result.warning, '文件已移动，但最近文件记录暂未更新。'].filter(Boolean).join(' ') }; }
+    return result;
+  };
+  handle('move-file', async (_event, input) => rememberMove(await fileMoves.move(input)));
+  handle('file-move-capability', () => fileMoves.capability());
+  handle('undo-file-move', async (_event, input) => rememberMove(await fileMoves.undo(input)));
+  handle('file-move-status', (_event, operationId) => fileMoves.status(operationId));
+  handle('pending-file-move', () => fileMoves.pendingIssue());
+  handle('finalize-file-move', (_event, operationId) => fileMoves.finalize(operationId));
+  handle('recover-file-move', async (_event, operationId) => rememberMove(await fileMoves.recover(operationId)));
+  handle('trash-entry', (_event, file) => store.entryMutation(async () => {
+    const checked = await store.checked(file, { mutation: true });
+    await shell.trashItem(checked); store.forgetEntry(checked); return true;
+  }));
+  const createDialogNote = (file, content) => store.entryMutation(async () => {
+    if (!/\.(md|markdown)$/i.test(file) || typeof content !== 'string') throw new Error('只能创建 Markdown 笔记');
+    // The native save dialog authorizes this exact new path. Do not grant its
+    // parent or write any bytes until both spellings pass the move guard.
+    await fileMoves.assertAccess(file, { mutation: true });
+    const canonical = path.join(await fs.realpath(path.dirname(file)), path.basename(file));
+    await fileMoves.assertAccess(canonical, { mutation: true });
+    await fs.writeFile(canonical, content, { encoding: 'utf8', flag: 'wx' });
+    const granted = await store.grantFile(canonical);
+    await rememberFile(granted);
+    return store.readNote(granted);
   });
   handle('create-note', async (_event, input = {}) => {
     const result = await withWindowDialog(() => dialog.showSaveDialog(mainWindow, { defaultPath: input.suggestedName || '新笔记.md', filters: [{ name: 'Markdown', extensions: ['md'] }] }));
     if (result.canceled || !result.filePath) return null;
     const file = path.extname(result.filePath) ? result.filePath : `${result.filePath}.md`;
-    try { await fs.access(file); throw new Error('目标文件已存在，请换一个文件名'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-    await store.grantFile(path.dirname(file));
-    await fs.writeFile(file, input.initialContent || '', 'utf8');
-    const granted = await store.grantFile(file);
-    await rememberFile(granted);
-    return store.readNote(granted);
+    return createDialogNote(file, input.initialContent || '');
   });
   handle('save-as', async (_event, input) => {
     const result = await withWindowDialog(() => dialog.showSaveDialog(mainWindow, { defaultPath: input.suggestedName || '笔记.md', filters: [{ name: 'Markdown', extensions: ['md'] }] }));
     if (result.canceled || !result.filePath) return null;
     const file = path.extname(result.filePath) ? result.filePath : `${result.filePath}.md`;
-    try { await fs.access(file); throw new Error('目标文件已存在，请换一个文件名'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-    await store.grantFile(path.dirname(file));
-    await fs.writeFile(file, input.content || '', 'utf8');
-    const granted = await store.grantFile(file);
-    await rememberFile(granted);
-    return store.readNote(granted);
+    return createDialogNote(file, input.content || '');
   });
-  handle('save-attachment', async (_event, input) => {
-    const source = await store.checked(input.sourcePath);
+  handle('save-attachment', (_event, input) => store.entryMutation(async () => {
+    const source = await store.checked(input.sourcePath, { mutation: true });
     if (!/\.(pdf|md|markdown)$/i.test(source)) throw new Error('附件必须关联 PDF 或 Markdown');
     if (input.purpose !== undefined && input.purpose !== 'note-image') throw new Error('附件用途无效');
     if (input.purpose === 'note-image' && !/\.(md|markdown)$/i.test(source)) throw new Error('粘贴图片必须关联 Markdown 笔记');
     const image = input.purpose === 'note-image' ? noteImageBytes(input) : null;
     const attach = path.join(path.dirname(source), 'attachments');
+    await store.checked(attach, { create: true, asset: true, mutation: true });
     await fs.mkdir(attach, { recursive: true });
+    await store.checked(attach, { asset: true, mutation: true });
     if (image && !inside(path.dirname(source), await fs.realpath(attach))) throw new Error('附件文件夹指向笔记目录以外，已停止写入');
     const extension = image?.extension || String(input.extension || 'png').replace(/[^a-z0-9]/gi, '').toLowerCase() || 'png';
     const target = path.join(attach, `${Date.now()}-${crypto.randomUUID()}.${extension}`);
+    await store.checked(target, { create: true, asset: true, mutation: true });
     await fs.writeFile(target, image?.bytes || Buffer.from(input.data), { flag: 'wx' });
     return path.relative(path.dirname(source), target).replace(/\\/g, '/');
-  });
+  }));
   handle('open-image', (_event, file) => openImage(store, shell, file));
   handle('open-markdown-link', async (_event, input) => {
     const source = await store.checked(input?.sourcePath);
@@ -427,6 +472,7 @@ function createWindow(settings = {}) {
     return { action: 'deny' };
   });
   // Native shortcut also works when focus is inside an EPUB iframe.
+  installFileRefreshShortcut(mainWindow.webContents);
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if (input.type === 'keyDown' && input.key === 'F11' && !input.isAutoRepeat && !input.control && !input.alt && !input.meta) {
       event.preventDefault();
@@ -488,7 +534,11 @@ else {
         { id: 'quit-application', label: `退出 ${app.getName()}`, accelerator: 'Command+Q', click: () => app.quit() },
       ] }, { role: 'editMenu' }, { role: 'windowMenu' },
     ]) : null);
-    const settings = await restoreGrants().catch(() => emptySettings());
+    await fileMoves.journal.load();
+    let settings = await restoreGrants().catch(() => emptySettings());
+    await fileMoves.resumeKnown();
+    settings = await readSettings().catch(() => settings);
+    if (fileMoves.sessionLocked) settingsWarning = [settingsWarning, '上次文件移动尚未确认，相关路径保持保护，请先核对移动结果。'].filter(Boolean).join('；');
     await authorizeLaunchArgs();
     protocol.handle('reader-asset', async request => {
       try {

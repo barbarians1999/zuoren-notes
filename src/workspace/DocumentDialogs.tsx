@@ -5,25 +5,27 @@ import { DialogFrame } from '../ui/overlays';
 
 // Stay inside the renderer: blocking window.confirm can leave Electron's
 // native owner active while its content no longer receives input on Windows.
-function useDialogAction() {
+function useDialogAction(resetKey?: string) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const locked = useRef(false), mounted = useRef(true);
+  const locked = useRef(false), mounted = useRef(true), version = useRef(0);
+  useLayoutEffect(() => { version.current++; setError(''); }, [resetKey]);
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const run = async (action: () => void | Promise<void | boolean>) => {
     if (locked.current) return;
-    locked.current = true; setBusy(true); setError('');
-    try { if (await action() === false && mounted.current) setError('操作尚未完成，请处理提示后重试。'); }
-    catch (failure) { if (mounted.current) setError(`操作失败：${String(failure)}`); }
+    locked.current = true; setBusy(true); setError(''); const generation = version.current;
+    try { if (await action() === false && mounted.current && generation === version.current) setError('操作尚未完成，请处理提示后重试。'); }
+    catch (failure) { if (mounted.current && generation === version.current) setError(`操作失败：${String(failure)}`); }
     finally { locked.current = false; if (mounted.current) setBusy(false); }
   };
   return { busy, error, run };
 }
 
-export function TrashConfirmation({ name, onCancel, onConfirm }: { name: string; onCancel: () => void; onConfirm: () => void | Promise<boolean | void> }) {
-  const title = useId(), description = useId(), action = useDialogAction();
-  return <DialogFrame labelledBy={title} describedBy={description} onCancel={onCancel} busy={action.busy}>
+export function TrashConfirmation({ name, onCancel, onConfirm, open = true, superseded = false }: { name: string; onCancel: () => void; onConfirm: () => void | Promise<boolean | void>; open?: boolean; superseded?: boolean }) {
+  const title = useId(), description = useId(), action = useDialogAction(`${open}:${name}`);
+  const lastName = useRef(name); if (open) lastName.current = name;
+  return <DialogFrame open={open && !superseded} exitImmediately={superseded} labelledBy={title} describedBy={description} onCancel={onCancel} busy={action.busy}>
     <div className="dialog-head"><h2 id={title}><AlertTriangle size={20}/>移到回收站</h2><button disabled={action.busy} aria-label="取消回收" onClick={onCancel}><X/></button></div>
-    <p id={description}>确定将“{name}”移到回收站吗？文件可以从 Windows 回收站恢复。</p>
+    <p id={description}>确定将“{lastName.current}”移到回收站吗？文件可以从 Windows 回收站恢复。</p>
     {action.error && <p className="dialog-error" role="alert">{action.error}</p>}
     <div className="dialog-actions"><button data-dialog-default disabled={action.busy} onClick={onCancel}>取消</button><button disabled={action.busy} className="primary" onClick={() => void action.run(onConfirm)}>移到回收站</button></div>
   </DialogFrame>;

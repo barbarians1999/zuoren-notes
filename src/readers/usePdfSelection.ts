@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import type { ActivePdf } from '../readerContext';
-import { capturePdfTextSelection, selectedPdfPages, setPdfSelectionFromPoints, type PdfTextSelection } from './pdfSelection';
+import { capturePdfTextSelection, createPdfTextEndpointCache, isPdfTextEndpointCacheValid, pdfPageNumbersBetween, pdfSelectionEndpointDirections, pdfSelectionPointsAfterScroll, pdfTextEndpointLayerChanged, pdfTextEndpointLayerState, pdfTextPositionFromEndpointCache, selectedPdfPages, setPdfSelectionFromPoints, type PdfTextEndpointCache, type PdfTextEndpointLayerState, type PdfTextSelection } from './pdfSelection';
 import type { PdfTextAction, PdfTextActionHandler, PdfTextActionResult } from './pdfTextAction';
 
 export function usePdfSelection({ pdf, root, tool, onTextAction, onMessage, onClickPoint, onStart }: {
@@ -12,7 +12,7 @@ export function usePdfSelection({ pdf, root, tool, onTextAction, onMessage, onCl
   const [pins, setPins] = useState<number[]>([]);
   const [busy, setBusy] = useState(false), lock = useRef(false);
   const [result, setResult] = useState<PdfTextActionResult | null>(null);
-  const drag = useRef<{ x: number; y: number; scrollX: number; scrollY: number; key: object; page: number } | null>(null);
+  const drag = useRef<{ x: number; y: number; focusX: number; focusY: number; scrollX: number; scrollY: number; pointerId: number; key: object; page: number; pageSlot: HTMLElement | null; anchorCacheReady: boolean; anchorCache: PdfTextEndpointCache | null; anchorProbe: PdfTextEndpointLayerState } | null>(null);
   const generation = useRef(0);
   const latest = useRef({ pdf, tool, onTextAction, onMessage, onClickPoint, onStart });
   latest.current = { pdf, tool, onTextAction, onMessage, onClickPoint, onStart };
@@ -33,6 +33,40 @@ export function usePdfSelection({ pdf, root, tool, onTextAction, onMessage, onCl
       const pages = [...new Set([start.page, ...selectedPdfPages(element)])];
       setPins(old => { const next = [...new Set([...old, ...pages])]; return next.length === old.length ? old : next; });
     };
+    const updateDragSelection = (start: NonNullable<typeof drag.current>, released = false) => {
+      const current = latest.current, host = root.current;
+      if ((drag.current !== start && !(released && !drag.current)) || !host || current.pdf?.data !== start.key || (current.tool !== 'select' && current.tool !== 'highlight')) return;
+      const scroller = host.querySelector<HTMLElement>('.pdf-canvas-wrap');
+      const points = pdfSelectionPointsAfterScroll(
+        { x: start.x, y: start.y }, { x: start.focusX, y: start.focusY },
+        { x: start.scrollX, y: start.scrollY }, { x: scroller?.scrollLeft || 0, y: scroller?.scrollTop || 0 },
+      );
+      const focusPage = [...host.querySelectorAll<HTMLElement>('[data-pdf-page]')].find(slot => {
+        const rect = slot.getBoundingClientRect();
+        return points.focus.x >= rect.left && points.focus.x <= rect.right && points.focus.y >= rect.top && points.focus.y <= rect.bottom;
+      });
+      const endPage = Number(focusPage?.dataset.pdfPage) || start.page;
+      const pages = [...new Set([...pdfPageNumbersBetween(start.page, endPage), ...selectedPdfPages(host)])];
+      setPins(old => { const next = [...new Set([...old, ...pages])]; return next.length === old.length ? old : next; });
+      const layerState = start.pageSlot ? pdfTextEndpointLayerState(start.pageSlot) : { layer: null, revision: '', firstSpan: null };
+      const shouldResolveAnchor = !start.anchorCacheReady
+        || (start.anchorCache && !isPdfTextEndpointCacheValid(host, start.anchorCache))
+        || (!start.anchorCache && pdfTextEndpointLayerChanged(start.anchorProbe, layerState));
+      if (shouldResolveAnchor) {
+        start.anchorCache = createPdfTextEndpointCache(host, points.anchor); start.anchorCacheReady = true; start.anchorProbe = layerState;
+      }
+      const toward = pdfSelectionEndpointDirections(points.anchor, points.focus).start;
+      const cachedAnchor = start.anchorCache ? pdfTextPositionFromEndpointCache(host, start.anchorCache, toward) : null;
+      if (start.anchorCache && !cachedAnchor) {
+        start.anchorCache = createPdfTextEndpointCache(host, points.anchor); start.anchorProbe = layerState;
+        const refreshed = start.anchorCache && pdfTextPositionFromEndpointCache(host, start.anchorCache, toward);
+        setPdfSelectionFromPoints(host, points.anchor, points.focus, undefined, refreshed);
+      } else setPdfSelectionFromPoints(host, points.anchor, points.focus, undefined, cachedAnchor);
+    };
+    const scheduleDragSelection = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => { frame = 0; const start = drag.current; if (start) updateDragSelection(start); });
+    };
     const down = (event: PointerEvent) => {
       const element = event.target instanceof Element ? event.target : null, host = root.current, current = latest.current;
       if (!element || !host || !current.pdf) return;
@@ -40,12 +74,22 @@ export function usePdfSelection({ pdf, root, tool, onTextAction, onMessage, onCl
       if (!host.contains(element)) { clear(); return; }
       if (element.closest('input, textarea')) { clear(); return; }
       const holder = element.closest('.canvas-holder');
-      if (!holder || event.button !== 0 || (current.tool !== 'select' && current.tool !== 'highlight')) return;
+      if (!holder || event.button !== 0 || !event.isPrimary || (current.tool !== 'select' && current.tool !== 'highlight')) return;
+      cancelAnimationFrame(frame); frame = 0;
       clear(); current.onStart();
-      const number = Number(holder.closest<HTMLElement>('[data-pdf-page]')?.dataset.pdfPage);
+      const pageSlot = holder.closest<HTMLElement>('[data-pdf-page]'), number = Number(pageSlot?.dataset.pdfPage);
       const scroller = host.querySelector<HTMLElement>('.pdf-canvas-wrap');
-      drag.current = { x: event.clientX, y: event.clientY, scrollX: scroller?.scrollLeft || 0, scrollY: scroller?.scrollTop || 0, key: current.pdf.data, page: number }; setPins([number]);
+      drag.current = { x: event.clientX, y: event.clientY, focusX: event.clientX, focusY: event.clientY, scrollX: scroller?.scrollLeft || 0, scrollY: scroller?.scrollTop || 0, pointerId: event.pointerId, key: current.pdf.data, page: number, pageSlot,
+        anchorCacheReady: false, anchorCache: null, anchorProbe: pageSlot ? pdfTextEndpointLayerState(pageSlot) : { layer: null, revision: '', firstSpan: null } }; setPins([number]);
     };
+    const move = (event: PointerEvent) => {
+      const start = drag.current;
+      if (!start || event.pointerId !== start.pointerId || !event.isPrimary) return;
+      start.focusX = event.clientX; start.focusY = event.clientY;
+      // Leave native pointer handling enabled; re-anchor its live range once per frame.
+      scheduleDragSelection();
+    };
+    const scroll = () => { if (drag.current) scheduleDragSelection(); };
     const collect = (start: typeof drag.current, event?: PointerEvent) => {
       const current = latest.current, element = root.current;
       if (!element || !current.pdf || (start && current.pdf.data !== start.key) || (current.tool !== 'select' && current.tool !== 'highlight')) return;
@@ -54,16 +98,27 @@ export function usePdfSelection({ pdf, root, tool, onTextAction, onMessage, onCl
       if (!value && start && event && Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 5 && event.target instanceof Element && element.contains(event.target)) current.onClickPoint(event.clientX, event.clientY, event.target);
     };
     const up = (event: PointerEvent) => {
-      const start = drag.current; if (!start) return;
+      const start = drag.current; if (!start || event.pointerId !== start.pointerId) return;
       const token = generation.current;
-      const finish = { x: event.clientX, y: event.clientY };
+      start.focusX = event.clientX; start.focusY = event.clientY;
+      cancelAnimationFrame(frame); frame = 0;
+      updateDragSelection(start);
+      const finish = { x: start.focusX, y: start.focusY };
       drag.current = null;
-      cancelAnimationFrame(frame);
       const scroller = root.current?.querySelector<HTMLElement>('.pdf-canvas-wrap');
-      const points = { anchor: { x: start.x - ((scroller?.scrollLeft || 0) - start.scrollX), y: start.y - ((scroller?.scrollTop || 0) - start.scrollY) }, focus: finish };
+      const points = pdfSelectionPointsAfterScroll(
+        { x: start.x, y: start.y }, finish,
+        { x: start.scrollX, y: start.scrollY }, { x: scroller?.scrollLeft || 0, y: scroller?.scrollTop || 0 },
+      );
       frame = requestAnimationFrame(() => { void (async () => {
-        if (root.current) setPdfSelectionFromPoints(root.current, points.anchor, points.focus);
-        const pages = root.current ? selectedPdfPages(root.current) : [];
+        if (token !== generation.current) return;
+        updateDragSelection(start, true);
+        const focusPage = root.current ? [...root.current.querySelectorAll<HTMLElement>('[data-pdf-page]')].find(slot => {
+          const rect = slot.getBoundingClientRect();
+          return points.focus.x >= rect.left && points.focus.x <= rect.right && points.focus.y >= rect.top && points.focus.y <= rect.bottom;
+        }) : null;
+        const endPage = Number(focusPage?.dataset.pdfPage) || start.page;
+        const pages = [...new Set([...(root.current ? selectedPdfPages(root.current) : []), ...pdfPageNumbersBetween(start.page, endPage)])];
         setPins(old => [...new Set([...old, ...pages])]);
         // A fast cross-page drag can extend through recycled page placeholders.
         // Keep every covered layer mounted until PDF.js has supplied its text;
@@ -73,11 +128,14 @@ export function usePdfSelection({ pdf, root, tool, onTextAction, onMessage, onCl
         while (token === generation.current && pending() && performance.now() < deadline) await new Promise(resolve => window.setTimeout(resolve, 20));
         if (token !== generation.current) return;
         if (pending()) { clear(); latest.current.onMessage('所选页面的文字尚未载入，请待页面显示完成后重新选择。'); return; }
-        if (root.current) setPdfSelectionFromPoints(root.current, points.anchor, points.focus);
+        updateDragSelection(start, true);
         collect(start, event); setPins([]);
       })(); });
     };
-    const cancel = () => { cancelAnimationFrame(frame); clear(); };
+    const cancel = (event: PointerEvent) => {
+      if (!drag.current || event.pointerId !== drag.current.pointerId) return;
+      cancelAnimationFrame(frame); frame = 0; clear();
+    };
     const keyUp = (event: KeyboardEvent) => {
       if (!root.current?.contains(event.target as Node) || !event.shiftKey || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
       const token = generation.current;
@@ -94,13 +152,15 @@ export function usePdfSelection({ pdf, root, tool, onTextAction, onMessage, onCl
       if (!current || latest.current.pdf?.data !== current.documentKey || !belongsToReader || editingText) return;
       if (event.clipboardData) { event.clipboardData.setData('text/plain', current.quote); event.preventDefault(); }
     };
-    window.addEventListener('pointerdown', down, true); window.addEventListener('pointerup', up);
-    window.addEventListener('pointercancel', cancel); window.addEventListener('keyup', keyUp);
+    window.addEventListener('pointerdown', down, true); window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up); window.addEventListener('pointercancel', cancel);
+    window.addEventListener('scroll', scroll, true); window.addEventListener('keyup', keyUp);
     window.addEventListener('copy', copy); window.document.addEventListener('selectionchange', pin);
     return () => {
       generation.current += 1;
-      cancelAnimationFrame(frame); window.removeEventListener('pointerdown', down, true); window.removeEventListener('pointerup', up);
-      window.removeEventListener('pointercancel', cancel); window.removeEventListener('keyup', keyUp);
+      cancelAnimationFrame(frame); window.removeEventListener('pointerdown', down, true); window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', cancel);
+      window.removeEventListener('scroll', scroll, true); window.removeEventListener('keyup', keyUp);
       window.removeEventListener('copy', copy); window.document.removeEventListener('selectionchange', pin);
     };
   }, []);

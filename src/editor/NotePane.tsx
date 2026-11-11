@@ -18,6 +18,7 @@ import { resolveScrollTop } from '../sessionState.cjs';
 import { MarkdownWorkspaceHeader } from '../markdownWorkspace';
 import { createPortal } from 'react-dom';
 import { taskToggleChange } from './markdownTasks';
+import { cancelSourceOutlineMotion, OutlineScrollMotion, outlineTargetTop, scrollSourceOutline } from './outlineScrollMotion';
 export function NotePane({ paneId, onActivate, findCommand, note, text, mode, setMode, onSave, onJump, revision, label, caption, scrollMemory, onScrollMemory, excerptRegister, hidden, sharedDocument, tab, unifiedHeader, headerTarget, headerControls }: { paneId: FindCommand['pane']; onActivate: (pane: FindCommand['pane']) => void; findCommand: FindCommand | null; note: NoteRead | null; text: string; mode: NoteMode; setMode: (mode: NoteMode) => void; onSave: () => void; onJump: (anchor: ReaderAnchor, fromNotePath?: string) => void; revision: number; label?: string; caption?: React.ReactNode; scrollMemory: MarkdownScrollMemory[]; onScrollMemory: (entry: MarkdownScrollMemory) => void; excerptRegister?: React.MutableRefObject<(block: string) => boolean>; hidden?: boolean; sharedDocument: NoteDocument | null; tab: NoteViewState | null; unifiedHeader?: boolean; headerTarget?: HTMLElement | null; headerControls?: React.ReactNode }) {
   const [outline, setOutline] = useState(false);
   const reducedMotion = useContext(ReducedMotionContext);
@@ -36,6 +37,12 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
   const liveNotePath = useRef(note?.path); liveNotePath.current = note?.path;
   const previousContent = useRef<{ path: string | null; mode: NoteMode }>({ path: note?.path || null, mode });
   const contentAnimation = useRef<Animation | null>(null);
+  const outlineScroll = useRef<OutlineScrollMotion | null>(null);
+  useLayoutEffect(() => () => {
+    outlineScroll.current?.destroy(); outlineScroll.current = null;
+    if (sourceView) cancelSourceOutlineMotion(sourceView);
+  }, [note?.path, tab?.id, mode, hidden, sourceView, revision]);
+  useLayoutEffect(() => { if (reducedMotion) outlineScroll.current?.finish(); }, [reducedMotion]);
   const openMarkdownLink = useCallback((href: string) => {
     const sourcePath = note?.path;
     if (!sourcePath) return;
@@ -67,6 +74,13 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
   const lastSelectionToolbar = useRef<{ left: number; top: number } | null>(null);
   if (selectionToolbar) lastSelectionToolbar.current = selectionToolbar;
   const [sourceSelection, setSourceSelection] = useState<{ from: number; to: number; left: number; top: number; width: number; height: number } | null>(null);
+  const pointerSelecting = useRef(false);
+  const selectionPointerId = useRef<number | null>(null);
+  const selectionFrame = useRef<number | null>(null);
+  const selectionGeneration = useRef(0);
+  const handleSourceSelection = useCallback((selection: { from: number; to: number; left: number; top: number; width: number; height: number } | null) => {
+    if (!pointerSelecting.current || !selection) setSourceSelection(selection);
+  }, []);
   const onJumpRef = useRef(onJump); onJumpRef.current = onJump;
   const scrollMemoryRef = useRef(scrollMemory); scrollMemoryRef.current = scrollMemory;
   const onScrollMemoryRef = useRef(onScrollMemory); onScrollMemoryRef.current = onScrollMemory;
@@ -232,8 +246,8 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
     return () => document.removeEventListener('selectionchange', updateSelection);
   }, [note?.path, mode]);
   useEffect(() => {
-    if (mode !== 'edit') setSourceSelection(null);
-    if (mode !== 'edit' || !sourceSelection || !sourceView) {
+    if (mode !== 'edit' || hidden) setSourceSelection(null);
+    if (mode !== 'edit' || hidden || !sourceSelection || !sourceView) {
       setSelectionToolbar(null);
       setSelectedUnits(0);
       return;
@@ -243,7 +257,59 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
     const maxLeft = Math.max(10, window.innerWidth - toolbarWidth - 10);
     setSelectedUnits(countTextUnits(sourceView.state.sliceDoc(sourceSelection.from, sourceSelection.to)));
     setSelectionToolbar({ left: Math.min(maxLeft, Math.max(10, centered)), top: Math.max(8, sourceSelection.top - 44) });
-  }, [mode, sourceSelection, sourceView]);
+  }, [mode, hidden, sourceSelection, sourceView]);
+  useEffect(() => {
+    if (!sourceView) return;
+    const cancelPointerSelection = () => {
+      selectionGeneration.current++;
+      pointerSelecting.current = false;
+      selectionPointerId.current = null;
+      if (selectionFrame.current !== null) cancelAnimationFrame(selectionFrame.current);
+      selectionFrame.current = null;
+      setSourceSelection(null);
+      setSelectionToolbar(null);
+      setSelectedUnits(0);
+    };
+    const startPointerSelection = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      if (selectionFrame.current !== null) cancelAnimationFrame(selectionFrame.current);
+      selectionFrame.current = null;
+      selectionGeneration.current++;
+      pointerSelecting.current = true;
+      selectionPointerId.current = event.pointerId;
+      setSelectionToolbar(null);
+      setSelectedUnits(0);
+    };
+    const finishPointerSelection = (event: PointerEvent) => {
+      if (!pointerSelecting.current || event.pointerId !== selectionPointerId.current) return;
+      const generation = selectionGeneration.current;
+      selectionFrame.current = requestAnimationFrame(() => {
+        selectionFrame.current = null;
+        if (!pointerSelecting.current || generation !== selectionGeneration.current) return;
+        pointerSelecting.current = false;
+        selectionPointerId.current = null;
+        const selection = sourceView.state.selection.main;
+        if (!sourceView.hasFocus || selection.empty) { setSourceSelection(null); return; }
+        const start = sourceView.coordsAtPos(selection.from), end = sourceView.coordsAtPos(selection.to);
+        if (!start || !end) { setSourceSelection(null); return; }
+        setSourceSelection({ from: selection.from, to: selection.to, left: Math.min(start.left, end.left), top: Math.min(start.top, end.top), width: Math.abs(end.left - start.left), height: Math.max(start.bottom, end.bottom) - Math.min(start.top, end.top) });
+      });
+    };
+    const handlePointerCancel = (event: PointerEvent) => {
+      if (event.pointerId === selectionPointerId.current) cancelPointerSelection();
+    };
+    sourceView.dom.addEventListener('pointerdown', startPointerSelection);
+    window.addEventListener('pointerup', finishPointerSelection);
+    window.addEventListener('pointercancel', handlePointerCancel);
+    window.addEventListener('blur', cancelPointerSelection);
+    return () => {
+      sourceView.dom.removeEventListener('pointerdown', startPointerSelection);
+      window.removeEventListener('pointerup', finishPointerSelection);
+      window.removeEventListener('pointercancel', handlePointerCancel);
+      window.removeEventListener('blur', cancelPointerSelection);
+      cancelPointerSelection();
+    };
+  }, [sourceView, mode, note?.path, hidden]);
 
   function navigate(direction: 1 | -1) { setCurrentIndex(stepMatchIndex(matches.length, currentIndex, direction)); }
   function toggleReplace() {
@@ -361,14 +427,18 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
       {imageMessage && <button aria-label="关闭编辑提示" onClick={() => setImageMessage('')}>×</button>}
     </div>}
     <div className="note-body" ref={host}>
-      {!note ? <div className="empty-state"><FileText size={28}/><p>打开或新建 Markdown 笔记</p><small>编辑后自动保存</small></div> : <div className="note-content"><div className="note-editor-surface" style={{ display: mode === 'preview' ? 'none' : 'flex' }}><MarkdownSourceEditor notePath={note.path} onView={setSourceView} onSelectionChange={setSourceSelection} onMessage={setImageMessage} sharedDocument={sharedDocument!} tab={tab!}/></div>{mode === 'preview' && <MarkdownPreview notePath={note.path} text={text} headings={sourceView ? markdownOutline(sourceView) : []} onJump={stableJump} onToggleTask={toggleTask} onOpenLink={openMarkdownLink}/>}</div>}
+      {!note ? <div className="empty-state"><FileText size={28}/><p>打开或新建 Markdown 笔记</p><small>编辑后自动保存</small></div> : <div className="note-content"><div className="note-editor-surface" style={{ display: mode === 'preview' ? 'none' : 'flex' }}><MarkdownSourceEditor notePath={note.path} onView={setSourceView} onSelectionChange={handleSourceSelection} onMessage={setImageMessage} sharedDocument={sharedDocument!} tab={tab!}/></div>{mode === 'preview' && <MarkdownPreview notePath={note.path} text={text} headings={sourceView ? markdownOutline(sourceView) : []} onJump={stableJump} onToggleTask={toggleTask} onOpenLink={openMarkdownLink}/>}</div>}
       <OutlinePanel open={outline} label="Markdown 大纲" emptyText="使用标题组织笔记后，目录会出现在这里。"
         returnFocus={() => document.querySelector(`[data-note-controls="${paneId}"] [data-outline-toggle]`) || host.current?.querySelector('[data-outline-toggle]') || null}
         items={headings.map((item, index) => ({ id: String(index), label: item.text, depth: item.level - 1, indicator: String(item.level) }))}
-        onSelect={entry => { const index = Number(entry.id), item = headings[index]; if (!item) return;
-          if (mode === 'edit' && sourceView && item.line !== undefined) { const line = sourceView.state.doc.line(Math.min(item.line + 1, sourceView.state.doc.lines)); sourceView.dispatch({ selection: { anchor: line.from }, effects: CodeMirrorView.scrollIntoView(line.from, { y: 'start' }) }); sourceView.focus(); return; }
+        onSelect={(entry, { keyboard }) => { const index = Number(entry.id), item = headings[index]; if (!item) return;
+          if (mode === 'edit' && sourceView && item.line !== undefined) { const line = sourceView.state.doc.line(Math.min(item.line + 1, sourceView.state.doc.lines)); scrollSourceOutline(sourceView, line.from, !keyboard); return; }
           const preview = host.current?.querySelector<HTMLElement>('.markdown-preview'), nonce = preview?.dataset.headingNonce;
-          if (preview?.dataset.previewCurrent === 'true' && nonce && item.line !== undefined) preview.querySelector(`[data-zuoren-heading="${nonce}:${item.line}"]`)?.scrollIntoView({ block: 'start', behavior: reducedMotion ? 'auto' : 'smooth' }); }}/>
+          if (preview?.dataset.previewCurrent === 'true' && nonce && item.line !== undefined) {
+            const heading = preview.querySelector(`[data-zuoren-heading="${nonce}:${item.line}"]`); if (!heading) return;
+            if (outlineScroll.current?.host !== preview) { outlineScroll.current?.destroy(); outlineScroll.current = new OutlineScrollMotion(preview); }
+            outlineScroll.current.start(() => preview.dataset.previewCurrent === 'true' && preview.dataset.headingNonce === nonce ? outlineTargetTop(preview, heading) : null);
+          } }}/>
     </div>
     {selectionMotion.present && lastSelectionToolbar.current && <div ref={selectionMotion.ref as React.RefObject<HTMLDivElement | null>} className="selection-toolbar" role="toolbar" aria-label="选中文本格式" style={{ left: lastSelectionToolbar.current.left, top: lastSelectionToolbar.current.top }} aria-hidden={!selectionToolbar} onPointerDown={event => event.preventDefault()}>
       <button title="加粗（Ctrl+B）" onClick={() => runInlineFormat('bold')}>B</button>

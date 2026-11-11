@@ -57,3 +57,27 @@ test('motion ranges map only when their source identity is unchanged', async () 
   const beforeEnd = mapMarkdownMotionRangeThroughChanges(0, 5, trailing.changeSet, trailing.before, trailing.after);
   assert.deepEqual(beforeEnd, { from: 0, to: 5, key: '0:5' }, 'a change exactly at the half-open run end stays outside it');
 });
+
+test('indent motion keeps aligned run fragments when wrapping changes the fragment count', async () => {
+  const { hasMovedIndentRun, matchRunFragments } = await import('../src/editor/markdownMotion.ts');
+  const rect = (left, top = 0) => ({ left, top, width: 20, height: 20 });
+  assert.equal(hasMovedIndentRun(
+    [{ key: '4:12', text: 'same text', rect: rect(12) }],
+    [{ key: '4:12', text: 'same text', rect: rect(4) }, { key: '4:12', text: 'same text', rect: rect(30, 20) }],
+  ), true, 'one aligned fragment still animates when a wrapped line adds another fragment');
+  assert.equal(hasMovedIndentRun(
+    [{ key: '4:12', text: 'same text', rect: rect(4) }, { key: '4:12', text: 'same text', rect: rect(30, 20) }],
+    [{ key: '4:12', text: 'same text', rect: rect(4) }],
+  ), false, 'an unmatched fragment alone does not fabricate movement');
+  assert.equal(hasMovedIndentRun(
+    [{ key: '4:12', text: 'old', rect: rect(4) }], [{ key: '12:18', text: 'new', rect: rect(40) }],
+  ), false, 'different source runs do not animate as a match');
+  const matched = matchRunFragments(
+    [{ key: '4:12', text: 'alpha', rect: rect(0) }, { key: '4:12', text: 'beta', rect: rect(20) }],
+    [{ key: '4:12', text: 'beta', rect: rect(30) }, { key: '4:12', text: 'gamma', rect: rect(40) }],
+  );
+  assert.equal(matched.length, 1);
+  assert.equal(matched[0].before.text, 'beta'); assert.equal(matched[0].after.text, 'beta',
+    'a changed fragment list matches exact text identity rather than its old ordinal');
+});
+

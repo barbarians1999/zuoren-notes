@@ -1,14 +1,39 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { ReducedMotionContext, pulseControl } from '../uiMotion';
 import type { ReaderAnchor } from '../types';
 import { reader, resolveLocal } from '../readerContext';
 import { renderMarkdown } from './markdownRendering';
 import { decodeReaderAnchor } from '../readerAnchor.cjs';
-import { findMarkdownTasks, markdownPreviewSource } from './markdownTasks';
+import { findMarkdownTasks, markdownPreviewSource, taskToggleChange } from './markdownTasks';
 export const MarkdownPreview = React.memo(function MarkdownPreview({ notePath, text, headings, onJump, onToggleTask, onOpenLink }: { notePath: string; text: string; headings: readonly { line: number; previewAt: number }[]; onJump: (anchor: ReaderAnchor) => void; onToggleTask?: (position: number, checked: boolean, expectedSource: string) => boolean; onOpenLink?: (href: string) => void }) {
   const [rendered, setRendered] = useState<{ notePath: string; source: string; html: string; taskNonce: string | null } | null>(null);
   const root = useRef<HTMLDivElement>(null);
+  const reduced = useContext(ReducedMotionContext);
+  const pendingTask = useRef<{ path: string; after: string; position: number; checked: boolean } | null>(null);
+  const taskPulse = useRef<(() => void) | null>(null);
   const restoreScroll = useRef<{ notePath: string; top: number } | null>(null);
   const html = rendered?.notePath === notePath ? rendered.html : null;
+  useLayoutEffect(() => {
+    taskPulse.current?.(); taskPulse.current = null;
+    const ticket = pendingTask.current;
+    if (!ticket) return;
+    if (ticket.path !== notePath || ticket.after !== text || reduced) { pendingTask.current = null; return; }
+    // Async HTML/nonce replacement must finish before looking up the new input.
+    if (rendered?.notePath !== notePath || rendered.source !== text) return;
+    pendingTask.current = null;
+    const input = root.current?.querySelector<HTMLInputElement>(`input[data-task-position="${ticket.position}"]`);
+    if (input && input.dataset.taskNonce === rendered.taskNonce && input.dataset.taskChecked === String(ticket.checked)
+      && input.checked === ticket.checked && !input.disabled) taskPulse.current = pulseControl(input, 'task');
+    return () => { taskPulse.current?.(); taskPulse.current = null; };
+  }, [rendered, notePath, text, reduced]);
+  // Callback identity can change as the document label moves from “saved” to
+  // “editing” after an accepted task write. That must not discard its pending
+  // preview feedback; path changes and unmounts still invalidate the ticket.
+  useLayoutEffect(() => () => { pendingTask.current = null; taskPulse.current?.(); taskPulse.current = null; }, [notePath]);
+  useLayoutEffect(() => {
+    if (onToggleTask) return;
+    pendingTask.current = null; taskPulse.current?.(); taskPulse.current = null;
+  }, [!!onToggleTask]);
   useLayoutEffect(() => {
     const saved = restoreScroll.current;
     restoreScroll.current = null;
@@ -82,7 +107,13 @@ export const MarkdownPreview = React.memo(function MarkdownPreview({ notePath, t
     if (input instanceof HTMLInputElement && input.type === 'checkbox') {
       event.preventDefault();
       if (!rendered || rendered.notePath !== notePath || rendered.source !== text || input.dataset.taskNonce !== rendered.taskNonce) return;
-      if (onToggleTask?.(Number(input.dataset.taskPosition), input.dataset.taskChecked !== 'true', rendered.source)) root.current?.focus({ preventScroll: true });
+      const position = Number(input.dataset.taskPosition), checked = input.dataset.taskChecked !== 'true';
+      const change = taskToggleChange(rendered.source, text, position, checked);
+      if (change && onToggleTask?.(position, checked, rendered.source)) {
+        taskPulse.current?.(); taskPulse.current = null;
+        pendingTask.current = { path: notePath, after: text.slice(0, change.from) + change.insert + text.slice(change.to), position, checked };
+        root.current?.focus({ preventScroll: true });
+      }
       return;
     }
     const link = (event.target as Element).closest?.('a'), href = link?.getAttribute('href') || '';

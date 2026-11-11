@@ -1,0 +1,37 @@
+{
+  "reason": "0.4.3 integrates the R5 pointer-drag motion and native file-move candidate. Source and packaged checks cover pointer-drag motion, Markdown editor/presentation, document lifecycle, PDF/EPUB basics, themes/chrome, and package integrity. All unit tests run. Windows symlink fixture tests skip only when fixture creation returns EPERM; those security assertions remain unverified and are recorded as skipped, not passed. Packaged end-to-end file-move UI, install/upgrade, and real IME are outside this directed plan. Earlier exploratory integrated-motion failures are not treated as passed. This is not a full release regression.",
+  "source": [
+    "tests/about-smoke.cjs",
+    "tests/chrome-interaction-smoke.cjs",
+    "tests/document-lifecycle-smoke.cjs",
+    "tests/dual-note-splitter-smoke.cjs",
+    "tests/epub-workspace-smoke.cjs",
+    "tests/fullscreen-chrome-smoke.cjs",
+    "tests/list-alignment-smoke.cjs",
+    "tests/markdown-motion-perf-smoke.cjs",
+    "tests/markdown-motion-reflow-smoke.cjs",
+    "tests/markdown-presentation-smoke.cjs",
+    "tests/note-tabs-smoke.cjs",
+    "tests/pdf-selection-smoke.cjs",
+    "tests/scrollbar-smoke.cjs",
+    "tests/source-editor-smoke.cjs",
+    "tests/themes-smoke.cjs"
+  ],
+  "packaged": [
+    "tests/about-smoke.cjs",
+    "tests/chrome-interaction-smoke.cjs",
+    "tests/document-lifecycle-smoke.cjs",
+    "tests/dual-note-splitter-smoke.cjs",
+    "tests/epub-workspace-smoke.cjs",
+    "tests/fullscreen-chrome-smoke.cjs",
+    "tests/list-alignment-smoke.cjs",
+    "tests/markdown-motion-perf-smoke.cjs",
+    "tests/markdown-motion-reflow-smoke.cjs",
+    "tests/markdown-presentation-smoke.cjs",
+    "tests/note-tabs-smoke.cjs",
+    "tests/pdf-selection-smoke.cjs",
+    "tests/scrollbar-smoke.cjs",
+    "tests/source-editor-smoke.cjs",
+    "tests/themes-smoke.cjs"
+  ]
+}

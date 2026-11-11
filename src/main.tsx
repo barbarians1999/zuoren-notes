@@ -5,6 +5,8 @@ import { ReaderSession } from './readers/readerSession';
 import { createExcerptFlow, type ExcerptFlowFailure, type ExcerptFlowResult } from './readers/excerptFlow';
 import type { PdfExcerptContext } from './readers/pdfRegionAction';
 import { NoteWorkspace, type NoteGroupId } from './workspace/noteWorkspace';
+import { requestNoteRefresh } from './workspace/noteRefresh';
+import { useFileMoveUi } from './workspace/fileMoveUi';
 import { NoteGroupPane } from './workspace/NoteGroupPane';
 import { ConflictDialog, UnsavedDialog, TrashConfirmation } from './workspace/DocumentDialogs';
 import { reader, NOTE_BODY_FONTS, type Layout, type ThemePreference, type NoteBodyFont, type ActivePdf, type ActiveEpub, type FileContextMenu, type InlineEntryEdit, type FindCommand } from './readerContext';
@@ -23,7 +25,7 @@ import { MutationBarrier, remapDescendantPath, sameOrDescendantPath } from './fi
 import { THEMES, parseThemePreference, resolveTheme, themeVariables, type ThemeName } from './appearanceTheme.cjs';
 import './styles.css';
 import { useFullscreenChrome } from './useFullscreenChrome';
-import { ReducedMotionContext, useLayoutMotion, usePanelMotion, useTabMotion } from './uiMotion';
+import { ReducedMotionContext, useLayoutMotion, usePanelMotion, useTabMotion, useControlFeedback } from './uiMotion';
 import { ContextMenu, ToastMessage, useOverlayFocus } from './ui/overlays';
 import { PaneSplitter } from './ui/PaneSplitter';
 import './ui/chrome.css';
@@ -54,21 +56,30 @@ const initialThemePreference = readThemePreference();
 applyTheme(resolveTheme(initialThemePreference, window.matchMedia('(prefers-color-scheme: dark)').matches));
 
 function App() {
+  const appMotionRef = useRef<HTMLDivElement>(null);
   const [noteTabsTarget, setNoteTabsTarget] = useState<HTMLDivElement | null>(null);
   const [noteControlsTarget, setNoteControlsTarget] = useState<HTMLDivElement | null>(null);
   const [readerHeaderTarget, setReaderHeaderTarget] = useState<HTMLDivElement | null>(null);
-  const [activeSurface, setActiveSurface] = useState<'reader' | 'note'>('note');
+  const [activeSurface, setActiveSurfaceState] = useState<'reader' | 'note'>('note');
+  const activeSurfaceRef = useRef<'reader' | 'note'>('note');
+  const setActiveSurface = useCallback((value: 'reader' | 'note') => {
+    activeSurfaceRef.current = value; setActiveSurfaceState(value);
+  }, []);
   const [readerClosing, setReaderClosing] = useState(false);
   const readerCloseFlight = useRef(false);
   const [layout, setLayout] = useState<Layout>('split');
   const [sessionReady, setSessionReady] = useState(false);
   const [sidebar, setSidebar] = useState(true);
   const [reduceMotion, setReduceMotion] = useState(() => { try { return localStorage.getItem('zhaoye-reduce-motion') === 'true'; } catch { return false; } });
+  const [editMotion, setEditMotion] = useState(() => { try { return localStorage.getItem('zhaoye-edit-motion') === 'true'; } catch { return false; } });
+  const [deleteEcho, setDeleteEcho] = useState(() => { try { return localStorage.getItem('zhaoye-delete-echo') === 'true'; } catch { return false; } });
   const [systemReduced, setSystemReduced] = useState(() => matchMedia('(prefers-reduced-motion: reduce)').matches);
   const motionReduced = reduceMotion || systemReduced;
   const sidebarMotion = usePanelMotion(sidebar, motionReduced || !sessionReady, '-100%', () => document.querySelector('.sidebar-toggle'));
   useTabMotion(noteTabsTarget, motionReduced);
   useEffect(() => { try { localStorage.setItem('zhaoye-reduce-motion', String(reduceMotion)); } catch {} }, [reduceMotion]);
+  useEffect(() => { try { localStorage.setItem('zhaoye-edit-motion', String(editMotion)); } catch {} }, [editMotion]);
+  useEffect(() => { try { localStorage.setItem('zhaoye-delete-echo', String(deleteEcho)); } catch {} }, [deleteEcho]);
   useEffect(() => {
     const media = matchMedia('(prefers-reduced-motion: reduce)');
     const changed = () => setSystemReduced(media.matches);
@@ -88,6 +99,7 @@ function App() {
   const [noteBodyFont, setNoteBodyFont] = useState<NoteBodyFont>(readNoteBodyFont);
   const [splitAt, setSplitAt] = useState(52);
   const panesRef = useRef<HTMLDivElement>(null);
+  const splitHeaderRef = useRef<HTMLDivElement>(null);
   const layoutMotionRequested = useRef(false);
   useLayoutMotion(panesRef, layout, sessionReady, motionReduced, layoutMotionRequested);
   const [root, setRootState] = useState('');
@@ -117,7 +129,7 @@ function App() {
   const sessionRecovery = useRef(new SessionRecovery());
   const settingsRef = useRef<HTMLDivElement>(null);
   const fileMenuTrigger = useRef<HTMLElement | null>(null);
-  const settingsMotion = usePanelMotion(settingsOpen, motionReduced, '4px', () => settingsRef.current?.querySelector('button') || null, 'y', { enter: '--motion-overlay', exit: '--motion-exit' });
+  const settingsMotion = usePanelMotion(settingsOpen, motionReduced, '.975', () => settingsRef.current?.querySelector('button') || null, 'scale', { enter: '--motion-overlay', exit: '--motion-exit' });
   useOverlayFocus(settingsOpen && settingsMotion.present, settingsMotion.ref, { kind: 'popover', onDismiss: () => setSettingsOpen(false),
     returnFocus: () => settingsRef.current?.querySelector('button') || null });
   const inlineEntryInputRef = useRef<HTMLInputElement>(null);
@@ -154,6 +166,9 @@ function App() {
     const timer = window.setInterval(() => workspace.tick(), 250);
     return () => window.clearInterval(timer);
   }, [workspace, sessionReady]);
+  useEffect(() => reader().onRefreshNote(() => {
+    void requestNoteRefresh(workspace, { ready: sessionReady, blocked: closing || readerClosing || settingsOpen || !!document.querySelector('[role="dialog"]'), layout, activeSurface: activeSurfaceRef.current }, setMessage);
+  }), [workspace, sessionReady, layout, activeSurface, closing, readerClosing, settingsOpen]);
 
   // A successful rename/delete leaves a short-lived barrier so delayed work
   // for the old document cannot recreate it. Once a path is explicitly
@@ -226,6 +241,7 @@ function App() {
       const listing = await reader().listDirectory({ root: workspaceRoot, directory: path });
       if (current()) {
         if (motionDirection) setDirectoryMotion({ sequence: ++directoryMotionSequence.current, direction: motionDirection, active: true });
+        else setDirectoryMotion(current => current ? { ...current, active: false } : null);
         setDirectory(listing);
       }
     } catch (error) { if (current()) throw error; }
@@ -234,7 +250,7 @@ function App() {
   useEffect(() => {
     if (!directoryMotion?.active) return;
     const sequence = directoryMotion.sequence;
-    const timer = window.setTimeout(() => setDirectoryMotion(current => current?.sequence === sequence ? { ...current, active: false } : current), 240);
+    const timer = window.setTimeout(() => setDirectoryMotion(current => current?.sequence === sequence ? { ...current, active: false } : current), 320);
     return () => window.clearTimeout(timer);
   }, [directoryMotion]);
 
@@ -252,6 +268,7 @@ function App() {
   }), [root, directory, layout, sidebar, splitAt, workspaceVersion, readerSnapshot, scrollMemory]);
 
   const rememberScroll = useCallback((entry: MarkdownScrollMemory) => {
+    if (mutationBarrier.current.has(entry.path)) return;
     setScrollMemory(current => upsertScrollMemory(current, entry));
   }, []);
 
@@ -437,6 +454,19 @@ function App() {
   function beginRename(entry: WorkspaceDirectoryEntry) {
     setFileContextMenu(null); setInlineEntryEdit({ kind: 'rename', entry, parentPath: pathDir(entry.path), value: entry.kind === 'file' ? entry.name.replace(/\.(md|markdown|pdf|epub)$/i, '') : entry.name });
   }
+  function remapWorkspacePath(oldPath: string, newPath: string) {
+    const remap = (value: string) => remapDescendantPath(value, oldPath, newPath);
+    sessionRecovery.current.remap(oldPath, newPath, () => workspace.remap(oldPath, newPath));
+    readerSession.remapPath(oldPath, newPath);
+    setFiles(items => items.map(item => {
+      const next = remap(item.path);
+      if (next === item.path) return item;
+      return { ...item, path: next, name: next.split(/[\\/]/).pop() || item.name,
+        relative: sameOrDescendantPath(next, root) ? next.slice(root.length).replace(/^[\\/]+/, '') : next };
+    }));
+    setDirectory(value => value && sameOrDescendantPath(value.directory, oldPath) ? { ...value, directory: remap(value.directory), parent: value.parent ? remap(value.parent) : null, breadcrumbs: value.breadcrumbs.map(item => ({ ...item, path: remap(item.path) })) } : value);
+    setScrollMemory(items => items.map(item => sameOrDescendantPath(item.path, oldPath) ? { ...item, path: remap(item.path) } : item));
+  }
   async function commitInline() {
     const edit = inlineEntryEdit; if (!edit || edit.busy) return;
     const targetGroup = newNoteGroup.current;
@@ -453,11 +483,7 @@ function App() {
         const renamed = await reader().renameEntry({ path: edit.entry.path, name: edit.value });
         const newPath = renamed.path;
         const remap = (value: string) => remapDescendantPath(value, oldPath, newPath);
-        sessionRecovery.current.remap(oldPath, newPath, () => workspace.remap(oldPath, newPath));
-        readerSession.remapPath(oldPath, newPath);
-        setFiles(items => items.map(item => ({ ...item, path: remap(item.path), name: remap(item.path).split(/[\\/]/).pop() || item.name })));
-        if (directory && sameOrDescendantPath(directory.directory, oldPath)) setDirectory(value => value ? { ...value, directory: remap(value.directory), parent: value.parent ? remap(value.parent) : null, breadcrumbs: value.breadcrumbs.map(item => ({ ...item, path: remap(item.path) })) } : value);
-        setScrollMemory(items => items.map(item => sameOrDescendantPath(item.path, oldPath) ? { ...item, path: remap(item.path) } : item));
+        remapWorkspacePath(oldPath, newPath);
         setInlineEntryEdit(null); try { await loadDirectory(root, sameOrDescendantPath(startDirectory, oldPath) ? remap(startDirectory) : startDirectory); } catch (error) { setMessage(`刷新目录失败：${error instanceof Error ? error.message : String(error)}`); }
       } else if (edit.kind === 'note') {
         const loaded = await reader().createNoteAt({ directory: parentPath, name: edit.value, initialContent: '# 新笔记\n\n' });
@@ -687,6 +713,9 @@ function App() {
     window.addEventListener('keydown', keys, true); return () => window.removeEventListener('keydown', keys, true);
   }, [workspace, layout, settingsOpen, activeSurface, activeEpub]);
 
+  const fileMoveUi = useFileMoveUi({ root, directory, workspace, readers: readerSession, barrier: mutationBarrier.current,
+    blocked: settingsOpen || !!modalConflict || !!workspace.pendingClose || !!inlineEntryEdit || closing || readerClosing,
+    persistSession: () => saveSessionNow(true), remap: remapWorkspacePath, reload: () => loadDirectory(root, directory?.directory || root), message: setMessage });
   const visibleRecent = useMemo(() => query ? files.filter(file => file.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())) : files, [files, query]);
   const visibleDirectory = useMemo(() => {
     const entries = directory?.entries || [];
@@ -697,7 +726,8 @@ function App() {
     const box = event.currentTarget.getBoundingClientRect();
     setFileContextMenu({ entry, x: event.clientX || box.left, y: event.clientY || box.bottom });
   };
-  return <ReducedMotionContext.Provider value={motionReduced}><div className="app" inert={!sessionReady || workspace.committing} aria-busy={!sessionReady || workspace.committing} data-session-ready={sessionReady} data-motion={motionReduced ? 'reduced' : 'full'} data-theme={resolvedTheme} data-fullscreen={windowState.fullscreen} data-layout={layout} style={{ '--reading-size': `${readingSize}px`, '--note-body-font': NOTE_BODY_FONTS[noteBodyFont], '--note-source-font': NOTE_BODY_FONTS[noteBodyFont] } as React.CSSProperties}>
+  useControlFeedback(appMotionRef, motionReduced, `${layout}:${root}:${workspace.currentDocument()?.note.path || activePdf?.path || activeEpub?.path || ''}`);
+  return <ReducedMotionContext.Provider value={motionReduced}><div ref={appMotionRef} className="app" inert={!sessionReady || workspace.committing} aria-busy={!sessionReady || workspace.committing} data-session-ready={sessionReady} data-motion={motionReduced ? 'reduced' : 'full'} data-edit-motion={editMotion && !motionReduced ? 'soft' : 'off'} data-delete-echo={editMotion && deleteEcho && !motionReduced ? 'on' : 'off'} data-theme={resolvedTheme} data-fullscreen={windowState.fullscreen} data-layout={layout} style={{ '--reading-size': `${readingSize}px`, '--note-body-font': NOTE_BODY_FONTS[noteBodyFont], '--note-source-font': NOTE_BODY_FONTS[noteBodyFont] } as React.CSSProperties}>
     <style>{NOTE_FONT_FACES_CSS}</style>
     {windowState.fullscreen && <div className="fullscreen-reveal-edge" aria-hidden="true"/>}
     <header className="topbar">
@@ -735,6 +765,8 @@ function App() {
                 ] as const).map(([value, label, icon]) => <button key={value} className={themePreference === value ? 'active' : ''} aria-pressed={themePreference === value} onClick={() => setThemePreference(value)}>{icon}<span>{label}</span></button>)}
               </div>
               <label className="motion-preference"><input type="checkbox" checked={motionReduced} disabled={systemReduced} onChange={event => setReduceMotion(event.target.checked)}/><span>减少动效</span>{systemReduced && <small>系统已启用</small>}</label>
+              <label className="motion-preference"><input type="checkbox" checked={editMotion} disabled={motionReduced} onChange={event => setEditMotion(event.target.checked)}/><span>输入光标动效</span><small>试验</small></label>
+              <label className="motion-preference"><input type="checkbox" checked={deleteEcho} disabled={motionReduced || !editMotion} onChange={event => setDeleteEcho(event.target.checked)}/><span>删除淡出残影</span><small>试验</small></label>
             </div>
             <div className="settings-section">
               <button className="settings-row" title="F11 切换全屏；全屏时移到顶边显示工具栏，F6 聚焦工具栏" onClick={() => { setSettingsOpen(false); void reader().windowControl('fullscreen'); }}>{windowState.fullscreen ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}<span>全屏阅读</span><small>{windowState.fullscreen ? '退出' : '进入'} · F11</small></button>
@@ -760,33 +792,35 @@ function App() {
       {sidebarMotion.present && <aside ref={sidebarMotion.ref} className="sidebar" aria-hidden={!sidebar}>
         <div className="search"><Search size={16}/><input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => event.key === 'Enter' && void runSearch()} placeholder="搜索文件名或笔记内容" aria-label="搜索文件名或笔记内容"/>{query && <button aria-label="清空搜索" title="清空搜索" onClick={() => { setQuery(''); setResults([]); }}><X size={14}/></button>}</div>
         {root && directory && <div className="folder-navigation">
-          <button className="folder-back" aria-label="返回上一级文件夹" title="返回上一级" disabled={!directory.parent} onClick={() => directory.parent && void loadDirectory(root, directory.parent, 'exit')}><ArrowLeft size={16}/></button>
-          <div className="folder-address" aria-label="当前文件夹地址" title={directory.directory}><FolderOpen size={14}/><div className="folder-crumbs">{directory.breadcrumbs.map((crumb, index) => <React.Fragment key={crumb.path}>{index > 0 && <ChevronRight size={11} className="crumb-separator"/>}<button title={crumb.path} aria-current={index === directory.breadcrumbs.length - 1 ? 'location' : undefined} onClick={() => void loadDirectory(root, crumb.path, index < directory.breadcrumbs.length - 1 ? 'exit' : undefined)}>{crumb.name}</button></React.Fragment>)}</div></div>
+          <button {...(directory.parent ? fileMoveUi.targetProps(directory.parent) : {})} className="folder-back" aria-label="返回上一级文件夹" title="返回上一级" disabled={!directory.parent} onClick={() => directory.parent && void loadDirectory(root, directory.parent, 'exit')}><ArrowLeft size={16}/></button>
+          <div className="folder-address" aria-label="当前文件夹地址" title={directory.directory}><FolderOpen size={14}/><div className="folder-crumbs">{directory.breadcrumbs.map((crumb, index) => <React.Fragment key={crumb.path}>{index > 0 && <ChevronRight size={11} className="crumb-separator"/>}<button {...fileMoveUi.targetProps(crumb.path)} title={crumb.path} aria-current={index === directory.breadcrumbs.length - 1 ? 'location' : undefined} onClick={() => void loadDirectory(root, crumb.path, index < directory.breadcrumbs.length - 1 ? 'exit' : undefined)}>{crumb.name}</button></React.Fragment>)}</div></div>
         </div>}
         <div className={'section-title ' + (root ? 'after-address' : '')}><span>{root ? '当前文件夹' : '最近文件'}</span><span>{root ? visibleDirectory.length : visibleRecent.length}</span></div>
+        {fileMoveUi.panel}
         <div key={directoryMotion?.sequence ?? 0} className="file-list" data-folder-motion={directoryMotion?.active ? directoryMotion.direction : undefined}>
           {inlineEntryEdit && inlineEntryEdit.kind !== 'rename' && <div className="file-row inline-entry-row"><span className={inlineEntryEdit.kind === 'folder' ? 'folder-icon' : 'file-icon md'}>{inlineEntryEdit.kind === 'folder' ? <Folder size={17}/> : 'MD'}</span><input ref={inlineEntryInputRef} className="inline-entry-input" aria-label={inlineEntryEdit.kind === 'folder' ? '新文件夹名称' : '新笔记名称'} value={inlineEntryEdit.value} disabled={inlineEntryEdit.busy} onChange={event => setInlineEntryEdit(value => value && ({ ...value, value: event.target.value }))} onKeyDown={event => { if (event.key === 'Enter') void commitInline(); if (event.key === 'Escape') setInlineEntryEdit(null); }} />{inlineEntryEdit.error && <small className="inline-entry-error">{inlineEntryEdit.error}</small>}</div>}{root ? visibleDirectory.map((entry, index) => {
           const activePath = entry.kind === 'file' ? entry.type === 'pdf' ? activePdf?.path : entry.type === 'epub' ? activeEpub?.path : workspace.currentDocument()?.note.path : null;
           const renaming = inlineEntryEdit?.kind === 'rename' && inlineEntryEdit.entry?.path === entry.path;
           const body = renaming ? <><input ref={inlineEntryInputRef} className="inline-entry-input" aria-label={'重命名 ' + entry.name} value={inlineEntryEdit!.value} disabled={inlineEntryEdit!.busy} onChange={event => setInlineEntryEdit(value => value && ({ ...value, value: event.target.value }))} onKeyDown={event => { event.stopPropagation(); if (event.key === 'Enter') void commitInline(); if (event.key === 'Escape') setInlineEntryEdit(null); }} />{inlineEntryEdit?.error && <small className="inline-entry-error">{inlineEntryEdit.error}</small>}</> : <><span className={entry.kind === 'folder' ? 'folder-icon' : 'file-icon ' + entry.type}>{entry.kind === 'folder' ? <Folder size={17}/> : entry.type === 'pdf' ? 'PDF' : entry.type === 'epub' ? 'EPUB' : 'MD'}</span><span className="file-name">{entry.name}</span></>;
-          return renaming ? <div className="file-row inline-entry-row" key={entry.path}>{body}</div> : <button title={entry.path} className={'file-row ' + (activePath === entry.path ? 'selected' : '')} key={entry.path} style={{ '--folder-row-delay': `${Math.min(index, 3) * 18}ms` } as React.CSSProperties} onContextMenu={event => showContext(event, entry)} onClick={event => void openBrowserEntry(entry, event.ctrlKey)} onDoubleClick={() => void openBrowserEntry(entry, true)}>{body}{entry.kind === 'folder' && <ChevronRight size={14} className="folder-enter"/>}</button>;
+          return renaming ? <div className="file-row inline-entry-row" key={entry.path}>{body}</div> : <button {...fileMoveUi.entryProps(entry)} data-entry-path={entry.path} title={entry.path} className={'file-row ' + (activePath === entry.path ? 'selected' : '')} key={entry.path} style={{ '--folder-row-delay': `${Math.min(index, 3) * 18}ms` } as React.CSSProperties} onContextMenu={event => showContext(event, entry)} onClick={event => void openBrowserEntry(entry, event.ctrlKey)} onDoubleClick={() => void openBrowserEntry(entry, true)}>{body}{entry.kind === 'folder' && <ChevronRight size={14} className="folder-enter"/>}</button>;
         }) : visibleRecent.map(file => { const activePath = file.type === 'pdf' ? activePdf?.path : file.type === 'epub' ? activeEpub?.path : workspace.currentDocument()?.note.path; return <button title={file.path} className={'file-row ' + (activePath === file.path ? 'selected' : '')} key={file.path} onContextMenu={event => showContext(event, { ...file, kind: 'file' })} onClick={event => void openEntry(file, { replaceCurrentNote: !event.ctrlKey })} onDoubleClick={() => void openEntry(file)}><span className={'file-icon ' + file.type}>{file.type === 'pdf' ? 'PDF' : file.type === 'epub' ? 'EPUB' : 'MD'}</span><span className="file-name">{file.name}</span></button>; })}{!(root ? visibleDirectory.length : visibleRecent.length) && <div className="empty-small"><FolderOpen size={20}/><span>{root ? '这个文件夹里没有可阅读的文件' : '打开文件夹后，资料会显示在这里'}</span></div>}
         </div>
         {!!results.length && <><div className="section-title">搜索结果</div>{results.map(result => <button className="result-row" key={result.path} onContextMenu={event => showContext(event, { ...result, kind: 'file' })} onClick={event => void openEntry(result, { replaceCurrentNote: !event.ctrlKey })} onDoubleClick={() => void openEntry(result)}><b>{result.name}</b><small>{result.snippet || '文件名匹配'}</small></button>)}</>}
       </aside>}
       <main className="main">
-        <div className={'note-workspace-bar' + (epubVisible ? ' with-epub' : '') + (epubVisible && layout === 'split' ? ' reader-note-row' : '')} aria-label="资料标签与操作" style={{ ...(layout === 'read' && !epubVisible ? { display: 'none' } : {}), '--split-at': `${splitAt}%` } as React.CSSProperties}>
-          <div className="reader-header-slot" ref={setReaderHeaderTarget} style={!epubVisible ? { display: 'none' } : undefined}/>
+        <div ref={splitHeaderRef} className={'note-workspace-bar' + (epubVisible ? ' with-epub' : '') + (layout === 'split' ? ' reader-note-row' : '')} aria-label="资料标签与操作" style={{ ...(layout === 'read' && !epubVisible ? { display: 'none' } : {}), '--split-at': `${splitAt}%` } as React.CSSProperties}>
+          <div className="reader-header-slot" ref={setReaderHeaderTarget} style={epubVisible || layout === 'split' ? undefined : { display: 'none' }}/>
           <div className="note-header-slot" style={layout === 'read' ? { display: 'none' } : undefined}>
             <div className="document-tab-strip" ref={setNoteTabsTarget}/>
             <div className="note-controls-slot" ref={setNoteControlsTarget}/>
           </div>
         </div>
         <div ref={panesRef} className={'panes ' + layout + (noteSplit ? ' dual-notes' : '')} style={{ '--split-at': `${splitAt}%` } as React.CSSProperties}>
-          {(layout === 'read' || layout === 'split') && (activeEpub ? <EpubPane key={activeEpub.path} epub={activeEpub} theme={resolvedTheme} noteBodyFont={noteBodyFont} readingSize={readingSize} headerTarget={readerHeaderTarget} active={activeSurface === 'reader'} closing={readerClosing} onActivate={() => setActiveSurface('reader')} onClose={() => void closeEpub()} onMeta={change => readerSession.updateEpub(change, activeEpub)} onMessage={setMessage} onExcerpt={insertEpubExcerpt} onSelectionAction={saveEpubSelection} excerptTarget={activeDoc ? (workspace.activeGroup === 'secondary' ? '摘录到右栏' : '摘录到当前笔记') : null} target={isEpubAnchor(target) ? target : null}/> : <PdfPane dark={THEMES[resolvedTheme].colorScheme === 'dark'} pdf={activePdf} page={page} setPage={value => readerSession.setPage(value)} scale={scale} setScale={value => readerSession.setScale(value)} fullscreen={windowState.fullscreen} onToggleFullscreen={() => { void reader().windowControl('fullscreen'); }} onMeta={change => activePdf ? readerSession.updatePdf(change, activePdf) : Promise.resolve(false)} captureExcerpt={capturePdfExcerpt} onTextAction={onPdfTextAction} canExcerpt={!!activeDoc && !activeDoc.blocked()} target={target && 'pdfId' in target ? target : null} onMessage={setMessage}/>)}
-          {(layout === 'split' || noteSplit) && <PaneSplitter key={'splitter:' + (noteSplit ? 'notes' : activeEpub?.path || activePdf?.path || 'reader')} container={panesRef} ratio={splitAt} onChange={setSplitAt} label={noteSplit ? '调整左右笔记宽度' : '调整阅读与笔记宽度'} deferred={!!activeEpub}/>}
+          {(layout === 'read' || layout === 'split') && (activeEpub ? <EpubPane key={activeEpub.path} epub={activeEpub} theme={resolvedTheme} noteBodyFont={noteBodyFont} readingSize={readingSize} headerTarget={readerHeaderTarget} active={activeSurface === 'reader'} closing={readerClosing} onActivate={() => setActiveSurface('reader')} onClose={() => void closeEpub()} onMeta={change => readerSession.updateEpub(change, activeEpub)} onMessage={setMessage} onExcerpt={insertEpubExcerpt} onSelectionAction={saveEpubSelection} excerptTarget={activeDoc ? (workspace.activeGroup === 'secondary' ? '摘录到右栏' : '摘录到当前笔记') : null} target={isEpubAnchor(target) ? target : null}/> : <PdfPane onActivate={() => setActiveSurface('reader')} dark={THEMES[resolvedTheme].colorScheme === 'dark'} pdf={activePdf} page={page} setPage={value => readerSession.setPage(value)} scale={scale} setScale={value => readerSession.setScale(value)} fullscreen={windowState.fullscreen} onToggleFullscreen={() => { void reader().windowControl('fullscreen'); }} onMeta={change => activePdf ? readerSession.updatePdf(change, activePdf) : Promise.resolve(false)} captureExcerpt={capturePdfExcerpt} onTextAction={onPdfTextAction} canExcerpt={!!activeDoc && !activeDoc.blocked()} target={target && 'pdfId' in target ? target : null} onMessage={setMessage} headerTarget={layout === 'split' ? readerHeaderTarget : null}/>)}
+          {(layout === 'split' || noteSplit) && <PaneSplitter key={'splitter:' + (noteSplit ? 'notes' : activeEpub?.path || activePdf?.path || 'reader')} container={panesRef} header={layout === 'split' ? splitHeaderRef : undefined} ratio={splitAt} onChange={setSplitAt} label={noteSplit ? '调整左右笔记宽度' : '调整阅读与笔记宽度'} deferred={!!activeEpub}/>}
           {(['primary', 'secondary'] as const).map(group => <NoteGroupPane key={group} workspace={workspace} group={group}
             split={noteSplit}
+            showSplitButton={layout !== 'split'}
             tabsTarget={noteTabsTarget} controlsTarget={noteControlsTarget}
             foreground={!epubVisible || activeSurface === 'note'} onFocus={() => setActiveSurface('note')}
             hidden={layout === 'read' || (layout === 'split' ? workspace.activeGroup !== group : group === 'secondary' && !workspace.groups.secondary.tabs.length)}
@@ -812,11 +846,13 @@ function App() {
         <button role="menuitem" onClick={() => { setFileContextMenu(null); void reader().showItemInFolder(fileContextMenu.entry.path); }}>打开所在路径</button>
         {fileContextMenu.entry.kind === 'file' && fileContextMenu.entry.type === 'md' && <button role="menuitem" onClick={() => { const entry = fileContextMenu.entry as WorkspaceFile; setFileContextMenu(null); void openEntry(entry); }}>在新标签页中打开</button>}
         {fileContextMenu.entry.kind === 'file' && fileContextMenu.entry.type === 'md' && <button role="menuitem" onClick={() => { const entry = fileContextMenu.entry as WorkspaceFile; setFileContextMenu(null); void openNoteInSecondary(entry); }}>在右侧打开</button>}
+        {fileContextMenu.entry.kind === 'file' && root && <button role="menuitem" onClick={() => { const entry = fileContextMenu.entry; setFileContextMenu(null); if (entry.kind === 'file') void fileMoveUi.open(entry); }}>移动到…</button>}
         <button role="menuitem" onClick={() => beginRename(fileContextMenu.entry)}>重命名</button>
         <button role="menuitem" className="menu-item-danger" onClick={() => { setTrashCandidate(fileContextMenu.entry); setFileContextMenu(null); }}>移到回收站</button>
       </>}
     </ContextMenu>
-    {trashCandidate && !modalConflict && !workspace.pendingClose && <TrashConfirmation name={trashCandidate.name} onCancel={() => setTrashCandidate(null)} onConfirm={async () => { const entry = trashCandidate; const okay = await deleteEntry(entry); if (okay) setTrashCandidate(null); return okay; }}/>}
+    {fileMoveUi.dialogs}
+    <TrashConfirmation open={!!trashCandidate} superseded={!!modalConflict || !!workspace.pendingClose} name={trashCandidate?.name || ''} onCancel={() => setTrashCandidate(null)} onConfirm={async () => { const entry = trashCandidate; if (!entry) return false; const okay = await deleteEntry(entry); if (okay) setTrashCandidate(current => current?.path === entry.path ? null : current); return okay; }}/>
     <ToastMessage open={!!message} message={message} onDismiss={() => setMessage('')}/>
     {workspace.pendingClose && !modalConflict && <UnsavedDialog description="关闭这份未能保存的笔记" onCancel={() => { workspace.pendingClose = null; workspace.blockingDocument = null; workspace.notify(); }}
       onDiscard={async () => { await workspace.finishPendingClose(true).catch(error => setMessage(String(error))); }}

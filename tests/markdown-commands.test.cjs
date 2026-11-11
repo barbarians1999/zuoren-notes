@@ -38,13 +38,36 @@ test('Enter continues lists and immediately exits an empty item, including the s
   assert.equal(quote.state.doc.toString(), '> > quoted\n');
 });
 
+test('Backspace clears a nested empty unordered item without changing its parent line', async () => {
+  const { exitEmptyListItem } = await import('../src/editor/markdownCommands.ts');
+  const { EditorState } = await import('@codemirror/state');
+  const { history, undo } = await import('@codemirror/commands');
+  const { markdownSyntax } = await import('../src/editor/markdownLanguage.ts');
+  for (const [doc, expected, caret] of [
+    ['- parent\n  - ', '- parent\n', '- parent\n  - '.length],
+    ['- parent😀\n  - ', '- parent😀\n', '- parent😀\n  - '.length],
+    ['- parent\n    * ', '- parent\n', '- parent\n    * '.length],
+    ['> - parent\n>   + ', '> - parent\n> ', '>   + '.length + '> - parent\n'.length]
+  ]) {
+    const v = await view(doc, { anchor: caret });
+    v.state = EditorState.create({ doc, selection: { anchor: caret }, extensions: [markdownSyntax(), history()] });
+    assert.equal(exitEmptyListItem(v), true, doc);
+    assert.equal(v.state.doc.toString(), expected, doc);
+    assert.equal(undo(v), true);
+    assert.equal(v.state.doc.toString(), doc);
+  }
+  const nonempty = await view('- parent\n  - child', { anchor: '- parent\n  - '.length });
+  assert.equal(exitEmptyListItem(nonempty), false);
+  const prose = await view('- parent\n\ntext', { anchor: '- parent\n\n'.length });
+  assert.equal(exitEmptyListItem(prose), false);
+});
 test('Backspace on an empty list item exits the top level cleanly and outdents nested task markers', async () => {
   const { exitEmptyListItem } = await import('../src/editor/markdownCommands.ts');
   for (const [doc, expected] of [
     ['- parent\n- ', '- parent\n'], ['  - ', ''], ['>   - ', '> '],
-    ['- parent\n    - ', '- parent\n- '], ['12. parent\n    3. ', '12. parent\n3. '],
-    ['- parent\n \t- child\n \t  - ', '- parent\n \t- child\n \t- '],
-    ['  - parent\n      - ', '  - parent\n  - '],
+    ['- parent\n    - ', '- parent\n'], ['12. parent\n    3. ', '12. parent\n3. '],
+    ['- parent\n \t- child\n \t  - ', '- parent\n \t- child\n'],
+    ['  - parent\n      - ', '  - parent\n'],
     ['- parent\n  - [x] \t', '- parent\n- [x] \t'], ['1. parent\n    2) [ ] ', '1. parent\n2) [ ] '], ['> - ', '> ']
   ]) {
     const v = await view(doc, { anchor: doc.length });

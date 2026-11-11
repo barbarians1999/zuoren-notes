@@ -5,6 +5,7 @@ export interface WorkspaceFile {
   name: string;
   relative: string;
   type: FileKind;
+  moveVersion?: string;
 }
 
 export type WorkspaceDirectoryEntry =
@@ -16,6 +17,17 @@ export interface DirectoryListing {
   parent: string | null;
   breadcrumbs: { name: string; path: string }[];
   entries: WorkspaceDirectoryEntry[];
+}
+export type FileMoveInput = { operationId: string; root: string; path: string; directory: string; expectedVersion?: string; expectedHash?: string };
+export type FileMoveResult = { ok: true; operationId: string; oldPath: string; entry: WorkspaceFile & { kind: 'file' }; undoToken: string; warning?: string; restored?: boolean; recovered?: boolean }
+  | { ok: false; operationId: string; oldPath: string; recoveryPath: string; error: string };
+export type FileMoveStatus = { status: 'pending' | 'unknown' } | { status: 'failed'; error: string } | { status: 'finished'; result: FileMoveResult };
+export interface PendingFileMoveIssue {
+  operationId: string;
+  oldPath: string;
+  targetPath?: string;
+  message: string;
+  recoveryPath?: string;
 }
 
 export interface PdfRect {
@@ -244,6 +256,13 @@ export interface ReaderApi {
   createNoteAt(input: { directory: string; name: string; initialContent?: string }): Promise<NoteRead>;
   createFolderAt(input: { directory: string; name: string }): Promise<Extract<WorkspaceDirectoryEntry, { kind: 'folder' }>>;
   renameEntry(input: { path: string; name: string }): Promise<WorkspaceDirectoryEntry>;
+  moveFile(input: FileMoveInput): Promise<FileMoveResult>;
+  fileMoveCapability(): Promise<{ supported: boolean; reason?: string }>;
+  undoFileMove(input: { operationId: string; token: string; expectedHash?: string }): Promise<FileMoveResult>;
+  fileMoveStatus(operationId: string): Promise<FileMoveStatus>;
+  pendingFileMove(): Promise<PendingFileMoveIssue | null>;
+  finalizeFileMove(operationId: string): Promise<boolean>;
+  recoverFileMove(operationId: string): Promise<FileMoveResult>;
   trashEntry(path: string): Promise<boolean>;
   createNote(input: { suggestedName?: string; initialContent?: string }): Promise<NoteRead | null>;
   saveAs(input: { sourcePath?: string; suggestedName?: string; content: string }): Promise<NoteRead | null>;
@@ -274,6 +293,7 @@ export interface ReaderApi {
   onOcrProgress(listener: (progress: OcrProgress) => void): () => void;
   onOpenLaunchItems(listener: (items: { root?: string; files: WorkspaceFile[] }) => void): () => void;
   onWindowState(listener: (state: { maximized: boolean; fullscreen: boolean }) => void): () => void;
+  onRefreshNote(listener: () => void): () => void;
   onAppClosing(listener: () => void): () => void;
   confirmClose(): void;
 }
