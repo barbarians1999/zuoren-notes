@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 2,
+  "version": "0.4.3",
+  "sourceCommit": "cd44d97b911a2bc05557b1749b1f607e21314c82",
+  "releaseId": 441402573,
+  "tag": "v0.4.3",
+  "url": "https://github.com/barbarians1999/zuoren-notes/releases/tag/v0.4.3",
+  "latestVerified": true,
+  "assets": [
+    {
+      "size": 230375798,
+      "digest": "sha256:907a65088e429961ca579b76f0ece6a9e7dd50c08e4a49b015d045c9b004e6aa",
+      "name": "ZuorenNotes-Setup-0.4.3.exe"
+    },
+    {
+      "size": 430,
+      "digest": "sha256:87a2f5fd444d54fb0141b07c37a2d785faf2bb8282ce9c21309c06b3e11bbe94",
+      "name": "SHA256SUMS.txt"
+    }
+  ],
+  "macReports": []
+}
