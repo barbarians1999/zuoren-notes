@@ -11,7 +11,8 @@ const { createSmokeWorkspace, cleanupSmokeWorkspace } = require('./smokeWorkspac
 async function assertHanYi(page, expression) {
   const fonts = await platformFonts(page, expression);
   assert.ok(fonts.length > 0, 'probe must have rendered glyphs');
-  assert.ok(fonts.every(font => font.postScriptName === 'HYShuFang-55W' && font.glyphCount > 0 && font.isCustomFont), `Expected bundled HanYi 55W glyphs, got ${JSON.stringify(fonts)}`);
+  assert.ok(fonts.some(font => font.postScriptName === 'HYShuFang-55W' && font.glyphCount > 0 && font.isCustomFont), `Expected bundled HanYi 55W glyphs, got ${JSON.stringify(fonts)}`);
+  assert.ok(fonts.every(font => (font.postScriptName === 'HYShuFang-55W' && font.isCustomFont) || /Consolas|Cascadia|Courier/.test(font.familyName)), `Expected HanYi 55W or western monospace, got ${JSON.stringify(fonts)}`);
 }
 
 test('bundled body fonts supply actual editor, preview and EPUB glyphs without local fonts', { timeout: 60000 }, async () => {

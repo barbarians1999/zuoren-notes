@@ -11,7 +11,7 @@ export type OcrDialog = { jobId: string; annotation: PdfAnnotation; imagePath: s
 export type FileContextMenu = { entry: WorkspaceDirectoryEntry; x: number; y: number };
 export type InlineEntryEdit = { kind: 'note' | 'folder' | 'rename'; value: string; entry?: WorkspaceDirectoryEntry; parentPath?: string; error?: string; busy?: boolean };
 
-export const MONOSPACE_WESTERN_FONTS = '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", ui-monospace, monospace';
+export const MONOSPACE_WESTERN_FONTS = '"Cascadia Mono", "Cascadia Code", Consolas, Menlo, Monaco, "Courier New"';
 
 export const NOTE_BODY_FONTS: Record<NoteBodyFont, string> = {
   default: `${MONOSPACE_WESTERN_FONTS}, "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif`,
