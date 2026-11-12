@@ -218,6 +218,7 @@ test('Markdown editing keeps continuous source text like Obsidian', { timeout: 9
   await selectionToolbar.waitFor({ state: 'hidden' });
 
   const dragLine = page.locator('.markdown-source-editor .cm-line').filter({ hasText: '这是' });
+  await dragLine.scrollIntoViewIfNeeded();
   const dragBox = await dragLine.boundingBox();
   assert.ok(dragBox, 'source line has a drag target');
   await page.mouse.move(dragBox.x + 8, dragBox.y + dragBox.height / 2);

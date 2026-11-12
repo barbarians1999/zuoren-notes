@@ -407,3 +407,87 @@ test('Backspace consumes a confirmed list action when trial parsing is pending w
   assert.deepEqual([v.state.selection.main.anchor, v.state.selection.main.head], selection);
   assert.deepEqual(errors, ['文档仍在解析，请稍后重试']);
 });
+
+test('keyHabitsListEnter keeps exact level on non-empty list item and dedents nested empty items on Enter', async () => {
+  const { keyHabitsListEnter } = await import('../src/editor/markdownKeyHabits.ts');
+  const { undo } = await import('@codemirror/commands');
+
+  // Bullet list: Level 2 non-empty Enter stays on level 2; 2nd Enter on empty item dedents to level 1; 3rd Enter exits
+  const bulletDoc = '- 一级\n\t- 二级内容';
+  const v1 = await view(bulletDoc);
+  assert.equal(keyHabitsListEnter(v1), true);
+  assert.equal(v1.state.doc.toString(), '- 一级\n\t- 二级内容\n\t- ', 'non-empty level 2 list item must stay on level 2');
+
+  assert.equal(keyHabitsListEnter(v1), true);
+  assert.equal(v1.state.doc.toString(), '- 一级\n\t- 二级内容\n- ', 'empty level 2 list item on Enter must dedent to level 1');
+
+  assert.equal(keyHabitsListEnter(v1), true);
+  assert.equal(v1.state.doc.toString(), '- 一级\n\t- 二级内容\n', 'empty level 1 list item on Enter must exit list cleanly');
+
+  assert.equal(undo(v1), true);
+  assert.equal(v1.state.doc.toString(), '- 一级\n\t- 二级内容\n- ', 'undo restores dedented item in 1 step');
+
+  // Ordered list: Level 2 non-empty Enter increments number; 2nd Enter on empty item dedents to level 1; 3rd Enter exits
+  const orderedDoc = '1. 一级\n\t1. 二级内容';
+  const v2 = await view(orderedDoc);
+  assert.equal(keyHabitsListEnter(v2), true);
+  assert.equal(v2.state.doc.toString(), '1. 一级\n\t1. 二级内容\n\t2. ', 'ordered list item increments on same level');
+
+  assert.equal(keyHabitsListEnter(v2), true);
+  assert.equal(v2.state.doc.toString(), '1. 一级\n\t1. 二级内容\n2. ', 'empty ordered level 2 dedents to level 1 with matching number');
+
+  assert.equal(keyHabitsListEnter(v2), true);
+  assert.equal(v2.state.doc.toString(), '1. 一级\n\t1. 二级内容\n', 'empty ordered level 1 exits list cleanly');
+
+  // 3-level list successive dedenting
+  const v3 = await view('- 1\n\t- 2\n\t\t- 3');
+  assert.equal(keyHabitsListEnter(v3), true);
+  assert.equal(v3.state.doc.toString(), '- 1\n\t- 2\n\t\t- 3\n\t\t- ');
+  assert.equal(keyHabitsListEnter(v3), true);
+  assert.equal(v3.state.doc.toString(), '- 1\n\t- 2\n\t\t- 3\n\t- ', 'level 3 dedents to level 2');
+  assert.equal(keyHabitsListEnter(v3), true);
+  assert.equal(v3.state.doc.toString(), '- 1\n\t- 2\n\t\t- 3\n- ', 'level 2 dedents to level 1');
+  assert.equal(keyHabitsListEnter(v3), true);
+  assert.equal(v3.state.doc.toString(), '- 1\n\t- 2\n\t\t- 3\n', 'level 1 exits list');
+
+  // Blockquote preserved during Enter and dedent
+  const v4 = await view('> - 一级\n> \t- 二级内容');
+  assert.equal(keyHabitsListEnter(v4), true);
+  assert.equal(v4.state.doc.toString(), '> - 一级\n> \t- 二级内容\n> \t- ');
+  assert.equal(keyHabitsListEnter(v4), true);
+  assert.equal(v4.state.doc.toString(), '> - 一级\n> \t- 二级内容\n> - ');
+  assert.equal(keyHabitsListEnter(v4), true);
+  assert.equal(v4.state.doc.toString(), '> - 一级\n> \t- 二级内容\n> ');
+});
+
+test('keyHabitsListEnter renumbers subsequent ordered items and continues task lists with unchecked box', async () => {
+  const { keyHabitsListEnter } = await import('../src/editor/markdownKeyHabits.ts');
+
+  // Ordered list middle insertion renumbers subsequent items
+  const doc = '1. first\n2. second\n3. third';
+  const v1 = await view(doc, { anchor: doc.indexOf('\n2. second') });
+  assert.equal(keyHabitsListEnter(v1), true);
+  assert.equal(v1.state.doc.toString(), '1. first\n2. \n3. second\n4. third');
+
+  // Task list continuation
+  const taskDoc = '- [ ] item 1\n\t- [x] item 2';
+  const v2 = await view(taskDoc);
+  assert.equal(keyHabitsListEnter(v2), true);
+  assert.equal(v2.state.doc.toString(), '- [ ] item 1\n\t- [x] item 2\n\t- [ ] ', 'task continuation defaults to unchecked');
+
+  // Mid-line split in list item
+  const splitDoc = '- 一级\n\t- 前半部分后半部分';
+  const v3 = await view(splitDoc, { anchor: splitDoc.indexOf('后半部分') });
+  assert.equal(keyHabitsListEnter(v3), true);
+  assert.equal(v3.state.doc.toString(), '- 一级\n\t- 前半部分\n\t- 后半部分');
+});
+
+test('western monospace font styling is configured for equal-width numbers and letters', async () => {
+  const { NOTE_BODY_FONTS, MONOSPACE_WESTERN_FONTS } = await import('../src/readerContext.ts');
+  assert.ok(MONOSPACE_WESTERN_FONTS.includes('Cascadia Mono'), 'Cascadia Mono must be present');
+  assert.ok(MONOSPACE_WESTERN_FONTS.includes('Consolas'), 'Consolas must be present');
+  for (const fontValue of Object.values(NOTE_BODY_FONTS)) {
+    assert.match(fontValue, /"Cascadia Mono"/, 'monospace western fonts must prepend body font stack');
+  }
+});
+

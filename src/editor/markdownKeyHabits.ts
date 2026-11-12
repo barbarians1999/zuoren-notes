@@ -25,6 +25,18 @@ function decreaseIndent(state: EditorState, value: string) {
   return indentString(state, target);
 }
 
+function removeIndentUnit(state: EditorState, value: string) {
+  const unit = getIndentUnit(state);
+  let columns = 0;
+  for (let index = 0; index < value.length; index++) {
+    const next = value[index] === '\t' ? columns + state.tabSize - columns % state.tabSize : columns + 1;
+    if (next === unit) return value.slice(index + 1);
+    if (next > unit) return ' '.repeat(next - unit) + value.slice(index + 1);
+    columns = next;
+  }
+  return '';
+}
+
 /** Handle Enter in fenced code while preserving source indentation and containers. */
 export function keyHabitsEnter(view: EditorView) {
   const { state } = view, selection = state.selection.main;
@@ -49,6 +61,111 @@ export function keyHabitsEnter(view: EditorView) {
   if (selection.head < codeStart + indentation.length) return false;
   const insert = state.lineBreak + containerPrefix + indentation;
   view.dispatch({ changes: { from: selection.head, insert }, selection: { anchor: selection.head + insert.length }, scrollIntoView: true, userEvent: 'input' });
+  return true;
+}
+
+/** Handle Enter in list items: continue on exact same level for non-empty items; dedent one level on empty nested items; exit list on empty top-level items. */
+export function keyHabitsListEnter(view: EditorView, ensureTree: typeof ensureSyntaxTree = ensureSyntaxTree) {
+  const { state } = view, selection = state.selection.main;
+  if (view.composing || state.readOnly || state.selection.ranges.length !== 1 || !selection.empty) return false;
+  const line = state.doc.lineAt(selection.head);
+  const tree = syntaxTreeAvailable(state, line.to) ? syntaxTree(state) : ensureTree(state, line.to, 100);
+  if (!tree) return false;
+
+  let item: ReturnType<typeof tree.resolveInner> | null = tree.resolveInner(selection.head, -1);
+  for (; item && item.name !== 'ListItem'; item = item.parent) {
+    if (['FencedCode', 'CodeBlock', 'Table'].includes(item.name)) return false;
+  }
+  if (!item) return false;
+
+  const marker = item.getChild('ListMark');
+  if (!marker || state.doc.lineAt(marker.from).number !== line.number) return false;
+
+  const taskMarker = item.getChild('Task')?.getChild('TaskMarker');
+  const sourceEnd = taskMarker?.to ?? marker.to;
+  let bodyStart = sourceEnd;
+  while (bodyStart < line.to && /[\t ]/.test(state.sliceDoc(bodyStart, bodyStart + 1))) bodyStart++;
+
+  const bodyText = state.sliceDoc(bodyStart, line.to).trim();
+  const isEmptyItem = !bodyText && selection.head >= bodyStart;
+
+  const quotePrefix = /^(?:[\t ]{0,3}>[\t ]?)*/.exec(line.text)?.[0] ?? '';
+  const containerPrefix = state.sliceDoc(line.from, marker.from);
+  let hasParentListItem = false;
+  for (let parent = item.parent; parent; parent = parent.parent) {
+    if (parent.name === 'ListItem') { hasParentListItem = true; break; }
+  }
+
+  if (isEmptyItem) {
+    if (hasParentListItem) {
+      const indentWhitespace = containerPrefix.slice(quotePrefix.length);
+      const reducedIndent = removeIndentUnit(state, indentWhitespace);
+      const markerSlice = state.sliceDoc(marker.from, line.to);
+      const insert = quotePrefix + reducedIndent + markerSlice;
+      view.dispatch({
+        changes: { from: line.from, to: line.to, insert },
+        selection: { anchor: line.from + insert.length },
+        scrollIntoView: true,
+        userEvent: 'delete.dedent',
+        annotations: isolateHistory.of('full'),
+      });
+      return true;
+    } else {
+      view.dispatch({
+        changes: { from: line.from, to: line.to, insert: quotePrefix },
+        selection: { anchor: line.from + quotePrefix.length },
+        scrollIntoView: true,
+        userEvent: 'input',
+        annotations: isolateHistory.of('full'),
+      });
+      return true;
+    }
+  }
+
+  if (selection.head < bodyStart) return false;
+
+  const isOrdered = item.parent?.name === 'OrderedList';
+  const markerText = state.sliceDoc(marker.from, marker.to);
+  let newMarker = markerText;
+  let nextNumber = 0;
+  if (isOrdered) {
+    const match = /^(\d+)([.)])$/.exec(markerText);
+    if (match) {
+      nextNumber = parseInt(match[1], 10) + 1;
+      newMarker = String(nextNumber) + match[2];
+    }
+  }
+
+  const taskText = taskMarker ? '- [ ] ' : null;
+  const spaceAfter = taskText ? '' : (state.sliceDoc(marker.to, bodyStart) || ' ');
+  const nextItemPrefix = containerPrefix + (taskText ? taskText : (newMarker + spaceAfter));
+  const insert = state.lineBreak + nextItemPrefix;
+
+  const edits: { from: number; to?: number; insert: string }[] = [{ from: selection.head, insert }];
+  if (isOrdered && nextNumber > 0) {
+    let expected = nextNumber;
+    for (let cur = item.nextSibling; cur; cur = cur.nextSibling) {
+      if (cur.name !== 'ListItem') continue;
+      const sibMarker = cur.getChild('ListMark');
+      if (!sibMarker) break;
+      const sibText = state.sliceDoc(sibMarker.from, sibMarker.to);
+      const sibMatch = /^(\d+)([.)])$/.exec(sibText);
+      if (!sibMatch) break;
+      const currentNum = parseInt(sibMatch[1], 10);
+      if (currentNum !== expected) break;
+      const bumped = currentNum + 1;
+      edits.push({ from: sibMarker.from, to: sibMarker.from + sibMatch[1].length, insert: String(bumped) });
+      expected = bumped;
+    }
+  }
+
+  view.dispatch({
+    changes: edits,
+    selection: { anchor: selection.head + insert.length },
+    scrollIntoView: true,
+    userEvent: 'input',
+    annotations: isolateHistory.of('full'),
+  });
   return true;
 }
 
@@ -154,18 +271,6 @@ function selectedLineNumbers(state: EditorState) {
   let last = state.doc.lineAt(range.to);
   if (!range.empty && range.to === last.from) last = state.doc.lineAt(range.to - 1);
   return Array.from({ length: last.number - first.number + 1 }, (_, index) => first.number + index);
-}
-
-function removeIndentUnit(state: EditorState, value: string) {
-  const unit = getIndentUnit(state);
-  let columns = 0;
-  for (let index = 0; index < value.length; index++) {
-    const next = value[index] === '\t' ? columns + state.tabSize - columns % state.tabSize : columns + 1;
-    if (next === unit) return value.slice(index + 1);
-    if (next > unit) return ' '.repeat(next - unit) + value.slice(index + 1);
-    columns = next;
-  }
-  return '';
 }
 
 /** Tab / Shift-Tab indentation with related ordered-list numbering in one transaction. */

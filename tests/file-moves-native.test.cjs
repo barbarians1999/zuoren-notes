@@ -68,7 +68,7 @@ test('same operation id coalesces and cannot replay a different payload', async 
   await assert.rejects(f.moves.move({ ...f.input, directory: f.root }), /标识/); assert.equal(f.requests.length, 1);
 });
 for (const kind of ['file', 'directory', 'symlink']) test(`native broker rejects occupied ${kind} before dispatch`, async t => {
-  const f = await fixture(t); if (kind === 'file') await fs.writeFile(f.target, 'foreign'); else if (kind === 'directory') await fs.mkdir(f.target); else if (!(await createSymlinkFixture(t, f.source, f.target, 'file'))) return;
+  const f = await fixture(t); if (kind === 'file') await fs.writeFile(f.target, 'foreign'); else if (kind === 'directory') await fs.mkdir(f.target); else if (!(await createSymlinkFixture(t, process.platform === 'win32' ? f.directory : f.source, f.target, process.platform === 'win32' ? 'junction' : 'file'))) return;
   await assert.rejects(f.moves.move(f.input), /同名/); assert.equal(f.requests.length, 0); assert.ok(await fs.stat(f.source));
 });
 test('directory source and no-op cannot dispatch', async t => {

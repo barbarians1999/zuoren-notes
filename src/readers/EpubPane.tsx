@@ -84,7 +84,7 @@ function epubThemeCss(theme: ThemeName, fontFamily: string, readingSize: number)
     @font-face { font-family: "Zhaoye Heading"; src: url("${new URL(headingFontUrl, document.baseURI).href}") format("woff2"); font-style: normal; font-weight: 200 900; font-display: swap; }
     :root { color-scheme: ${colorScheme}; }
     html, body { background: ${colors.surface} !important; color: ${colors.text} !important; }
-    body { max-width: 880px; margin: 0 auto !important; padding: 32px clamp(22px, 4vw, 56px) 72px !important; font-family: ${fontFamily} !important; font-size: ${readingSize}px !important; line-height: 1.95 !important; letter-spacing: .015em; }
+    body { max-width: 880px; margin: 0 auto !important; padding: 32px clamp(22px, 4vw, 56px) 72px !important; font-family: ${fontFamily} !important; font-size: ${readingSize}px !important; line-height: 1.95 !important; letter-spacing: .015em; font-variant-numeric: tabular-nums !important; font-feature-settings: "tnum" 1 !important; }
     p, li, dt, dd, blockquote, table, th, td { font-size: 1em !important; }
     body, p, li, dt, dd, blockquote, table, th, td { font-family: ${fontFamily} !important; }
     p, li, dt, dd, table, th, td { color: ${colors.text} !important; }

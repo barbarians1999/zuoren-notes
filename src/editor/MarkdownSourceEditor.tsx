@@ -11,7 +11,7 @@ import { markdownImagePaste } from './markdownImagePaste';
 import { markdownTypedFormat } from './markdownTypedFormat';
 import { reader } from '../readerContext';
 import { tableNextCell, tablePreviousCell } from './markdownTableNavigation';
-import { keyHabitsEnter, keyHabitsNonemptyListBackspace, keyHabitsShiftEnter, keyHabitsTab } from './markdownKeyHabits';
+import { keyHabitsEnter, keyHabitsListEnter, keyHabitsNonemptyListBackspace, keyHabitsShiftEnter, keyHabitsTab } from './markdownKeyHabits';
 import { markdownTextSelection } from './markdownSelection';
 import { attachMarkdownMotion, detachMarkdownMotion, updateMarkdownMotion } from './markdownMotion';
 import { sourceOutlineScrollMotion } from './outlineScrollMotion';
@@ -92,6 +92,7 @@ export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, onMe
           { key: 'Backspace', run: exitEmptyListItem },
           { key: 'Backspace', run: view => keyHabitsNonemptyListBackspace(view, message => messageCallback.current(message)) },
           { key: 'Enter', run: keyHabitsEnter },
+          { key: 'Enter', run: keyHabitsListEnter },
           { key: 'Enter', run: exitEmptyIndent }, { key: 'Enter', run: exitEmptyBlockquote },
           { key: 'Enter', run: continueMarkdown }, { key: 'Shift-Enter', run: keyHabitsShiftEnter },
           { key: 'Mod-Shift-z', run: redoNoteView, preventDefault: true }, { key: 'Mod-z', run: undoNoteView }, { key: 'Mod-y', run: redoNoteView }])),

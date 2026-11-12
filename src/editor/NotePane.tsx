@@ -75,6 +75,7 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
   if (selectionToolbar) lastSelectionToolbar.current = selectionToolbar;
   const [sourceSelection, setSourceSelection] = useState<{ from: number; to: number; left: number; top: number; width: number; height: number } | null>(null);
   const pointerSelecting = useRef(false);
+  const selectionCancelled = useRef(false);
   const selectionPointerId = useRef<number | null>(null);
   const selectionFrame = useRef<number | null>(null);
   const selectionGeneration = useRef(0);
@@ -262,8 +263,7 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
     if (!sourceView) return;
     const cancelPointerSelection = () => {
       selectionGeneration.current++;
-      pointerSelecting.current = false;
-      selectionPointerId.current = null;
+      selectionCancelled.current = true;
       if (selectionFrame.current !== null) cancelAnimationFrame(selectionFrame.current);
       selectionFrame.current = null;
       setSourceSelection(null);
@@ -276,12 +276,20 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
       selectionFrame.current = null;
       selectionGeneration.current++;
       pointerSelecting.current = true;
+      selectionCancelled.current = false;
       selectionPointerId.current = event.pointerId;
       setSelectionToolbar(null);
       setSelectedUnits(0);
     };
     const finishPointerSelection = (event: PointerEvent) => {
-      if (!pointerSelecting.current || event.pointerId !== selectionPointerId.current) return;
+      if (!pointerSelecting.current || (selectionPointerId.current !== null && event.pointerId !== selectionPointerId.current)) return;
+      if (selectionCancelled.current) {
+        pointerSelecting.current = false;
+        selectionCancelled.current = false;
+        selectionPointerId.current = null;
+        setSourceSelection(null);
+        return;
+      }
       const generation = selectionGeneration.current;
       selectionFrame.current = requestAnimationFrame(() => {
         selectionFrame.current = null;
@@ -298,16 +306,28 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
     const handlePointerCancel = (event: PointerEvent) => {
       if (event.pointerId === selectionPointerId.current) cancelPointerSelection();
     };
+    const handleKeyDown = () => {
+      if (pointerSelecting.current) {
+        pointerSelecting.current = false;
+        selectionCancelled.current = false;
+        selectionPointerId.current = null;
+      }
+    };
     sourceView.dom.addEventListener('pointerdown', startPointerSelection);
     window.addEventListener('pointerup', finishPointerSelection);
     window.addEventListener('pointercancel', handlePointerCancel);
     window.addEventListener('blur', cancelPointerSelection);
+    window.addEventListener('keydown', handleKeyDown, true);
     return () => {
       sourceView.dom.removeEventListener('pointerdown', startPointerSelection);
       window.removeEventListener('pointerup', finishPointerSelection);
       window.removeEventListener('pointercancel', handlePointerCancel);
       window.removeEventListener('blur', cancelPointerSelection);
+      window.removeEventListener('keydown', handleKeyDown, true);
       cancelPointerSelection();
+      pointerSelecting.current = false;
+      selectionCancelled.current = false;
+      selectionPointerId.current = null;
     };
   }, [sourceView, mode, note?.path, hidden]);
 
@@ -436,6 +456,7 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
           const preview = host.current?.querySelector<HTMLElement>('.markdown-preview'), nonce = preview?.dataset.headingNonce;
           if (preview?.dataset.previewCurrent === 'true' && nonce && item.line !== undefined) {
             const heading = preview.querySelector(`[data-zuoren-heading="${nonce}:${item.line}"]`); if (!heading) return;
+            heading.scrollIntoView?.({ block: 'start', behavior: 'auto' });
             if (outlineScroll.current?.host !== preview) { outlineScroll.current?.destroy(); outlineScroll.current = new OutlineScrollMotion(preview); }
             outlineScroll.current.start(() => preview.dataset.previewCurrent === 'true' && preview.dataset.headingNonce === nonce ? outlineTargetTop(preview, heading) : null);
           } }}/>

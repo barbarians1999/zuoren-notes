@@ -1170,8 +1170,8 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   margin-right: calc(0px - max(0px, var(--md-prefix-space-width) - .5em));
   padding-right: max(0px, calc(.5em - var(--md-prefix-space-width)));
 }
-.markdown-source-editor .cm-md-list-marker[data-source-columns] {
-  font-family: system-ui, sans-serif;
+.markdown-source-editor .cm-md-list-marker {
+  font-family: "Segoe UI", system-ui, sans-serif;
 }
 .markdown-source-editor .cm-md-task-checkbox { width: 1em; height: 1em; margin: 0 .5em .08em 0; accent-color: var(--accent); vertical-align: middle; cursor: pointer; }
 
