@@ -55,7 +55,7 @@ async function main() {
     const stream = createReadStream(file);
     try {
       const response = await fetch(`https://uploads.github.com/repos/${repository}/releases/${cloud.id}/assets?name=${encodeURIComponent(name)}`, {
-        method: 'POST', headers: { ...headers, 'Content-Type': 'application/octet-stream', 'Content-Length': String(item.size) }, body: stream, duplex: 'half', signal: AbortSignal.timeout(600000) });
+        method: 'POST', headers: { ...headers, 'Content-Type': 'application/octet-stream', 'Content-Length': String(item.size) }, body: stream, duplex: 'half', signal: AbortSignal.timeout(1800000) });
       if (!response.ok) throw Error('Asset upload failed: ' + response.status);
       const uploaded = await response.json();
       if (uploaded.digest !== item.digest || uploaded.size !== item.size) throw Error('Uploaded bytes differ: ' + name);
