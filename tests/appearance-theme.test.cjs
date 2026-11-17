@@ -21,7 +21,7 @@ test('legacy, custom and invalid theme preferences resolve safely', () => {
   for (const legacy of ['light', 'blue-white', 'red-white']) assert.equal(parseThemePreference(legacy), 'constructivist');
   for (const legacy of ['dark', 'red-black']) assert.equal(parseThemePreference(legacy), 'constructivist-dark');
   assert.equal(parseThemePreference('system'), 'system');
-  assert.equal(resolveTheme('system', false), 'constructivist-paper');
+  assert.equal(resolveTheme('system', false), 'constructivist');
   assert.equal(resolveTheme('system', true), 'constructivist-dark');
   for (const name of Object.keys(THEMES)) {
     assert.equal(resolveTheme(name), name);
@@ -32,10 +32,9 @@ test('legacy, custom and invalid theme preferences resolve safely', () => {
   assert.equal(resolveTheme('constructivist-paper', true), 'constructivist-paper');
 });
 
-test('constructivist colors keep yellow out of broad day surfaces and night remains pure black', () => {
+test('three themes keep mark highlight semantics and layered surfaces intact', () => {
   const structure = ['surface', 'surface-subtle', 'surface-muted', 'canvas', 'sidebar', 'chrome', 'hover', 'code-bg'];
   for (const key of structure) {
-    assert.equal(THEMES['constructivist-dark'].colors[key], '#000000', key);
     assert.notEqual(THEMES.constructivist.colors[key], THEMES.constructivist.colors['brand-yellow'], key);
   }
   for (const theme of Object.values(THEMES)) {
@@ -55,41 +54,33 @@ test('all palettes provide matching, opaque colors with readable text and contro
     const c = theme.colors;
     for (const fg of ['text', 'text-muted', 'text-faint', 'heading', 'link']) {
       for (const bg of ['surface', 'surface-muted', 'sidebar']) {
-        assert.ok(contrast(c[fg], c[bg]) >= 4.5, `${name}: ${fg} / ${bg}`);
+        assert.ok(contrast(c[fg], c[bg]) >= 4.5, `${name}: ${fg} / ${bg} (${contrast(c[fg], c[bg]).toFixed(2)})`);
       }
     }
     for (const [fg, bg] of [['accent', 'accent-soft'], ['on-accent', 'accent'], ['mark-text', 'mark-bg'], ['toast-text', 'toast-bg'], ['on-action', 'action-bg'], ['on-action', 'action-hover'], ['on-mode', 'mode-bg']]) {
-      assert.ok(contrast(c[fg], c[bg]) >= 4.5, `${name}: ${fg} / ${bg}`);
+      assert.ok(contrast(c[fg], c[bg]) >= 4.5, `${name}: ${fg} / ${bg} (${contrast(c[fg], c[bg]).toFixed(2)})`);
     }
     for (const [fg, bg] of [['topbar-text', 'topbar-bg'], ['topbar-hover', 'topbar-bg'], ['text', 'selected-row-bg'], ['hover-text', 'surface']]) {
-      assert.ok(contrast(c[fg], c[bg]) >= 4.5, `${name}: ${fg} / ${bg}`);
+      assert.ok(contrast(c[fg], c[bg]) >= 4.5, `${name}: ${fg} / ${bg} (${contrast(c[fg], c[bg]).toFixed(2)})`);
     }
     assert.equal(Object.isFrozen(theme.colors), true);
   }
 });
 
-test('day chrome is neutral and night focal controls retain contrast on pure black', () => {
+test('three themes expose distinct minimal white, warm stationery and layered dark palettes', () => {
   const c = THEMES.constructivist.colors;
   assert.equal(c.surface, '#ffffff');
-  for (const key of ['sidebar', 'chrome', 'canvas']) assert.equal(c[key], '#f5f5f3');
-  assert.equal(c.accent, '#c0222b');
+  assert.equal(c.chrome, '#f4f4f2');
+  assert.equal(c.accent, '#bc3c2b');
+  const paper = THEMES['constructivist-paper'].colors;
+  assert.equal(paper.surface, '#fefcf8');
+  assert.equal(paper.chrome, '#f5f2eb');
+  assert.equal(paper.accent, '#b33b2b');
   const n = THEMES['constructivist-dark'].colors;
-  assert.equal(n.surface, '#000000');
-  assert.equal(n['mode-bg'], '#b52d24');
-  assert.equal(n.text, '#ece9e0');
-  assert.equal(n.accent, '#ef6a5b');
+  assert.equal(n.surface, '#1b1c20');
+  assert.equal(n.chrome, '#141518');
+  assert.equal(n.text, '#eae6dd');
+  assert.equal(n.accent, '#e87461');
   assert.ok(contrast(n['brand-yellow'], n.surface) >= 4.5);
   assert.ok(contrast(n['line-strong'], n.surface) >= 3);
-});
-
-test('paper day is optional and preserves the original day and highlight colors', () => {
-  const original = THEMES.constructivist.colors, paper = THEMES['constructivist-paper'].colors;
-  assert.equal(original['action-bg'], '#c0222b');
-  assert.equal(original['mode-bg'], '#171717');
-  assert.equal(original['topbar-bg'], '#ffffff');
-  assert.equal(paper.surface, '#fcfbf8');
-  assert.equal(paper.sidebar, '#f5f4f0');
-  assert.equal(paper['topbar-bg'], '#21211e');
-  assert.equal(paper.accent, '#b52d24');
-  assert.equal(resolveTheme('system', false), 'constructivist-paper');
 });

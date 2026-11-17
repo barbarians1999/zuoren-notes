@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { reader } from './readerContext';
 
-const chrome = '.topbar, .note-workspace-bar, .pdf-navigation';
+const chrome = '.topbar, .left-rail';
 
 // Hover changes only the overlay, never the reader viewport or document state.
 export function useFullscreenChrome(fullscreen: boolean) {

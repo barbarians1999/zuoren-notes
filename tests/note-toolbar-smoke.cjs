@@ -10,27 +10,22 @@ const appRoot = path.resolve(__dirname, '..');
 let application, workspace;
 async function assertQuietPaneChrome(page) {
   assert.equal(await page.locator('.note-workspace-bar').evaluate(bar => {
-    const swatch = document.createElement('span'); swatch.style.color = 'var(--chrome)'; bar.append(swatch);
-    const neutral = getComputedStyle(swatch).color; swatch.remove();
-    return getComputedStyle(bar).backgroundColor === neutral && bar.getBoundingClientRect().height === 40;
-  }), true, 'one neutral secondary toolbar, without a themed ribbon');
+    const topbar = document.querySelector('.topbar');
+    const slot = bar.querySelector('.note-header-slot');
+    return getComputedStyle(bar).backgroundColor === 'rgba(0, 0, 0, 0)'
+      && getComputedStyle(topbar).backgroundColor === 'rgba(0, 0, 0, 0)'
+      && !!slot && slot.getBoundingClientRect().height <= topbar.getBoundingClientRect().height + 0.5;
+  }), true, 'single-row floating header capsule over transparent topbar');
   assert.equal(await page.locator('.foreground-tab').evaluate(tab => getComputedStyle(tab).borderTopColor), 'rgba(0, 0, 0, 0)', 'selected tabs have no card outline');
-  const chrome = await page.locator('.note-group:visible').evaluateAll(groups => groups.map((group, index) => {
+  const chrome = await page.locator('.note-group:visible').evaluateAll(groups => groups.map(group => {
     const css = getComputedStyle(group);
-    const reference = document.createElement('span'); reference.style.borderLeft = '1px solid'; group.append(reference);
-    const onePixel = getComputedStyle(reference).borderLeftWidth; reference.remove();
-    return { index, edges: [css.borderTopWidth, css.borderRightWidth, css.borderBottomWidth, css.borderLeftWidth],
-      onePixel, outline: css.outlineStyle, shadow: css.boxShadow };
+    return { radius: css.borderTopLeftRadius, outline: css.outlineStyle, shadow: css.boxShadow };
   }));
   for (const pane of chrome) {
-    assert.deepEqual(pane.edges, ['0px', '0px', '0px', pane.index ? pane.onePixel : '0px'], 'no themed frame around note content');
-    assert.equal(pane.outline, 'none'); assert.equal(pane.shadow, 'none');
+    assert.equal(pane.radius, '18px', 'note pane renders as a rounded paper card');
+    assert.equal(pane.outline, 'none');
+    assert.notEqual(pane.shadow, 'none', 'note card keeps soft desk elevation');
   }
-  if (chrome.length > 1) assert.equal(await page.locator('.note-group:visible').last().evaluate(group => {
-    const swatch = document.createElement('span'); swatch.style.color = 'var(--line-strong)'; group.append(swatch);
-    const neutral = getComputedStyle(swatch).color; swatch.remove();
-    return getComputedStyle(group).borderLeftColor === neutral;
-  }), true, 'split divider uses the existing separator token, not the active accent');
   const activeGroup = await page.locator('.note-group.active-group:visible').getAttribute('data-note-group');
   assert.equal(await page.locator('.foreground-tab').count(), 1);
   assert.equal(await page.locator('.foreground-tab').evaluate(tab => tab.closest('[data-tabs-group]').dataset.tabsGroup), activeGroup, 'foreground tab still identifies the target pane');
@@ -56,7 +51,7 @@ test('single-row chrome routes to the focused view and stays usable across width
   await row('a.md').dblclick(); await left.locator('.cm-content').waitFor();
   const out = process.env.ZUOREN_SCREENSHOT_OUTPUT || workspace.outputs; await fs.mkdir(out, { recursive: true });
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByRole('button', { name: '浅色', exact: true }).click();
+  await page.getByRole('button', { name: '极简纯白', exact: true }).click();
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await assertQuietPaneChrome(page);
   assert.equal(await page.locator('.sidebar-head').count(), 0, 'remove redundant library title and duplicate file count');
@@ -73,7 +68,7 @@ test('single-row chrome routes to the focused view and stays usable across width
     const controls = page.locator('.note-controls-slot');
     const buttons = controls.locator('.workspace-mode-switch button, .workspace-icon-action[aria-label="查找"]');
     assert.equal(await buttons.count(), 3);
-    for (const theme of ['浅色', '深色']) {
+    for (const theme of ['极简纯白', '深墨夜读']) {
       await page.getByRole('button', { name: '设置', exact: true }).click();
       await page.getByRole('button', { name: theme, exact: true }).click();
       await page.getByRole('button', { name: '设置', exact: true }).click();
@@ -87,13 +82,12 @@ test('single-row chrome routes to the focused view and stays usable across width
           probe.style.color = element.classList.contains('active') ? 'var(--accent)' : 'var(--hover-text)';
           element.append(probe);
           const expectedColor = getComputedStyle(probe).color; probe.remove();
-          return { background: css.backgroundColor, color: css.color, icon: getComputedStyle(element.querySelector('svg')).color,
+          return { active: element.classList.contains('active'), color: css.color, icon: getComputedStyle(element.querySelector('svg')).color,
             expectedColor, offset: new DOMMatrixReadOnly(css.transform).m42 };
         });
-        assert.equal(state.background, 'rgba(0, 0, 0, 0)', 'hover must not create a gray tile');
-        assert.equal(state.color, state.expectedColor, 'hover uses the theme accent, preserving active-mode red');
-        assert.equal(state.icon, state.color, 'icon and text brighten together');
-        assert.equal(state.offset, -1, 'enabled motion gives a subtle one-pixel lift');
+        assert.equal(state.color, state.expectedColor, 'hover uses the theme accent or hover ink');
+        assert.equal(state.icon, state.color, 'icon and text match cleanly');
+        assert.equal(state.offset, 0, 'hover keeps note control glyphs still');
       }
     }
     await page.getByRole('button', { name: '设置', exact: true }).click();
@@ -104,7 +98,7 @@ test('single-row chrome routes to the focused view and stays usable across width
     assert.equal(await buttons.last().evaluate(element => getComputedStyle(element).transform), 'none', 'reduced motion disables hover movement');
     await page.getByRole('button', { name: '设置', exact: true }).click();
     await reduceMotion.uncheck();
-    await page.getByRole('button', { name: '浅色', exact: true }).click();
+    await page.getByRole('button', { name: '极简纯白', exact: true }).click();
     await page.getByRole('button', { name: '设置', exact: true }).click();
     await page.mouse.move(1, 1);
   });
@@ -164,7 +158,7 @@ test('single-row chrome routes to the focused view and stays usable across width
     const before = await Promise.all(groups.map(group => group.locator('.cm-content').innerText()));
     await layout('阅读').click();
     await page.waitForFunction(() => document.querySelector('.app')?.dataset.layout === 'read');
-    assert.equal(await page.locator('.note-workspace-bar').evaluate(bar => getComputedStyle(bar).display), 'none', 'note controls are hidden when reading without an active reader');
+    assert.equal(await page.locator('.note-header-slot').evaluate(slot => getComputedStyle(slot).display), 'none', 'note controls are hidden when reading without an active reader');
     assert.equal(await page.locator('.note-group:visible').count(), 0);
     await layout('笔记').click();
     await page.waitForFunction(() => document.querySelector('.panes.note.dual-notes') && document.querySelectorAll('.note-group:not([style*="display: none"])').length === 2);
@@ -198,7 +192,7 @@ test('single-row chrome routes to the focused view and stays usable across width
     if (await page.locator('.toast button').count()) await page.locator('.toast button').click();
   });
   await t.test('borderless content keeps active tabs, split dividers and keyboard focus across themes', async () => {
-    for (const theme of ['浅色', '深色']) {
+    for (const theme of ['极简纯白', '深墨夜读']) {
       await page.getByRole('button', { name: '设置', exact: true }).click();
       await page.getByRole('button', { name: theme, exact: true }).click();
       await page.getByRole('button', { name: '设置', exact: true }).click();
@@ -228,7 +222,7 @@ test('single-row chrome routes to the focused view and stays usable across width
     }
     await page.screenshot({ path: path.join(out, 'toolbar-narrow.png') });
     await page.getByRole('button', { name: '设置', exact: true }).click();
-    await page.getByRole('button', { name: '深色', exact: true }).click();
+    await page.getByRole('button', { name: '深墨夜读', exact: true }).click();
     await page.getByRole('button', { name: '设置', exact: true }).click();
     await assertQuietPaneChrome(page);
     await page.screenshot({ path: path.join(out, 'toolbar-dark.png') });

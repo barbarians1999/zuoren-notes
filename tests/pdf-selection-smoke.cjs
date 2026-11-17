@@ -109,7 +109,7 @@ test('PDF native dragging, page geometry, safe text actions, copy and menu delet
     }
     if (!pdfActionsMotionChecked) {
       await page.waitForFunction(() => document.querySelector('.pdf-text-actions')?.getAnimations().length > 0);
-      assert.equal(await toolbar.evaluate(el => el.getAnimations()[0]?.effect.getTiming().duration), 140, 'PDF text actions use the shared entrance timing');
+      assert.equal(await toolbar.evaluate(el => el.getAnimations()[0]?.effect.getTiming().duration), 180, 'PDF text actions use the shared entrance timing');
       pdfActionsMotionChecked = true;
     }
   };
@@ -364,7 +364,7 @@ test('PDF native dragging, page geometry, safe text actions, copy and menu delet
     const output = process.env.ZHAOYE_PDF_SELECTION_SCREENSHOTS || workspace.outputs; await fs.mkdir(output, { recursive: true });
     await page.screenshot({ path: path.join(output, 'pdf-selection-wide-light.png') });
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1000, 720));
-    await page.getByRole('button', { name: '设置', exact: true }).click(); await page.getByRole('button', { name: '深色', exact: true }).click(); await page.getByRole('button', { name: '设置', exact: true }).click();
+    await page.getByRole('button', { name: '设置', exact: true }).click(); await page.getByRole('button', { name: '深墨夜读', exact: true }).click(); await page.getByRole('button', { name: '设置', exact: true }).click();
     await jump(1); await drag([1, 0, 0, false], [1, 1, 999, true]);
     await page.waitForFunction(() => {
       const pop = document.querySelector('.pdf-text-actions')?.getBoundingClientRect(), pane = document.querySelector('.pdf-canvas-wrap')?.getBoundingClientRect();
@@ -375,10 +375,10 @@ test('PDF native dragging, page geometry, safe text actions, copy and menu delet
       return [...document.querySelectorAll('.textLayer span')].some(span => { const rect = span.getBoundingClientRect(); return rect.width > 0 && rect.height > 0 && rect.right > pop.left && rect.left < pop.right && rect.bottom > pop.top && rect.top < pop.bottom; });
     }), false, 'floating actions never cover the neighboring unselected line');
     await page.screenshot({ path: path.join(output, 'pdf-selection-narrow-dark.png') });
-    await page.getByRole('button', { name: '设置', exact: true }).click(); await page.getByRole('button', { name: '浅色', exact: true }).click(); await page.getByRole('button', { name: '设置', exact: true }).click();
+    await page.getByRole('button', { name: '设置', exact: true }).click(); await page.getByRole('button', { name: '极简纯白', exact: true }).click(); await page.getByRole('button', { name: '设置', exact: true }).click();
     await jump(1); await drag([1, 0, 0, false], [1, 1, 999, true]); await page.screenshot({ path: path.join(output, 'pdf-selection-narrow-light.png') });
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 950));
-    await page.getByRole('button', { name: '设置', exact: true }).click(); await page.getByRole('button', { name: '深色', exact: true }).click(); await page.getByRole('button', { name: '设置', exact: true }).click();
+    await page.getByRole('button', { name: '设置', exact: true }).click(); await page.getByRole('button', { name: '深墨夜读', exact: true }).click(); await page.getByRole('button', { name: '设置', exact: true }).click();
     await jump(1); await drag(); await page.screenshot({ path: path.join(output, 'pdf-selection-wide-dark.png') });
     assert.equal(await page.locator('.pdf-pane').count(), 1, 'PDF remains open after the wide dark screenshot');
     await cancel();

@@ -20,34 +20,28 @@ test('startup maximizes even with a saved small restore size and window controls
     assert.deepEqual(await page.evaluate(() => window.reader.getWindowState()), { maximized: true, fullscreen: false });
     const minimumWidth = await app.evaluate(({ BrowserWindow, screen }) => {
       const window = BrowserWindow.getAllWindows()[0];
-      return { actual: window.getMinimumSize()[0], expected: Math.floor(screen.getDisplayMatching(window.getBounds()).workAreaSize.width / 2) };
+      const workWidth = screen.getDisplayMatching(window.getBounds()).workAreaSize.width;
+      return { actual: window.getMinimumSize()[0], expected: Math.max(300, Math.min(380, Math.floor(workWidth / 4))), workWidth };
     });
-    assert.equal(minimumWidth.actual, minimumWidth.expected, 'minimum width follows half of the current display work area');
+    assert.equal(minimumWidth.actual, minimumWidth.expected, 'minimum width allows quarter-screen or narrower resizing');
+    assert.ok(minimumWidth.actual <= Math.floor(minimumWidth.workWidth / 4), 'minimum width does not exceed a quarter of the work area');
     const assertContinuousBorder = async (name, hover = false) => {
       await page.mouse.move(300, 250);
       if (hover) await page.getByRole('button', { name: '关闭窗口', exact: true }).hover();
       await page.waitForFunction(() => !document.querySelector('.window-close').getAnimations().length);
       const geometry = await page.locator('.topbar').evaluate(bar => {
         const rect = bar.getBoundingClientRect(), controls = bar.querySelector('.window-controls'), area = controls.getBoundingClientRect();
-        return { width: rect.width, height: rect.height, expected: getComputedStyle(bar).borderBottomColor,
-          separatorBottom: rect.height - parseFloat(getComputedStyle(bar).borderBottomWidth),
-          border: getComputedStyle(controls).borderLeftWidth,
-          bottoms: [...controls.querySelectorAll('button')].map(button => button.getBoundingClientRect().bottom - rect.top),
-          samples: [5, area.left - rect.left - 2, area.left - rect.left + 2, ...[...controls.querySelectorAll('button')].map(button => { const box = button.getBoundingClientRect(); return (box.left + box.right) / 2 - rect.left; }), rect.width - 5] };
+        return { left: rect.left, top: rect.top, width: rect.width, height: rect.height,
+          controlsHeight: area.height, controlsInside: area.top >= rect.top && area.bottom <= rect.bottom && area.right <= rect.right,
+          border: getComputedStyle(bar).borderBottomWidth,
+          buttonHeights: [...controls.querySelectorAll('button')].map(button => Math.round(button.getBoundingClientRect().height)) };
       });
-      assert.equal(geometry.height, 48); assert.equal(geometry.border, '0px');
-      for (const bottom of geometry.bottoms) assert.ok(Math.abs(bottom - geometry.separatorBottom) < .02, 'window buttons end above the display-scaled bottom separator');
-      const image = await page.screenshot({ scale: 'css', clip: { x: 0, y: 0, width: geometry.width, height: geometry.height } });
-      const pixels = await page.evaluate(async ({ encoded, geometry }) => {
-        const buffer = Uint8Array.from(atob(encoded), char => char.charCodeAt(0));
-        const bitmap = await createImageBitmap(new Blob([buffer], { type: 'image/png' }));
-        const canvas = document.createElement('canvas'); canvas.width = bitmap.width; canvas.height = bitmap.height;
-        const ctx = canvas.getContext('2d'); ctx.drawImage(bitmap, 0, 0); bitmap.close();
-        const result = geometry.samples.map(x => [...ctx.getImageData(Math.floor(x), canvas.height - 1, 1, 1).data]);
-        return { result, reference: result[0] };
-      }, { encoded: image.toString('base64'), geometry });
-      for (const pixel of pixels.result) assert.ok(pixel.slice(0, 3).every((channel, index) => Math.abs(channel - pixels.reference[index]) <= 1), 'bottom separator remains continuous across window controls, including hover');
+      assert.equal(geometry.height, 54); assert.equal(geometry.border, '0px');
+      assert.equal(Math.round(geometry.controlsHeight), 38);
+      assert.equal(geometry.controlsInside, true, 'floating window controls capsule sits inside topbar bounds');
+      for (const h of geometry.buttonHeights) assert.equal(h, 30, 'window buttons fit uniformly inside controls capsule');
       if (process.env.ZUOREN_SCREENSHOT_OUTPUT) {
+        const image = await page.screenshot({ scale: 'css', clip: { x: geometry.left, y: geometry.top, width: geometry.width, height: geometry.height } });
         await fs.mkdir(process.env.ZUOREN_SCREENSHOT_OUTPUT, { recursive: true });
         await fs.writeFile(path.join(process.env.ZUOREN_SCREENSHOT_OUTPUT, name + '.png'), image);
       }
@@ -83,7 +77,7 @@ test('startup maximizes even with a saved small restore size and window controls
           element.append(probe); const expected = getComputedStyle(probe).color; probe.remove();
           const css = getComputedStyle(element), icon = getComputedStyle(element.querySelector('svg'));
           const offset = new DOMMatrixReadOnly(icon.transform).m42;
-          if (css.color !== expected || icon.color !== expected || offset !== (app.dataset.motion === 'full' ? -1 : 0)) return false;
+          if (css.color !== expected || icon.color !== expected || offset !== 0) return false;
           return { background: css.backgroundColor, color: css.color, iconColor: icon.color, expected, offset, motion: app.dataset.motion };
         }, elementHandle).catch(async error => {
           console.error('Window hover state:', await button.evaluate(element => ({
@@ -101,7 +95,7 @@ test('startup maximizes even with a saved small restore size and window controls
         assert.equal(feedback.background, 'rgba(0, 0, 0, 0)', 'all window actions use glyph-only feedback');
         assert.equal(feedback.color, feedback.expected);
         assert.equal(feedback.iconColor, feedback.color);
-        assert.equal(feedback.offset, feedback.motion === 'full' ? -1 : 0, 'only enabled motion lifts the glyph');
+        assert.equal(feedback.offset, 0, 'hover keeps window glyphs still without layout shift');
         assert.deepEqual(await button.boundingBox(), before, 'hover must not move the click area');
         await button.focus();
         // :focus-visible is keyboard feedback, not a programmatic mouse focus.
@@ -121,12 +115,12 @@ test('startup maximizes even with a saved small restore size and window controls
     };
     // Theme resolution is independent of native hover assertions below.
     await page.emulateMedia({ colorScheme: 'light' }); await palette('跟随系统');
-    await page.waitForFunction(() => document.documentElement.dataset.theme === 'constructivist-paper');
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'constructivist');
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'constructivist-dark');
     await page.emulateMedia({ colorScheme: 'light' });
-    await page.waitForFunction(() => document.documentElement.dataset.theme === 'constructivist-paper');
-    for (const name of ['纸页红', '浅色', '深色']) await t.test('wide window glyphs and separator: ' + name, async () => {
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'constructivist');
+    for (const name of ['温润宣纸', '极简纯白', '深墨夜读']) await t.test('wide window glyphs and separator: ' + name, async () => {
       await palette(name);
       await assertWindowFeedback();
       await assertContinuousBorder('topbar-wide-' + name);
@@ -136,10 +130,46 @@ test('startup maximizes even with a saved small restore size and window controls
     await page.getByRole('button', { name: '最大化窗口', exact: true }).waitFor();
     const restore = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBounds());
     assert.ok(Math.abs(restore.width - 1000) <= 2 && Math.abs(restore.height - 680) <= 2, 'saved dimensions are restore bounds, not startup bounds');
-    for (const name of ['纸页红', '浅色', '深色']) {
+    for (const name of ['温润宣纸', '极简纯白', '深墨夜读']) {
       await palette(name);
       await assertContinuousBorder('topbar-narrow-' + name);
       await assertContinuousBorder('topbar-narrow-hover-' + name, true);
+    }
+    await app.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      const [minW, minH] = window.getMinimumSize();
+      window.setBounds({ width: minW, height: Math.max(minH, 680) });
+    });
+    await page.waitForFunction(expectedWidth => Math.abs(window.innerWidth - expectedWidth) <= 4, minimumWidth.actual);
+    const quarterLayout = await page.locator('.topbar').evaluate(bar => {
+      const rect = bar.getBoundingClientRect();
+      const controls = bar.querySelector('.window-controls').getBoundingClientRect();
+      const modeCap = bar.querySelector('.topbar-mode-cap').getBoundingClientRect();
+      return {
+        viewportWidth: window.innerWidth,
+        overflowX: document.documentElement.scrollWidth > window.innerWidth + 1,
+        controlsInside: controls.left >= rect.left - 1 && controls.right <= rect.right + 1 && controls.bottom <= rect.bottom + 1,
+        modeInside: modeCap.left >= rect.left - 1 && modeCap.right <= controls.left + 1,
+      };
+    });
+    assert.equal(quarterLayout.overflowX, false, 'quarter-width window keeps zero horizontal document overflow');
+    assert.equal(quarterLayout.controlsInside, true, 'window controls stay inside topbar at quarter width');
+    assert.equal(quarterLayout.modeInside, true, 'mode capsule does not collide with window controls at quarter width');
+    await page.getByRole('button', { name: '设置', exact: true }).click();
+    const settings = page.locator('.settings-popover[aria-hidden="false"]'); await settings.waitFor();
+    await settings.evaluate(async element => Promise.all(element.getAnimations().map(animation => animation.finished.catch(() => {}))));
+    const bodyFont = page.getByRole('combobox', { name: 'Markdown 正文字体' });
+    assert.equal(await bodyFont.isVisible(), true, 'body font control remains visible at the native minimum width');
+    const settingsBounds = await settings.evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      return { left: rect.left, right: rect.right, viewportWidth: window.innerWidth };
+    });
+    assert.ok(settingsBounds.left >= 0 && settingsBounds.right <= settingsBounds.viewportWidth + 1,
+      'settings popover stays inside the viewport at the native minimum width: ' + JSON.stringify(settingsBounds));
+    await page.getByRole('button', { name: '设置', exact: true }).click();
+    if (process.env.ZUOREN_SCREENSHOT_OUTPUT) {
+      await fs.mkdir(process.env.ZUOREN_SCREENSHOT_OUTPUT, { recursive: true });
+      await page.screenshot({ path: path.join(process.env.ZUOREN_SCREENSHOT_OUTPUT, 'quarter-narrow.png') });
     }
     await page.getByRole('button', { name: '最大化窗口', exact: true }).click();
     await page.getByRole('button', { name: '还原窗口', exact: true }).waitFor();

@@ -42,7 +42,7 @@ test('EPUB whole-book search crosses inline nodes, navigates safely and isolates
   await page.getByRole('button', { name: '在 EPUB 中查找', exact: true }).click();
   const panel = page.locator('.epub-search-panel'), input = panel.getByRole('textbox', { name: 'EPUB 搜索文本', exact: true });
   await page.waitForFunction(() => document.querySelector('.epub-search-panel')?.getAnimations().length > 0);
-  assert.equal(await panel.evaluate(el => el.getAnimations()[0]?.effect.getTiming().duration), 140, 'EPUB search enters with the shared feedback timing');
+  assert.equal(await panel.evaluate(el => el.getAnimations()[0]?.effect.getTiming().duration), 180, 'EPUB search enters with the shared feedback timing');
   async function search(query, count) {
     await input.fill(query);
     await page.waitForFunction(expected => document.querySelector('.epub-search-status')?.textContent === `${expected} 项结果`, count);

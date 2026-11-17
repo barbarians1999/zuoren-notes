@@ -275,6 +275,22 @@ test('clicking a newly scrolled heading captures its visible run before selectio
   }, doc, doc.indexOf('Plain') + 1);
 });
 
+test('Shift+tap animates the heading run when extending a non-empty selection', async () => {
+  const doc = '# Heading\n\nplain', titleFrom = 2, titleTo = doc.indexOf('\n');
+  await withMotionFixture(({ geometry, animations, view, update, flush, run }) => {
+    run.dataset.mdMotionKey = `${titleFrom}:${titleTo}`;
+    update({ selection: { anchor: titleFrom + 1, head: titleFrom + 3 } }); flush();
+    view.hasFocus = false;
+    view.dom.fire('mousedown', { target: run, button: 0, clientX: 10, clientY: 110, shiftKey: true });
+    view.hasFocus = true; update({}, { focusChanged: true });
+    geometry.left = 18;
+    update({ selection: { anchor: titleFrom + 1, head: titleFrom + 5 }, userEvent: 'select.pointer' }); flush();
+    const motion = animations.find(animation => animation.name === 'run' && animation.playState === 'running');
+    assert.ok(motion, 'Shift+tap retains the selected heading baseline for the format transition');
+    assert.equal(motion.frames[0].left, '-18px');
+  }, doc, 0);
+});
+
 for (const format of ['heading', 'bold']) test(`soft edit motion still animates ${format} formatting on pointer selection`, async () => {
   const doc = '# Heading\n\nplain\n\n**bold text**', titleFrom = format === 'heading' ? 2 : doc.indexOf('bold text'),
     titleTo = format === 'heading' ? doc.indexOf('\n') : titleFrom + 'bold text'.length;

@@ -34,34 +34,40 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
   await page.locator('.file-row').filter({ hasText: filename }).click();
   await layout('阅读').click();
   await readerReady(page, 'pdf', 1);
-  const bar = page.locator('.pdf-navigation'), tools = bar.locator('.pdf-tools');
+  const bar = page.locator('.pdf-navigation'), tools = bar.locator('.pdf-tools'), topBar = page.locator('.pdf-top-bar');
   const output = process.env.ZUOREN_SCREENSHOT_OUTPUT || workspace.outputs;
   await fs.mkdir(output, { recursive: true });
   const sameRow = async () => {
-    // Fullscreen reveals the reader chrome with a short slide transition. The
-    // visibility flag changes at the start of that transition, so wait for the
-    // toolbar itself to settle before asserting its final geometry.
     await bar.evaluate(async element => {
-      await Promise.all(element.getAnimations().map(animation => animation.finished.catch(() => {})));
+      const host = element.closest('.pdf-viewport-stage');
+      const top = document.querySelector('.topbar');
+      await Promise.all([
+        ...element.getAnimations(),
+        ...(host ? host.getAnimations() : []),
+        ...(top ? top.getAnimations() : []),
+      ].map(animation => animation.finished.catch(() => {})));
     });
     const bounds = await bar.boundingBox(), toolBounds = await bar.locator('.pdf-tools, .toolbar-overflow').boundingBox();
-    assert.ok(bounds && toolBounds && bounds.height === 40 && toolBounds.y >= bounds.y && toolBounds.y + toolBounds.height <= bounds.y + bounds.height,
-      'toolbar tools must remain within the compact row: ' + JSON.stringify({ bounds, toolBounds }));
+    assert.ok(bounds && toolBounds && bounds.height <= 46 && toolBounds.y >= bounds.y - 1 && toolBounds.y + toolBounds.height <= bounds.y + bounds.height + 1 && toolBounds.x >= bounds.x - 1 && toolBounds.x + toolBounds.width <= bounds.x + bounds.width + 1,
+      'bottom dock tools must remain within the single compact capsule row: ' + JSON.stringify({ bounds, toolBounds }));
+    const topBounds = await topBar.boundingBox();
+    assert.ok(topBounds && topBounds.height <= 40, 'PDF top bar fits in the single top row: ' + JSON.stringify(topBounds));
     assert.equal(await page.locator('.pdf-pane > .pdf-tools, .reader-document-title').count(), 0);
     assert.equal(await bar.count(), 1);
   };
-  await t.test('book name is a tooltip; marking tools directly share the page and zoom row', async () => {
+  await t.test('book name pill sits in top header while marking tools share the bottom dock with page and zoom', async () => {
     await sameRow();
+    assert.equal(await topBar.locator('.pdf-doc-pill').innerText(), filename);
     assert.equal(await bar.getAttribute('title'), filename);
-    assert.ok((await bar.getByRole('button', { name: '展开 PDF 大纲', exact: true }).getAttribute('title')).includes(filename));
-    const outlineToggle = await bar.locator('[data-pdf-outline-toggle]').boundingBox(), barBounds = await bar.boundingBox();
-    assert.ok(outlineToggle.x > barBounds.x + barBounds.width / 2, 'outline control sits beside its right-hand panel');
+    assert.ok((await topBar.getByRole('button', { name: '展开 PDF 大纲', exact: true }).getAttribute('title')).includes(filename));
+    const outlineToggle = await topBar.locator('[data-pdf-outline-toggle]').boundingBox(), topBarBounds = await topBar.boundingBox();
+    assert.ok(outlineToggle.x > topBarBounds.x + topBarBounds.width / 2, 'outline control sits beside its right-hand panel');
     for (const name of ['文字高亮', '框选', '批注', '选择']) {
       const button = tools.getByRole('button', { name, exact: true });
       await button.click(); assert.equal(await button.getAttribute('aria-pressed'), 'true');
       assert.equal(await tools.locator('[aria-pressed="true"]').count(), 1);
     }
-    await bar.getByRole('button', { name: '展开 PDF 大纲', exact: true }).click();
+    await topBar.getByRole('button', { name: '展开 PDF 大纲', exact: true }).click();
     await page.locator('.pdf-outline').waitFor();
     const panel = page.getByRole('complementary', { name: 'PDF 大纲', exact: true });
     assert.equal(await panel.locator('.outline-title').innerText(), '大纲');
@@ -72,9 +78,9 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
     await page.waitForFunction(() => document.querySelector('[aria-label="当前页码"]')?.value === '2');
     assert.equal(await bar.getByRole('textbox', { name: '当前页码', exact: true }).inputValue(), '2', 'books without embedded outlines keep page navigation');
     await panel.getByRole('button', { name: '第 2 页', exact: true }).focus();
-    await bar.getByRole('button', { name: '收起 PDF 大纲', exact: true }).click();
+    await topBar.getByRole('button', { name: '收起 PDF 大纲', exact: true }).click();
     await page.locator('.pdf-outline').waitFor({ state: 'hidden' });
-    assert.equal(await bar.locator('[data-pdf-outline-toggle]').evaluate(button => document.activeElement === button), true);
+    assert.equal(await topBar.locator('[data-pdf-outline-toggle]').evaluate(button => document.activeElement === button), true);
     const number = bar.getByRole('textbox', { name: '当前页码', exact: true });
     await number.fill('2'); await number.press('Enter');
     await page.waitForFunction(() => document.querySelector('[data-pdf-page="2"] canvas')?.width > 0);
@@ -82,7 +88,7 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
     await bar.getByRole('button', { name: '放大', exact: true }).click();
     await page.waitForFunction(previous => document.querySelector('[data-pdf-page="2"] .textLayer')?.dataset.textRevision !== previous, previousRevision);
     await readerReady(page, 'pdf', 2); assert.equal(await number.inputValue(), '2');
-    await bar.getByRole('button', { name: '在 PDF 中查找', exact: true }).click();
+    await topBar.getByRole('button', { name: '在 PDF 中查找', exact: true }).click();
     await page.getByRole('textbox', { name: 'PDF 查找文本', exact: true }).fill('Toolbar');
     await page.getByRole('button', { name: '关闭 PDF 查找', exact: true }).click();
     await sameRow(); await page.screenshot({ path: path.join(output, 'pdf-toolbar-wide.png') });
@@ -109,8 +115,22 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
     assert.equal(ignored.after, ignored.before); assert.equal(ignored.composingPrevented, false);
     await viewport.evaluate(element => { element.scrollTop = 0; });
     await page.keyboard.press('ArrowUp'); assert.equal(await top(), 0);
-    await viewport.evaluate(element => { element.scrollTop = element.scrollHeight; });
-    const bottom = await top(); await page.keyboard.press('ArrowDown'); assert.equal(await top(), bottom);
+    const bottom = await viewport.evaluate(async element => {
+      let previousMax = -1, stableFrames = 0;
+      for (let frame = 0; frame < 120 && stableFrames < 2; frame++) {
+        element.scrollTop = element.scrollHeight;
+        await new Promise(requestAnimationFrame);
+        const max = element.scrollHeight - element.clientHeight;
+        stableFrames = Math.abs(max - previousMax) < .5 && Math.abs(element.scrollTop - max) < .5 ? stableFrames + 1 : 0;
+        previousMax = max;
+      }
+      return { top: element.scrollTop, max: element.scrollHeight - element.clientHeight,
+        scrollHeight: element.scrollHeight, clientHeight: element.clientHeight, stable: stableFrames >= 2 };
+    });
+    assert.equal(bottom.stable, true, 'PDF scroll maximum settles before the boundary check: ' + JSON.stringify(bottom));
+    await page.keyboard.press('ArrowDown');
+    const afterBottomArrow = await top();
+    assert.equal(afterBottomArrow, bottom.top, 'ArrowDown remains clamped at the stable bottom: ' + JSON.stringify({ before: bottom.top, after: afterBottomArrow, max: bottom.max, scrollHeight: bottom.scrollHeight, clientHeight: bottom.clientHeight }));
     await page.keyboard.press('Home');
     await page.waitForFunction(() => document.querySelector('[aria-label="当前页码"]')?.value === '1');
     const firstPageTop = await top();
@@ -124,18 +144,18 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
     const number = bar.getByRole('textbox', { name: '当前页码', exact: true });
     await number.focus(); const beforeInput = await top();
     await number.press('ArrowDown'); await number.press('ArrowUp'); assert.equal(await top(), beforeInput, 'page input keeps its native arrow behavior');
-    await bar.getByRole('button', { name: '在 PDF 中查找', exact: true }).click();
+    await topBar.getByRole('button', { name: '在 PDF 中查找', exact: true }).click();
     const search = page.getByRole('textbox', { name: 'PDF 查找文本', exact: true });
     const beforeSearch = await top(); await search.press('ArrowDown'); await search.press('ArrowUp');
     assert.equal(await top(), beforeSearch, 'search input does not scroll the PDF');
     await page.getByRole('button', { name: '关闭 PDF 查找', exact: true }).click();
-    await bar.getByRole('button', { name: '展开 PDF 大纲', exact: true }).click();
+    await topBar.getByRole('button', { name: '展开 PDF 大纲', exact: true }).click();
     const outline = page.locator('.pdf-outline'); await outline.waitFor();
     await outline.evaluate(async element => { await Promise.all(element.getAnimations().map(animation => animation.finished)); });
     await outline.getByRole('button', { name: '第 2 页', exact: true }).focus();
     const beforeOutline = await top(); await page.keyboard.press('ArrowDown');
     assert.equal(await top(), beforeOutline, 'outline focus does not invoke reading-position shortcuts');
-    await bar.getByRole('button', { name: '收起 PDF 大纲', exact: true }).click();
+    await topBar.getByRole('button', { name: '收起 PDF 大纲', exact: true }).click();
     await outline.waitFor({ state: 'hidden' });
   });
   await t.test('split and narrow panes retain one row with reachable labeled icons', async () => {
@@ -154,16 +174,19 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
     assert.equal(await noteRow.isVisible(), true);
     assert.equal(await page.locator('[data-note-group="primary"]').isVisible(), false, 'comparison shows only the active note pane from a dual-note workspace');
     assert.equal(await page.locator('[data-note-group="secondary"]').isVisible(), true);
-    const [readerBox, noteBox, rowBox] = await Promise.all([bar.boundingBox(), noteTools.boundingBox(), noteRow.boundingBox()]);
+    const [readerBox, noteBox, rowBox] = await Promise.all([topBar.boundingBox(), noteTools.boundingBox(), noteRow.boundingBox()]);
     assert.ok(readerBox && noteBox && rowBox);
-    assert.ok(Math.abs(readerBox.y - noteBox.y) <= 1, 'PDF and note tools share the same visible horizontal row');
+    assert.ok(Math.abs((readerBox.y + readerBox.height / 2) - (noteBox.y + noteBox.height / 2)) <= 2, 'PDF and note tools share the same visible horizontal row');
     for (const bounds of [readerBox, noteBox]) assert.ok(bounds.y >= rowBox.y && bounds.y + bounds.height <= rowBox.y + rowBox.height + 1, 'both tool groups fit inside the shared row');
     const overflow = bar.getByRole('button', { name: 'PDF 标记工具', exact: true });
     await overflow.waitFor();
-    for (const name of ['展开 PDF 大纲', '上一页', '下一页', 'PDF 标记工具', '在 PDF 中查找', '缩小', '放大', '进入全屏阅读']) {
-      const button = bar.getByRole('button', { name, exact: true });
+    for (const [host, name] of [
+      [topBar, '展开 PDF 大纲'], [topBar, '在 PDF 中查找'], [topBar, '进入全屏阅读'],
+      [bar, '上一页'], [bar, '下一页'], [bar, 'PDF 标记工具'], [bar, '缩小'], [bar, '放大'],
+    ]) {
+      const button = host.getByRole('button', { name, exact: true });
       await button.scrollIntoViewIfNeeded();
-      const rect = await button.boundingBox(), bounds = await bar.boundingBox();
+      const rect = await button.boundingBox(), bounds = await host.boundingBox();
       assert.ok(rect && bounds && rect.x >= bounds.x - 1 && rect.x + rect.width <= bounds.x + bounds.width + 1, name);
     }
     for (const name of ['查找', '源码编辑模式', '切换到预览', '展开大纲', '新建空白标签']) {
@@ -181,7 +204,7 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
     await page.keyboard.press('Escape');
     await bar.evaluate(el => { el.scrollLeft = 0; });
     await page.screenshot({ path: path.join(output, 'pdf-toolbar-split-narrow.png') });
-    assert.equal(await page.locator('.cm-content').count(), 1);
+    assert.equal(await page.locator('.cm-content:visible').count(), 1);
     const beforeEditing = await page.locator('.pdf-canvas-wrap').evaluate(element => element.scrollTop);
     const activeEditor = page.locator('[data-pane-id="secondary"] .cm-content');
     await activeEditor.focus();
@@ -203,6 +226,7 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
     assert.equal(await page.locator('[data-pane-id="secondary"] .cm-content').evaluate(editor => editor === document.activeElement), true, 'a restored note pane can receive keyboard focus');
     await layout('对照').click();
     await page.waitForFunction(() => document.querySelector('.panes.split'));
+    await overflow.waitFor();
     await sameRow();
     assert.equal(await page.locator('[data-note-group="primary"]').isVisible(), false);
     assert.equal(await page.locator('[data-note-group="secondary"] .cm-content').innerText(), secondaryText);
@@ -210,7 +234,7 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
   await t.test('dark reading and fullscreen preserve the merged tools', async () => {
     await layout('阅读').click();
     await page.getByRole('button', { name: '设置', exact: true }).click();
-    await page.getByRole('button', { name: '深色', exact: true }).click();
+    await page.getByRole('button', { name: '深墨夜读', exact: true }).click();
     await page.getByRole('button', { name: '设置', exact: true }).click();
     await sameRow(); await page.screenshot({ path: path.join(output, 'pdf-toolbar-dark.png') });
     // Native fullscreen events may arrive before the IPC reply. A delayed
@@ -231,14 +255,14 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
         return before;
       });
     });
-    await bar.getByRole('button', { name: '进入全屏阅读', exact: true }).click();
+    await topBar.getByRole('button', { name: '进入全屏阅读', exact: true }).click();
     assert.equal(await application.evaluate(async ({ BrowserWindow }) => {
       for (let i = 0; i < 200 && globalThis.__fullscreenReplyCount < 1; i++) await new Promise(resolve => setTimeout(resolve, 10));
       return BrowserWindow.getAllWindows()[0].isFullScreen();
     }), true);
     await page.waitForTimeout(100);
-    assert.equal(await bar.getByRole('button', { name: '进入全屏阅读', exact: true }).count(), 0, 'late fullscreen reply must not restore the entry button');
-    assert.equal(await bar.getByRole('button', { name: '退出全屏阅读', exact: true }).count(), 0, 'fullscreen has only the window-level exit');
+    assert.equal(await topBar.getByRole('button', { name: '进入全屏阅读', exact: true }).count(), 0, 'late fullscreen reply must not restore the entry button');
+    assert.equal(await topBar.getByRole('button', { name: '退出全屏阅读', exact: true }).count(), 0, 'fullscreen has only the window-level exit');
     await page.mouse.move(400, 2);
     await page.waitForFunction(() => document.querySelector('.app').dataset.chromeVisible === 'true');
     await sameRow();
@@ -249,7 +273,7 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
       return BrowserWindow.getAllWindows()[0].isFullScreen();
     }), false);
     await page.waitForTimeout(100);
-    assert.equal(await bar.locator('.zoom-control button:last-child').getAttribute('aria-label'), '进入全屏阅读');
+    assert.equal(await topBar.locator('button[aria-label="进入全屏阅读"]').isVisible(), true);
   });
   assert.equal(await fs.readFile(path.join(workspace.fixture, 'note.md'), 'utf8'), '# Note\n\nKeep this note intact.\n');
   assert.deepEqual(await fs.readFile(path.join(workspace.fixture, filename)), originalPdf);

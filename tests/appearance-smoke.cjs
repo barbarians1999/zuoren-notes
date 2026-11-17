@@ -241,7 +241,34 @@ test('note font setting persists without rebuilding editors and context menus st
   await preview.waitFor();
   await openSettings(page);
   for (const [value, pattern] of [['default', /Segoe UI/], ['fangsong', /字体管家仿宋体 \(非商业使用\)/], ['songti', /宋体/], ['hanyi-shufang-55w', /汉仪书仿 55W/]]) {
-    await page.getByRole('combobox', { name: 'Markdown 正文字体' }).selectOption(value);
+    try {
+      await page.getByRole('combobox', { name: 'Markdown 正文字体' }).selectOption(value);
+    } catch (error) {
+      const details = await page.evaluate(() => {
+        const settingsButton = document.querySelector('button[aria-label="设置"]');
+        const popover = document.querySelector('.settings-popover');
+        const rect = element => {
+          if (!element) return null;
+          const box = element.getBoundingClientRect();
+          return { x: box.x, y: box.y, width: box.width, height: box.height };
+        };
+        const selects = [...document.querySelectorAll('select')].map(select => {
+          const style = getComputedStyle(select), box = rect(select);
+          return { ariaLabel: select.getAttribute('aria-label'), name: select.name, id: select.id,
+            visible: !!box && box.width > 0 && box.height > 0 && style.display !== 'none' && style.visibility !== 'hidden', rect: box };
+        });
+        const target = selects.find(select => select.ariaLabel === 'Markdown 正文字体') || null;
+        const active = document.activeElement;
+        return {
+          settingsExpanded: settingsButton?.getAttribute('aria-expanded') ?? null,
+          popover: popover ? { exists: true, ariaHidden: popover.getAttribute('aria-hidden'), rect: rect(popover) } : { exists: false, ariaHidden: null, rect: null },
+          selects, targetComboboxVisible: target?.visible ?? false,
+          hasFocus: document.hasFocus(), activeElement: active ? { tag: active.tagName, ariaLabel: active.getAttribute('aria-label'), name: active.getAttribute('name'), id: active.id } : null,
+        };
+      }).catch(diagnosticError => ({ diagnosticError: String(diagnosticError) }));
+      if (error && typeof error === 'object' && 'message' in error) error.message += `\nFont selection diagnostics: ${JSON.stringify(details)}`;
+      throw error;
+    }
     assert.match(await fontFamily(preview), pattern);
     if (value === 'fangsong') assert.equal(await page.evaluate(() => document.fonts.check('18px "字体管家仿宋体 (非商业使用)"')), true, 'installed Font Manager FangSong family resolves');
     if (value === 'hanyi-shufang-55w') {
@@ -260,7 +287,7 @@ test('note font setting persists without rebuilding editors and context menus st
   assert.equal((await fs.stat(primaryPath)).mtimeMs, beforeStat.mtimeMs);
 
   await openSettings(page);
-  await page.getByRole('button', { name: '浅色', exact: true }).click();
+  await page.getByRole('button', { name: '极简纯白', exact: true }).click();
   const lightSettings = await settingsColors(page);
   assert.equal(lightSettings.label, lightSettings.expected);
   assert.equal(lightSettings.select, lightSettings.expected);
@@ -278,7 +305,7 @@ test('note font setting persists without rebuilding editors and context menus st
   await page.keyboard.press('Escape');
   assert.equal(await menu.count(), 0, 'Escape should dismiss the file menu');
   await openSettings(page);
-  await page.getByRole('button', { name: '深色', exact: true }).click();
+  await page.getByRole('button', { name: '深墨夜读', exact: true }).click();
   const darkSettings = await settingsColors(page);
   assert.equal(darkSettings.label, darkSettings.expected);
   assert.equal(darkSettings.select, darkSettings.expected);

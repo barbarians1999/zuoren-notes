@@ -28,6 +28,7 @@ export class ReaderSession {
 
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => this.listeners.delete(listener); };
   getSnapshot = () => this.snapshot;
+  currentGeneration = () => this.generation;
   currentPdf = () => this.snapshot.pdf;
   currentEpub = () => this.snapshot.epub;
   isCurrentPdf = (expected: ActivePdf) => !!this.snapshot.pdf && this.samePdf(this.snapshot.pdf, expected);
@@ -78,7 +79,7 @@ export class ReaderSession {
     return this.flushWrites();
   }
 
-  async close(expected: ActiveEpub | ActivePdf): Promise<boolean> {
+  async close(expected: ActiveEpub | ActivePdf, onCommit?: () => void): Promise<boolean> {
     const matches = () => this.snapshot.epub ? this.sameEpub(this.snapshot.epub, expected as ActiveEpub)
       : !!this.snapshot.pdf && this.samePdf(this.snapshot.pdf, expected as ActivePdf);
     if (!matches()) return false;
@@ -87,6 +88,7 @@ export class ReaderSession {
     await this.flushWrites(() => {
       if (generation !== this.generation || !matches()) return;
       this.publish({ pdf: null, epub: null, page: 1, scale: 1 });
+      onCommit?.();
       closed = true;
     });
     return closed;

@@ -180,6 +180,7 @@ test('Markdown editing keeps continuous source text like Obsidian', { timeout: 9
   assert.equal(await block.locator('code').textContent(), '概念其实是理性知识\n# literal, not heading\n<script>window.__codeExecuted = true</script>');
   assert.equal(await block.locator('script,h1').count(), 0);
   assert.equal(await page.evaluate(() => window.__codeExecuted), undefined);
+  await block.scrollIntoViewIfNeeded();
   const codeText = await block.locator('code').boundingBox();
   assert.ok(codeText, 'rendered code has a pointer target');
   await page.mouse.move(codeText.x + 5, codeText.y + Math.min(12, codeText.height / 2));

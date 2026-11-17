@@ -40,7 +40,7 @@
   --motion-anchor: 280ms;
   --motion-markdown: 120ms;
   --motion-folder: 220ms;
-  --motion-ease-enter: cubic-bezier(.2,.75,.3,1);
+  --motion-ease-enter: cubic-bezier(.22,1,.36,1);
   --motion-ease-exit: cubic-bezier(.4,0,.6,1);
   --markdown-body-max-width: 880px;
   --md-heading-1-size: 1.9em;
@@ -53,9 +53,13 @@
   --md-heading-line-height: 1.3;
   --md-quote-step: .8em;
   --md-quote-width: 3px;
-  --radius: 8px;
-  --chrome-topbar-height: 48px;
-  --chrome-note-row-height: 40px;
+  --radius: 10px;
+  --chrome-rail-width: 48px;
+  --app-sidebar-width: 208px;
+  --topbar-cap-w: 172px;
+  --win-controls-w: 132px;
+  --chrome-topbar-height: 44px;
+  --chrome-note-row-height: 44px;
   --chrome-reader-nav-layer: 8;
   --chrome-note-row-layer: 9;
   --chrome-topbar-layer: 10;
@@ -85,8 +89,9 @@ button {
   cursor: pointer;
 }
 
-.app > .topbar button,
-.app > .body > .sidebar button,
+.app .topbar button,
+.app .left-rail button,
+.app .body > .sidebar button,
 .pane-toolbar button,
 .pdf-tools button,
 .selection-actions button,
@@ -98,8 +103,9 @@ button {
   transition: background-color var(--motion-feedback) var(--motion-ease-enter), color var(--motion-feedback) var(--motion-ease-enter), border-color var(--motion-feedback) var(--motion-ease-enter);
 }
 
-.app > .topbar button:hover,
-.app > .body > .sidebar button:hover,
+.app .topbar button:hover,
+.app .left-rail button:hover,
+.app .body > .sidebar button:hover,
 .pane-toolbar button:hover,
 .pdf-tools button:hover,
 .selection-actions button:hover,
@@ -107,8 +113,9 @@ button {
 .modal-backdrop button:hover,
 .toast button:hover { background: var(--hover); }
 
-.app > .topbar button:active,
-.app > .body > .sidebar button:active,
+.app .topbar button:active,
+.app .left-rail button:active,
+.app .body > .sidebar button:active,
 .pane-toolbar button:active,
 .pdf-tools button:active,
 .selection-actions button:active,
@@ -116,8 +123,9 @@ button {
 .modal-backdrop button:active,
 .toast button:active { transform: none; }
 
-.app > .topbar button:disabled,
-.app > .body > .sidebar button:disabled,
+.app .topbar button:disabled,
+.app .left-rail button:disabled,
+.app .body > .sidebar button:disabled,
 .pane-toolbar button:disabled,
 .pdf-tools button:disabled,
 .selection-actions button:disabled,
@@ -125,8 +133,9 @@ button {
 .modal-backdrop button:disabled,
 .toast button:disabled { cursor: not-allowed; opacity: .45; }
 
-.app > .topbar button:focus-visible,
-.app > .body > .sidebar button:focus-visible,
+.app .topbar button:focus-visible,
+.app .left-rail button:focus-visible,
+.app .body > .sidebar button:focus-visible,
 .pane-toolbar button:focus-visible,
 .pdf-tools button:focus-visible,
 .selection-actions button:focus-visible,
@@ -165,10 +174,88 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 
 .app {
   height: 100%;
-  min-width: 720px;
+  min-width: 0;
+  display: flex;
+  flex-direction: row;
+  background: var(--surface-muted);
+}
+
+.left-rail {
+  width: var(--chrome-rail-width);
+  flex: none;
   display: flex;
   flex-direction: column;
-  background: var(--surface-muted);
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 5px 0 10px;
+  background: var(--rail-bg, var(--surface-subtle));
+  border-right: 1px solid var(--line);
+  z-index: calc(var(--chrome-topbar-layer) + 1);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.left-rail button,
+.left-rail .settings-popover { -webkit-app-region: no-drag; }
+
+.rail-sep,
+.left-rail-divider {
+  width: 22px;
+  height: 1px;
+  margin: 2px 0;
+  background: var(--line);
+  flex: none;
+}
+
+.rail-spacer { flex: 1; min-height: 8px; }
+
+.left-rail .sidebar-toggle,
+.left-rail .quiet-action {
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: var(--control-radius);
+  color: var(--text-muted);
+}
+
+.left-rail .sidebar-toggle:hover,
+.left-rail .quiet-action:hover,
+.left-rail .sidebar-toggle[aria-expanded="true"] {
+  background: transparent !important;
+  color: var(--accent);
+}
+
+.left-rail .new-note-action {
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: var(--control-radius);
+  background: var(--action-bg, var(--accent)) !important;
+  color: var(--on-action, var(--on-accent)) !important;
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.left-rail .new-note-action:hover {
+  background: var(--action-hover, var(--accent-hover)) !important;
+  color: var(--on-action, var(--on-accent)) !important;
+}
+
+.app-shell-right {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .topbar {
@@ -176,12 +263,28 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 26px;
-  padding: 0 18px;
-  background: var(--surface);
+  gap: 0;
+  padding: 0;
+  background: var(--topbar-bg, var(--chrome));
   border-bottom: 1px solid var(--line);
   box-shadow: none;
   z-index: var(--chrome-topbar-layer);
+}
+
+.topbar-mode-cap {
+  flex: none;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+}
+
+.app[data-sidebar="open"] .topbar-mode-cap {
+  width: var(--app-sidebar-width);
+}
+
+.app[data-sidebar="closed"] .topbar-mode-cap {
+  width: var(--topbar-cap-w);
 }
 
 .brand {
@@ -213,18 +316,21 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  padding: 2px;
-  border-radius: 6px;
-  background: transparent;
-  border: 1px solid transparent;
+  padding: 3px;
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  width: 100%;
 }
 
 .layout-tabs button, .mode-tabs button {
-  min-width: 58px;
-  min-height: 32px;
-  padding: 6px 12px;
-  border-radius: 6px;
+  flex: 1;
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 8px;
+  border-radius: calc(var(--radius) - 3px);
   color: var(--text-muted);
+  font-size: 12px;
   white-space: nowrap;
   transition: color var(--motion-feedback) var(--motion-ease-enter);
 }
@@ -232,10 +338,10 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .layout-tabs button:hover, .mode-tabs button:hover { color: var(--text); }
 
 .layout-tabs button.active, .mode-tabs button.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 620;
-  box-shadow: none;
+  background: var(--mode-bg, var(--surface));
+  color: var(--on-mode, var(--accent));
+  font-weight: 650;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .06);
 }
 
 .top-actions {
@@ -260,6 +366,15 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   box-shadow: 0 14px 38px rgba(0, 0, 0, .16);
 }
 
+.left-rail .settings-popover {
+  top: auto;
+  bottom: 0;
+  left: calc(100% + 10px);
+  right: auto;
+  width: min(292px, calc(100vw - 84px));
+  max-width: calc(100vw - 84px);
+}
+
 .settings-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .settings-heading > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .settings-heading b { color: var(--text); font-size: 13px; font-weight: 650; }
@@ -278,6 +393,10 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .note-font-control select { min-width: 126px; height: 30px; padding: 3px 28px 3px 8px; border: 1px solid var(--line-strong); border-radius: var(--control-radius); outline: 0; background: var(--surface); color: var(--text); font: inherit; font-size: 12px; }
 .note-font-control select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .note-font-control small { grid-column: 1 / -1; color: var(--text-faint); font-size: 10px; line-height: 1.45; }
+@media (max-width: 360px) {
+  .app .left-rail .settings-popover .note-font-control { grid-template-columns: minmax(0, 1fr); }
+  .app .left-rail .settings-popover .note-font-control select { width: 100%; min-width: 0; }
+}
 
 .settings-section { margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--line); }
 .settings-section-title { display: block; margin: 0 4px 5px; color: var(--text-faint); font-size: 10px; font-weight: 650; letter-spacing: .04em; }
@@ -358,16 +477,31 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 
 .body.sidebar-hidden .main { width: 100%; }
 
-.sidebar {
+.app .body > .sidebar {
   position: relative;
-  width: 256px;
+  width: var(--app-sidebar-width);
+  min-width: 0;
+  max-width: none;
+  inset-block-start: auto;
   flex: none;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 16px 12px 12px;
+  padding: 12px 10px 10px;
   background: var(--sidebar);
-  border-right: 1px solid var(--line);
+  border-right: 0;
+}
+
+.app .body > .sidebar::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  right: 0;
+  bottom: 12px;
+  width: 1px;
+  border-radius: 999px;
+  background: var(--line);
+  pointer-events: none;
 }
 
 .icon-button {
@@ -507,7 +641,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   left: 0;
   top: 9px;
   bottom: 9px;
-  width: 3px;
+  width: 2px;
   border-radius: 2px;
   background: var(--accent);
 }
@@ -518,7 +652,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   flex: none;
   display: grid;
   place-items: center;
-  border-radius: 5px;
+  border-radius: 6px;
   font-size: 9px;
   font-weight: 750;
   letter-spacing: .04em;
@@ -527,7 +661,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .file-icon.pdf { background: var(--pdf-icon-bg); color: var(--pdf-icon-text); }
 .file-icon.epub { background: var(--epub-icon-bg); color: var(--epub-icon-text); font-size: 8px; }
 .file-icon.md { background: var(--accent-soft); color: var(--accent); }
-.folder-icon { width: 34px; height: 24px; flex: none; display: grid; place-items: center; border-radius: 5px; background: var(--accent-softer); color: var(--text-muted); }
+.folder-icon { width: 34px; height: 24px; flex: none; display: grid; place-items: center; border-radius: 6px; background: var(--accent-softer); color: var(--text-muted); }
 .folder-enter { margin-left: auto; flex: none; color: var(--text-faint); }
 .file-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .file-row > :is(.file-icon, .folder-icon, .file-name, .folder-enter) { transition: color var(--motion-feedback) var(--motion-ease-enter), transform var(--motion-press) var(--motion-ease-enter); }
@@ -652,7 +786,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   flex-direction: column;
   background: var(--surface);
 }
-.epub-pane, .pdf-page-content { position: relative; }
+.note-pane, .epub-pane, .pdf-page-content, .pdf-reader-body { position: relative; }
 
 .splitter {
   position: relative;
@@ -829,19 +963,19 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   font-weight: 620;
 }
 
-.pdf-navigation { min-width: 0; gap: 5px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+.pdf-navigation { min-width: 0; gap: 5px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.pdf-navigation::-webkit-scrollbar { display: none; }
 .pdf-navigation > button, .pdf-navigation .toolbar-group { flex-shrink: 0; }
 .pdf-tools button { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 
-@container (max-width: 900px) {
+@container reader-topbar (max-width: 900px) {
   .pdf-navigation { padding-inline: 8px; }
   .pdf-navigation .pdf-tools button span { display: none; }
   .pdf-navigation .pdf-tools button { width: 32px; padding: 6px; justify-content: center; }
 }
 
-@container (max-width: 620px) {
+@container reader-topbar (max-width: 620px) {
   .pdf-navigation { gap: 2px; padding-inline: 5px; }
-  /* Leave room for the horizontal scrollbar inside the compact chrome row. */
   .pdf-navigation button { min-height: 28px; height: 28px; padding-block: 4px; }
   .pdf-navigation .icon-button { width: 28px; min-width: 28px; }
   .pdf-navigation .toolbar-group { gap: 1px; }
@@ -849,7 +983,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   .pdf-navigation .page-control { gap: 4px; padding-inline: 2px; }
   .pdf-navigation .page-control input { width: 38px; height: 28px; }
   .pdf-navigation .pdf-tools { gap: 1px; padding-left: 4px; margin-left: 2px; }
-  .pdf-navigation .pdf-tools button { width: 28px; min-width: 28px; }
+  .pdf-navigation .pdf-tools button, .pdf-navigation .toolbar-overflow button { width: 28px; min-width: 28px; padding: 4px; }
   .pdf-navigation .zoom-control > span { min-width: 38px; }
 }
 
@@ -1036,6 +1170,24 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   padding: 3px 7px;
   font-size: 12px;
 }
+.find-bar .find-search {
+  width: min(210px, 28%);
+  min-width: 80px;
+  flex: 0 1 min(210px, 28%);
+}
+.find-bar .find-search > svg { flex: none; }
+.find-bar .find-search input {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 12px;
+}
 .find-bar button {
   min-width: 27px;
   min-height: 27px;
@@ -1112,7 +1264,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .markdown-source-editor .cm-md-format-active { filter: brightness(1.035); }
 .markdown-source-editor .cm-md-format-token { animation: markdown-token-reveal var(--motion-markdown) var(--motion-ease-enter) both; }
 .markdown-source-editor .cm-md-code-block { font-family: "Cascadia Code", ui-monospace, monospace; }
-.markdown-source-editor .cm-md-code-line { background: var(--surface-muted); border-left: 3px solid var(--line); padding-left: 12px !important; }
+.markdown-source-editor .cm-md-code-line { background: var(--surface-muted); border-inline-start: 2px solid var(--line-strong); padding-left: 12px !important; }
 .markdown-source-editor .cm-md-code-first { border-radius: 7px 7px 0 0; padding-top: 8px; }
 .markdown-source-editor .cm-md-code-last { border-radius: 0 0 7px 7px; padding-bottom: 8px; }
 .cm-md-code-preview, .cm-md-table { user-select: none; }
@@ -1252,25 +1404,54 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .markdown-preview code { font-family: "Cascadia Code", ui-monospace, monospace; font-size: .82em; }
 
 .note-foot {
-  height: 32px;
-  flex: none;
-  display: flex;
+  position: absolute;
+  bottom: 12px;
+  right: 16px;
+  z-index: 6;
+  height: auto;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 0 13px;
-  border-top: 1px solid var(--line);
-  background: var(--chrome);
+  gap: 8px;
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(8px);
   color: var(--text-faint);
-  font-size: 10px;
+  font-size: 11px;
+  line-height: 1.3;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .06);
+  pointer-events: none;
+  user-select: none;
 }
 
-.note-foot span:first-child { min-width: 0; display: flex; align-items: center; gap: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-foot span:first-child { min-width: 0; display: inline-flex; align-items: center; gap: 8px; }
 .note-foot span:last-child { flex: none; }
-.note-foot .word-stats { display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 11px; }
+.note-foot .word-stats { display: inline-flex; align-items: center; gap: 10px; color: var(--text-muted); font-size: 11px; }
 .note-foot .word-stats > span { display: inline-flex; align-items: center; gap: 4px; }
-.note-foot .word-stats > span + span::before { content: ""; width: 1px; height: 10px; margin-right: 8px; background: var(--line-strong); }
+.note-foot .word-stats > span + span::before { content: ""; width: 1px; height: 10px; margin-right: 6px; background: var(--line-strong); }
 .note-foot .word-stats .has-selection { color: var(--accent); font-weight: 620; }
+
+.pdf-status-pill {
+  position: absolute;
+  bottom: 12px;
+  right: 16px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(8px);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.3;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .06);
+  pointer-events: none;
+  user-select: none;
+}
 
 .modal-backdrop {
   position: fixed;
@@ -1363,8 +1544,10 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 @keyframes anchor-locate { from { outline-color: color-mix(in srgb, var(--accent) 85%, transparent); } to { outline-color: transparent; } }
 
 @media (max-width: 1120px) {
-  .topbar { gap: 16px; }
   .brand { width: auto; }
+  .app[data-sidebar="open"] { --topbar-cap-w: 168px; --app-sidebar-width: 168px; }
+  .app[data-sidebar="open"] .topbar-mode-cap { width: var(--app-sidebar-width); padding: 0 6px; }
+  .app[data-sidebar="open"] .layout-tabs button { padding: 4px 5px; font-size: 11px; }
   .top-actions .action-label { display: none; }
   .top-actions .quiet-action { width: 34px; padding: 0; }
   .annotation-list { display: none; }
@@ -1374,7 +1557,6 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 @media (max-width: 860px) {
   .brand-name { display: none; }
   .layout-tabs button { min-width: 48px; padding-inline: 8px; }
-  .sidebar { width: 224px; }
   .workspace-head { padding-inline: 14px; }
   .pdf-canvas-wrap { padding: 12px; }
   .epub-font-control span { min-width: 34px; }
@@ -1398,16 +1580,15 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 
 /* Compact document workspace: persistent controls, local files, quiet reading. */
 .topbar {
-  gap: 12px;
-  padding: 0 0 0 10px;
+  gap: 0;
+  padding: 0;
   -webkit-app-region: drag;
   user-select: none;
 }
 .topbar button, .topbar input, .topbar select, .settings-popover { -webkit-app-region: no-drag; }
-.sidebar-toggle { flex: none; min-width: 32px; }
-.top-actions > .quiet-action:first-child { display: none; }
+.sidebar-toggle { flex: none; min-width: 34px; }
 .top-actions { margin-left: auto; }
-.window-controls { height: auto; flex: none; display: flex; align-self: stretch; border-left: 0; -webkit-app-region: no-drag; }
+.window-controls { height: auto; flex: none; display: flex; align-self: stretch; -webkit-app-region: no-drag; }
 .window-controls button {
   width: 44px;
   height: 100%;
@@ -1510,15 +1691,19 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .workspace-mode-switch button { padding: 4px 8px; font-size: 12px; }
 .workspace-mode-switch button.active { color: var(--accent); background: transparent; box-shadow: none; }
 /* One continuous chrome row; pane ownership remains in the workspace model. */
-.note-workspace-bar { container: note-topbar / inline-size; display: flex; align-items: center; gap: 10px; height: var(--chrome-note-row-height); min-height: var(--chrome-note-row-height); padding: 0 8px; flex: none; min-width: 0; border-bottom: 1px solid var(--line); background: var(--chrome); }
-.note-header-slot { container: note-topbar / inline-size; display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; height: 39px; }
-.reader-header-slot { min-width: 0; flex: 1; }
+.note-workspace-bar { container: note-topbar / inline-size; display: flex; align-items: center; gap: 10px; height: 100%; min-height: 0; padding: 0 8px; flex: 1; min-width: 0; border-bottom: 0; background: transparent; }
+.note-header-slot { container: note-topbar / inline-size; display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; height: 100%; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.note-header-slot::-webkit-scrollbar { display: none; }
+.reader-header-slot { container: reader-topbar / inline-size; min-width: 0; flex: 1; display: flex; align-items: center; height: 100%; }
 .note-workspace-bar.with-epub { gap: 0; padding: 0; }
 .note-workspace-bar.with-epub .note-header-slot { padding: 0 8px; }
 .note-workspace-bar.reader-note-row { gap: 0; padding: 0; }
-.note-workspace-bar.reader-note-row .note-header-slot { padding: 0 8px; }
-.note-workspace-bar.reader-note-row .reader-header-slot { flex: 0 0 calc(var(--split-at) + 4px); }
-.epub-navigation { display: flex; align-items: center; gap: 6px; height: 39px; min-width: 0; padding: 0 8px; }
+.note-workspace-bar.reader-note-row .note-header-slot { padding: 0 8px; border-left: 1px solid var(--line); }
+.app[data-sidebar="open"] .note-workspace-bar.reader-note-row .reader-header-slot { flex: 0 0 calc((100% + var(--win-controls-w, 132px)) * var(--split-ratio, 0.52) + 3px); }
+.app[data-sidebar="closed"] .note-workspace-bar.reader-note-row .reader-header-slot { flex: 0 0 max(180px, calc((100% + var(--topbar-cap-w, 172px) + var(--win-controls-w, 132px)) * var(--split-ratio, 0.52) - var(--topbar-cap-w, 172px) + 3px)); }
+.pdf-doc-pill { flex: 0 1 168px; min-width: 72px; height: 34px; align-self: flex-end; padding: 0 9px; gap: 6px; font-size: 12px; color: var(--text); border: 0; border-radius: var(--control-radius) var(--control-radius) 0 0; background: var(--surface); box-shadow: inset 0 -2px var(--accent); display: inline-flex; align-items: center; }
+.pdf-doc-pill svg { flex: none; color: var(--accent); }
+.epub-navigation { display: flex; align-items: center; gap: 6px; height: 100%; min-width: 0; padding: 0 8px; width: 100%; }
 .epub-header-actions { display: flex; flex: none; gap: 2px; }
 .reader-tab-strip { min-width: 0; flex: 1; }
 .note-workspace-bar .document-tab.reader-tab { flex: 0 1 auto; }
@@ -1527,7 +1712,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .reader-tab svg { flex: none; }
 .note-workspace-bar .document-tab-strip { height: 39px; gap: 3px; }
 .note-tab-cluster { display: flex; align-items: center; gap: 3px; flex: none; min-width: 0; }
-.note-workspace-bar .document-tab { min-width: 90px; max-width: 200px; height: 33px; border-radius: 4px 4px 0 0; }
+.note-workspace-bar .document-tab { min-width: 90px; max-width: 200px; height: 33px; border-radius: var(--control-radius) var(--control-radius) 0 0; }
 .note-workspace-bar .document-tab.active { background: transparent; border-color: transparent; box-shadow: inset 0 -2px color-mix(in srgb, var(--accent) 35%, transparent); }
 .note-workspace-bar .document-tab.foreground-tab { background: var(--surface); border-color: transparent; box-shadow: inset 0 -2px var(--accent); }
 .note-workspace-bar .document-tab > button:first-child { display: flex; align-items: center; gap: 7px; padding: 6px 9px; line-height: 1.3; }
@@ -1549,8 +1734,22 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   .compact-note-controls { gap: 5px; }
   .note-workspace-bar .document-tab { min-width: 65px; max-width: 160px; }
 }
+@container note-topbar (max-width: 440px) {
+  .note-header-slot { gap: 4px; }
+}
+@container note-topbar (max-width: 340px) {
+  .note-tab-cluster { flex: 1 1 0; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+  .note-tab-cluster::-webkit-scrollbar { display: none; }
+  .note-workspace-bar .document-tab { min-width: 40px; }
+  .compact-note-controls { gap: 2px; }
+  .compact-note-controls .markdown-workspace-actions { gap: 1px; }
+  .compact-note-controls :is(.workspace-icon-action, .workspace-mode-switch button) { width: 24px; min-width: 24px; min-height: 28px; height: 28px; padding: 3px; }
+  .compact-note-controls .workspace-mode-switch { padding: 0; gap: 1px; }
+}
 .note-outline, .pdf-outline { width: 186px; flex: none; overflow: auto; border-left: 1px solid var(--line); background: var(--surface-subtle); padding: 10px 5px; scrollbar-width: thin; }
-.outline-title { font-size: 11px; color: var(--text-faint); padding: 4px 9px 10px; }
+.outline-title { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--text-faint); padding: 4px 6px 10px 9px; }
+.outline-close { width: 22px !important; min-width: 22px !important; height: 22px; min-height: 22px; padding: 0 !important; display: grid !important; place-items: center; border-radius: var(--control-radius); color: var(--text-faint); }
+.outline-close:hover { background: var(--hover) !important; color: var(--accent) !important; }
 .note-outline button, .pdf-outline button { display: flex; gap: 6px; width: 100%; padding: 7px 10px; text-align: left; font-size: 12px; border-radius: 4px; color: var(--text-muted); line-height: 1.5; }
 .note-outline button:hover, .pdf-outline button:hover { background: transparent; color: var(--accent); }
 .note-outline small { opacity: .55; font-size: 9px; }
@@ -1563,8 +1762,9 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   scrollbar-gutter: stable;
 }
 .settings-popover { max-height: calc(100vh - 64px); overflow-y: auto; }
-.app :is(.file-list, .pdf-canvas-wrap, .cm-scroller, .markdown-preview, .note-outline, .pdf-outline, .epub-search-results, .epub-annotation-list, .settings-popover)::-webkit-scrollbar { width: 12px; height: 12px; }
-.app :is(.file-list, .pdf-canvas-wrap, .cm-scroller, .markdown-preview, .note-outline, .pdf-outline, .epub-search-results, .epub-annotation-list, .settings-popover)::-webkit-scrollbar-thumb { min-height: 32px; border: 3px solid transparent; border-radius: 5px; background: var(--scrollbar) padding-box; }
+.app :is(.file-list, .pdf-canvas-wrap, .cm-scroller, .markdown-preview, .note-outline, .pdf-outline, .epub-search-results, .epub-annotation-list, .settings-popover)::-webkit-scrollbar { width: 10px; height: 10px; }
+.app :is(.file-list, .pdf-canvas-wrap, .cm-scroller, .markdown-preview, .note-outline, .pdf-outline, .epub-search-results, .epub-annotation-list, .settings-popover)::-webkit-scrollbar-thumb { min-height: 32px; border: 2px solid transparent; border-radius: 5px; background: color-mix(in srgb, var(--scrollbar) 68%, transparent) padding-box; }
+.app :is(.file-list, .pdf-canvas-wrap, .cm-scroller, .markdown-preview, .note-outline, .pdf-outline, .epub-search-results, .epub-annotation-list, .settings-popover)::-webkit-scrollbar-thumb:hover { background: var(--scrollbar) padding-box; }
 .app :is(.file-list, .pdf-canvas-wrap, .cm-scroller, .markdown-preview, .note-outline, .pdf-outline, .epub-search-results, .epub-annotation-list, .settings-popover)::-webkit-scrollbar-track { background: transparent; }
 .markdown-preview { padding: 30px clamp(30px, 4vw, 64px) 110px; }
 .markdown-preview > :is(h1, h2, h3, h4, h5, h6, p, ul, ol, blockquote, pre, table, hr) {
@@ -1583,8 +1783,13 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .pdf-reader-body { flex: 1; min-height: 0; display: flex; }
 .pdf-pane { container-type: inline-size; }
 .note-outline.pdf-outline { width: min(186px, 40%); }
-.continuous-pdf { min-width: 0; min-height: 0; padding: 24px; overflow-anchor: none; }
-@container (max-width: 620px) { .continuous-pdf { padding: 24px 12px; } }
+.continuous-pdf { min-width: 0; min-height: 0; padding: 24px 24px 44px; overflow-anchor: none; }
+@container (max-width: 620px) { .continuous-pdf { padding: 24px 12px 44px; } }
+.pane-toolbar[data-empty="true"],
+.note-toolbar[data-empty="true"] {
+  opacity: 0;
+  pointer-events: none;
+}
 .pdf-page-slot { position: relative; margin: 0 auto 24px; background: #fff; box-shadow: 0 2px 8px #20302515; }
 .pdf-page-label { position: absolute; top: -18px; left: 2px; font: 10px 'Segoe UI', sans-serif; color: var(--text-faint); }
 .pdf-page-inner { padding: 0; }
@@ -1612,7 +1817,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 /* Only the page raster is recolored; selection/search/annotation layers keep
    their semantic colors. Scanned images are dimmed, never inverted. */
 .app[data-theme="constructivist-dark"] .pdf-page-slot,
-.app[data-theme="constructivist-dark"] .canvas-holder { background: #000; }
+.app[data-theme="constructivist-dark"] .canvas-holder { background: #1b1c20; }
 .app[data-theme="constructivist-dark"] .pdf-saved-highlight,
 .app[data-theme="constructivist-dark"] .pdf-search-hit { mix-blend-mode: screen; }
 
@@ -1628,9 +1833,9 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   .pdf-find-bar .find-count { min-width: 38px; }
 }
 
-/* Constructivist chrome: flat geometry, white daytime, pure-black night.
-   No document metrics, reader geometry or annotation colors are overridden. */
-.app[data-theme^="constructivist"] { --radius: 2px; }
+/* Refined workspace themes: pure white, warm ivory, and layered obsidian.
+   Preserve document readability, monospace UI/tab contrast, and full motion. */
+.app[data-theme^="constructivist"] { --radius: 10px; --control-radius: 9px; }
 .app[data-theme^="constructivist"] {
   --interface-font: "Cascadia Mono", "Consolas", "Microsoft YaHei UI", "Microsoft YaHei", monospace;
   --button-font: "Zhaoye Buttons", "Source Han Sans SC", "Microsoft YaHei UI", sans-serif;
@@ -1642,39 +1847,50 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .app[data-theme^="constructivist"] :is(.cm-md-code-language, .pdf-page-label) { font-family: var(--interface-font); }
 .app[data-theme^="constructivist"] .sidebar { border-radius: 0; box-shadow: none; }
 .app[data-theme^="constructivist"] :is(
-  .top-actions button, .layout-tabs, .layout-tabs button,
+  .top-actions button, .layout-tabs,
   .pane-toolbar button, .pane-toolbar input, .pane-toolbar select,
   .workspace-mode-switch, .workspace-mode-switch button, .workspace-icon-action,
-  .document-tab, .document-tab button, .theme-swatch,
   .settings-popover button, .settings-popover select,
   .file-context-menu, .file-context-menu button,
-  .file-row, .file-icon, .folder-icon, .folder-crumbs button,
+  .folder-crumbs button,
   .note-outline button, .pdf-outline button,
   .selection-toolbar, .selection-toolbar button,
   .selection-actions, .selection-actions button, .selection-actions input,
   .epub-selection-actions, .epub-selection-actions button, .epub-selection-actions input,
   .epub-annotation-item button, .epub-annotation-edit textarea,
   .epub-search-panel, .epub-search-panel button, .epub-search-panel input
-) { border-radius: 2px; }
-.app[data-theme^="constructivist"] :is(
-  .search, .folder-address, .settings-popover, .file-context-menu,
-  .selection-toolbar, .selection-actions, .epub-selection-actions,
-  .epub-search-panel, .annotation-list, .toast, .inline-undo
-) { box-shadow: none; }
-.app[data-theme^="constructivist"] .topbar { background: var(--topbar-bg); border-bottom-color: var(--text); }
-/* Scope contrasting topbar ink to its controls, never the settings popover. */
-.app:is([data-theme="constructivist-paper"], [data-theme="constructivist-dark"]) > .topbar :is(
-  .sidebar-toggle, .layout-tabs button:not(.active), .top-actions > .quiet-action,
-  .settings-menu > .quiet-action, .window-controls > button
+) { border-radius: var(--control-radius); }
+.app[data-theme^="constructivist"] .layout-tabs { border-radius: var(--radius); }
+.app[data-theme^="constructivist"] .layout-tabs button { border-radius: calc(var(--radius) - 3px); }
+.app[data-theme^="constructivist"] .file-row { border-radius: var(--radius); }
+.app[data-theme^="constructivist"] :is(.file-icon, .folder-icon) { border-radius: 6px; }
+.app[data-theme^="constructivist"] .document-tab { border-radius: var(--control-radius) var(--control-radius) 0 0; }
+@supports (corner-shape: squircle) {
+  /* Scope experimental squircle clipping to static chrome controls/rows so scrolling canvases, editors, and live text-selection overlays stay GPU-composited. */
+  .app[data-theme^="constructivist"] :is(.new-note-action, .file-row, .workspace-empty-card, .modal-card, .toast, .dropdown-menu) { corner-shape: squircle; }
+  .theme-swatch { corner-shape: round; }
+}
+.app[data-theme^="constructivist"] .topbar { background: var(--topbar-bg, var(--chrome)); border-bottom-color: var(--line); }
+.app[data-theme^="constructivist"] .left-rail { background: var(--rail-bg, var(--surface-subtle)); border-right-color: var(--line); }
+/* Scope contrasting chrome ink to topbar/rail controls, never settings popover. */
+.app[data-theme^="constructivist"] .topbar :is(
+  .layout-tabs button:not(.active), .window-controls > button
+),
+.app[data-theme^="constructivist"] .left-rail :is(
+  .sidebar-toggle, .quiet-action
 ) { color: var(--topbar-text); }
-.app:is([data-theme="constructivist-paper"], [data-theme="constructivist-dark"]) > .topbar :is(
-  .sidebar-toggle, .layout-tabs button:not(.active), .top-actions > .quiet-action,
-  .settings-menu > .quiet-action, .window-controls > button
+.app[data-theme^="constructivist"] .topbar :is(
+  .layout-tabs button:not(.active), .window-controls > button
+):hover,
+.app[data-theme^="constructivist"] .left-rail :is(
+  .sidebar-toggle, .quiet-action
 ):hover { background: transparent !important; color: var(--topbar-hover); }
-.app:is([data-theme="constructivist-paper"], [data-theme="constructivist-dark"]) > .topbar .window-controls .window-close:active { color: var(--topbar-hover); }
-.app[data-theme="constructivist-paper"] > .topbar :is(
-  .sidebar-toggle, .layout-tabs button, .top-actions > button,
-  .settings-menu > .quiet-action, .window-controls > button
+.app[data-theme^="constructivist"] .topbar .window-controls .window-close:active { color: var(--topbar-hover); }
+.app[data-theme="constructivist-paper"] .topbar :is(
+  .layout-tabs button, .window-controls > button
+):focus-visible,
+.app[data-theme="constructivist-paper"] .left-rail :is(
+  .sidebar-toggle, .quiet-action
 ):focus-visible { outline-color: var(--topbar-text); }
 .app[data-theme^="constructivist"] .layout-tabs button.active {
   background: var(--mode-bg);
@@ -1699,18 +1915,21 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 }
 .app[data-theme^="constructivist"] :is(.markdown-source-editor .cm-md-quote, .markdown-preview blockquote) { background-color: transparent; }
 .app[data-theme^="constructivist"] :is(.markdown-source-editor .cm-md-code-first, .markdown-source-editor .cm-md-code-last, .cm-md-code-preview, .markdown-preview pre) {
-  border-radius: 2px;
+  border-radius: 6px;
 }
 .app[data-theme^="constructivist"] .markdown-source-editor .cm-activeLine {
-  background-color: color-mix(in srgb, var(--line) 18%, transparent) !important;
+  background-color: color-mix(in srgb, var(--line) 22%, transparent) !important;
 }
-.app[data-theme^="constructivist"] .pdf-page-slot { box-shadow: none; }
+.app[data-theme^="constructivist"] .pdf-page-slot { box-shadow: 0 2px 10px rgba(0, 0, 0, .06); }
+.app[data-theme="constructivist-dark"] .pdf-page-slot { box-shadow: 0 4px 16px rgba(0, 0, 0, .42); }
 .app[data-theme^="constructivist"] .top-actions .new-note-action,
+.app[data-theme^="constructivist"] .left-rail .new-note-action,
 .app[data-theme^="constructivist"] .primary {
   background: var(--action-bg) !important;
   color: var(--on-action) !important;
 }
 .app[data-theme^="constructivist"] .top-actions .new-note-action:hover,
+.app[data-theme^="constructivist"] .left-rail .new-note-action:hover,
 .app[data-theme^="constructivist"] .primary:hover { background: var(--action-hover) !important; }
 .app[data-theme^="constructivist"] .file-icon.epub { background: var(--epub-icon-bg); color: var(--epub-icon-text); }
 .app[data-theme="constructivist-dark"] .topbar { border-bottom-color: var(--line); }
@@ -1730,7 +1949,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .app[data-theme="constructivist-dark"] .file-context-menu button:hover { box-shadow: inset 2px 0 var(--hover-text); }
 .app[data-theme="constructivist-dark"] :is(.workspace-icon-action.active, .workspace-mode-switch button.active, .pdf-navigation button[aria-pressed="true"]):hover { color: var(--accent); }
 .app[data-theme="constructivist-dark"] :is(.cm-md-blockquote, .markdown-preview blockquote) { background: var(--surface); }
-.app[data-theme^="constructivist"] :is(.pdf-text-actions, .pdf-annotation-menu) { border-radius: 2px; box-shadow: none; }
+.app[data-theme^="constructivist"] :is(.pdf-text-actions, .pdf-annotation-menu) { border-radius: var(--control-radius); box-shadow: 0 6px 18px rgba(0, 0, 0, .14); }
 
 /* Fullscreen chrome overlays a stable reader viewport. Revealing it must not
    resize CodeMirror, PDF canvases, or the EPUB rendition. Shared heights and
@@ -1740,20 +1959,20 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .fullscreen-reveal-edge { position: absolute; inset: 0 0 auto; height: 8px; z-index: var(--chrome-reveal-edge-layer); -webkit-app-region: no-drag; }
 .app[data-fullscreen="true"] .main,
 .app[data-fullscreen="true"] .pdf-pane { position: relative; }
-.app[data-fullscreen="true"] > .topbar { position: absolute; inset: 0 0 auto; -webkit-app-region: no-drag; }
-.app[data-fullscreen="true"] .note-workspace-bar { position: absolute; inset: var(--chrome-topbar-height) 0 auto; z-index: var(--chrome-note-row-layer); }
-.app[data-fullscreen="true"] .pdf-navigation { position: absolute; top: calc(var(--chrome-topbar-height) + var(--fullscreen-note-row)); left: 0; right: 0; z-index: var(--chrome-reader-nav-layer); }
+.app[data-fullscreen="true"] .left-rail { position: absolute; inset: 0 auto 0 0; background: var(--rail-bg, var(--surface-subtle)); -webkit-app-region: no-drag; }
+.app[data-fullscreen="true"] .topbar { position: absolute; inset: 0 0 auto var(--chrome-rail-width); background: var(--topbar-bg, var(--chrome)); -webkit-app-region: no-drag; }
+.app[data-fullscreen="true"] .body > .sidebar { margin-left: var(--chrome-rail-width); padding-top: calc(var(--chrome-topbar-height) + 10px); }
+.app[data-fullscreen="true"] .left-rail { --chrome-hide-x: -100%; }
 .app[data-fullscreen="true"] .topbar { --chrome-hide-y: -100%; }
-.app[data-fullscreen="true"] .note-workspace-bar { --chrome-hide-y: calc(-100% - var(--chrome-topbar-height)); }
-.app[data-fullscreen="true"] .pdf-navigation { --chrome-hide-y: calc(-100% - var(--chrome-topbar-height) - var(--fullscreen-note-row)); }
-.app[data-fullscreen="true"][data-chrome-visible="false"] :is(.topbar, .note-workspace-bar, .pdf-navigation) { opacity: 0; transform: translateY(var(--chrome-hide-y)); pointer-events: none; }
+.app[data-fullscreen="true"][data-chrome-visible="false"] .topbar { opacity: 0; transform: translateY(var(--chrome-hide-y)); pointer-events: none; }
+.app[data-fullscreen="true"][data-chrome-visible="false"] .left-rail { opacity: 0; transform: translateX(var(--chrome-hide-x)); pointer-events: none; }
 .app[data-theme^="constructivist"] .workspace-mode-switch button.active:hover { color: var(--accent); background: transparent; }
 
 /* Short linear motion, without animating editor/reader geometry. */
-.app[data-fullscreen="true"] :is(.topbar, .note-workspace-bar, .pdf-navigation) {
+.app[data-fullscreen="true"] :is(.topbar, .left-rail) {
   transition: transform var(--motion-layout) var(--motion-ease-enter), opacity var(--motion-panel) linear;
 }
-.app[data-fullscreen="true"][data-chrome-visible="false"] :is(.topbar, .note-workspace-bar, .pdf-navigation) {
+.app[data-fullscreen="true"][data-chrome-visible="false"] :is(.topbar, .left-rail) {
   transition: transform var(--motion-layout) var(--motion-ease-exit), opacity var(--motion-panel) linear 40ms;
 }
 .motion-preference { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; cursor: pointer; }
@@ -1781,41 +2000,46 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .cm-md-image-error { outline: 1px dashed var(--muted); }
 .cm-md-inline-code-content { border-radius: 3px; padding: .06em .28em; background: color-mix(in srgb, var(--accent) 9%, var(--surface)); color: var(--accent); white-space: pre-wrap; }
 
-/* Keep quiet topbar hit areas still; feedback belongs to their glyphs. */
-.app > .topbar :is(.sidebar-toggle, .top-actions > .quiet-action, .settings-menu > .quiet-action, .window-controls > button) {
+/* Keep quiet topbar and rail hit areas still; feedback belongs to their glyphs. */
+.app .topbar :is(.window-controls > button),
+.app .left-rail :is(.sidebar-toggle, .quiet-action) {
   background: transparent !important;
   transition: color var(--motion-feedback) var(--motion-ease-enter), background-color 0s, transform 0s;
 }
-.app > .topbar :is(.sidebar-toggle, .top-actions > .quiet-action, .settings-menu > .quiet-action, .window-controls > button):hover {
+.app .topbar :is(.window-controls > button):hover,
+.app .left-rail :is(.sidebar-toggle, .quiet-action):hover {
   background: transparent !important;
   color: var(--accent);
 }
-.app > .topbar :is(.sidebar-toggle, .top-actions > .quiet-action, .settings-menu > .quiet-action, .window-controls > button):active { transform: none; }
-.app > .topbar :is(.sidebar-toggle, .top-actions > .quiet-action, .settings-menu > .quiet-action, .window-controls > button) > :is(svg, .action-label, span) {
+.app .topbar :is(.window-controls > button):active,
+.app .left-rail :is(.sidebar-toggle, .quiet-action):active { transform: none; }
+.app .topbar :is(.window-controls > button) > :is(svg, .action-label, span),
+.app .left-rail :is(.sidebar-toggle, .quiet-action) > :is(svg, .action-label, span) {
   transition: color var(--motion-feedback) var(--motion-ease-enter), transform var(--motion-press) var(--motion-ease-enter);
 }
-.app[data-motion="full"] > .topbar :is(.sidebar-toggle, .top-actions > .quiet-action, .settings-menu > .quiet-action, .window-controls > button):not(:disabled):active > :is(svg, .action-label, span) { transform: scale(1.025); }
-.app > .topbar .layout-tabs button { transition: background-color 0s, color var(--motion-feedback) var(--motion-ease-enter), transform 0s; }
-.app > .topbar .layout-tabs button:not(.active):hover { background: transparent !important; color: var(--accent); }
-.app > .topbar .layout-tabs button.active:hover { background: var(--mode-bg, var(--accent-soft)) !important; color: var(--on-mode, var(--accent)); }
-.app > .topbar .layout-tabs button:active { transform: none; }
-.app > .topbar .layout-tabs button > span { display: inline-block; }
-.app > .topbar .layout-tabs button > span { transition: color var(--motion-feedback) var(--motion-ease-enter), transform var(--motion-press) var(--motion-ease-enter); }
-.app[data-motion="full"] > .topbar .layout-tabs button:not(:disabled):active > span { transform: scale(1.025); }
-.app > .topbar .new-note-action { transition: background-color 0s, border-color 0s; }
-.app > .topbar .new-note-action:hover { background: var(--action-hover, var(--accent-hover)) !important; color: var(--on-action, var(--on-accent)); }
-.app > .topbar .new-note-action:active { transform: none !important; }
-.app[data-motion="full"] > .topbar .new-note-action:not(:disabled):active > :is(svg, span) { transform: scale(1.025); }
-.app > .topbar .new-note-action > :is(svg, span) { transition: transform var(--motion-press) var(--motion-ease-enter); }
+.app[data-motion="full"] .topbar :is(.window-controls > button):not(:disabled):active > :is(svg, .action-label, span),
+.app[data-motion="full"] .left-rail :is(.sidebar-toggle, .quiet-action):not(:disabled):active > :is(svg, .action-label, span) { transform: scale(1.025); }
+.app .topbar .layout-tabs button { transition: background-color 0s, color var(--motion-feedback) var(--motion-ease-enter), transform 0s; }
+.app .topbar .layout-tabs button:not(.active):hover { background: transparent !important; color: var(--accent); }
+.app .topbar .layout-tabs button.active:hover { background: var(--mode-bg, var(--accent-soft)) !important; color: var(--on-mode, var(--accent)); }
+.app .topbar .layout-tabs button:active { transform: none; }
+.app .topbar .layout-tabs button > span { display: inline-block; }
+.app .topbar .layout-tabs button > span { transition: color var(--motion-feedback) var(--motion-ease-enter), transform var(--motion-press) var(--motion-ease-enter); }
+.app[data-motion="full"] .topbar .layout-tabs button:not(:disabled):active > span { transform: scale(1.025); }
+.app .left-rail .new-note-action { transition: background-color 0s, border-color 0s; }
+.app .left-rail .new-note-action:hover { background: var(--action-hover, var(--accent-hover)) !important; color: var(--on-action, var(--on-accent)); }
+.app .left-rail .new-note-action:active { transform: none !important; }
+.app[data-motion="full"] .left-rail .new-note-action:not(:disabled):active > :is(svg, span) { transform: scale(1.025); }
+.app .left-rail .new-note-action > :is(svg, span) { transition: transform var(--motion-press) var(--motion-ease-enter); }
 
-/* R5 chrome: separate navigation by surface tone, not a hard divider. */
-.app > .topbar { border-bottom: 0; }
-.app > .body > .sidebar {
-  background: color-mix(in srgb, var(--sidebar) 80%, var(--line));
-  border-right: 0;
+/* Subtle surface separation keeps navigation calm without heavy borders. */
+.app .topbar { border-bottom: 1px solid var(--line); }
+.app .body > .sidebar {
+  background: var(--sidebar);
+  border-right: 1px solid var(--line);
 }
 .app .pane-toolbar, .app .note-workspace-bar { border-bottom: 0; }
-.app .note-foot { border-top: 0; }
+.app .note-foot { border-top: 1px solid var(--line); }
 .app .file-drag-status { position: absolute; inset: auto 12px 8px; z-index: 31; pointer-events: none; border: 0; background: var(--surface); }
 .app .file-drop-preview { position: absolute; inset: auto 12px 62px; z-index: 30; border: 1px solid var(--line); background: var(--surface); }
 .app .note-foot .word-stats > span + span::before { background: color-mix(in srgb, var(--line-strong) 42%, transparent); }

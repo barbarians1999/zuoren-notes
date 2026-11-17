@@ -1,7 +1,7 @@
 import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ReducedMotionContext, motionNumber, motionText, usePanelMotion } from '../uiMotion';
 import { OutlinePanel } from '../OutlinePanel';
-import { FileText } from 'lucide-react';
+import { FileText, Search } from 'lucide-react';
 import type { MarkdownScrollMemory, NoteRead, ReaderAnchor } from '../types';
 import { reader, type NoteMode, type FindCommand } from '../readerContext';
 import { isolateHistory } from '@codemirror/commands';
@@ -120,8 +120,9 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
     const animation = node.animate([{ transform: from }, { transform: 'translateX(0px)' }], {
       duration: motionNumber(style, '--motion-content', 160), easing: motionText(style, '--motion-ease-enter', 'cubic-bezier(.2,.75,.3,1)'),
     });
+    if (!animation) return;
     contentAnimation.current = animation;
-    animation.finished.then(() => { if (contentAnimation.current === animation) contentAnimation.current = null; }).catch(() => {});
+    animation.finished?.then(() => { if (contentAnimation.current === animation) contentAnimation.current = null; }).catch(() => {});
   }, [note?.path, mode, hidden, reducedMotion]);
   useLayoutEffect(() => () => { contentAnimation.current?.cancel(); }, []);
   const findInput = useRef<HTMLInputElement>(null);
@@ -153,10 +154,12 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
     const notePath = note?.path;
     if (!notePath || hidden) return;
     const memoryMode: MarkdownScrollMemory['mode'] = mode === 'preview' ? 'preview' : 'edit';
+    let disposed = false;
     let frame = 0;
     let attempts = 0;
     let scrollTimer = 0;
     let scroller: HTMLElement | null = null;
+    let observer: MutationObserver | null = null;
     const capture = () => {
       if (!scroller) return;
       const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
@@ -168,20 +171,37 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
       window.clearTimeout(scrollTimer);
       scrollTimer = window.setTimeout(capture, 140);
     };
+    const stopWaiting = () => {
+      cancelAnimationFrame(frame); frame = 0;
+      observer?.disconnect(); observer = null;
+    };
     const attach = () => {
-      scroller = host.current?.querySelector<HTMLElement>(memoryMode === 'preview' ? '.markdown-preview:not(.preview-loading)' : '.markdown-source-editor .cm-scroller') || null;
-      if (!scroller) {
-        if (++attempts < 600) frame = requestAnimationFrame(attach);
-        return;
-      }
+      if (disposed || scroller) return;
+      const found = host.current?.querySelector<HTMLElement>(memoryMode === 'preview' ? '.markdown-preview:not(.preview-loading)' : '.markdown-source-editor .cm-scroller') || null;
+      if (!found) return;
+      scroller = found;
+      stopWaiting();
       const saved = scrollMemoryRef.current.find(entry => entry.pane === paneId && entry.path === notePath && entry.mode === memoryMode);
-      if (tab) scroller.scrollTop = Math.min(tab.scroll[memoryMode], Math.max(0, scroller.scrollHeight - scroller.clientHeight));
-      else if (saved) scroller.scrollTop = resolveScrollTop(saved, Math.max(0, scroller.scrollHeight - scroller.clientHeight));
+      const targetTop = tab
+        ? Math.min(tab.scroll[memoryMode], Math.max(0, scroller.scrollHeight - scroller.clientHeight))
+        : (saved ? resolveScrollTop(saved, Math.max(0, scroller.scrollHeight - scroller.clientHeight)) : scroller.scrollTop);
+      // Do not overwrite user/script scroll if scroller already moved away from 0 before initial attach.
+      if (targetTop > 0 || scroller.scrollTop === 0) scroller.scrollTop = targetTop;
       scroller.addEventListener('scroll', onScroll, { passive: true });
     };
-    frame = requestAnimationFrame(attach);
+    const poll = () => {
+      attach();
+      if (!scroller && !disposed && ++attempts < 600) frame = requestAnimationFrame(poll);
+    };
+    attach();
+    if (!scroller && host.current) {
+      observer = new MutationObserver(() => attach());
+      observer.observe(host.current, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+      frame = requestAnimationFrame(poll);
+    }
     return () => {
-      cancelAnimationFrame(frame);
+      disposed = true;
+      stopWaiting();
       window.clearTimeout(scrollTimer);
       if (scroller) { scroller.removeEventListener('scroll', onScroll); capture(); }
     };
@@ -427,9 +447,9 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
       return unifiedHeader ? headerTarget && createPortal(<div data-note-controls={paneId}>{header}</div>, headerTarget) : header;
     })()}
     {findMotion.present && <div ref={findMotion.ref as React.RefObject<HTMLDivElement | null>} className="find-bar" role="search" aria-label={`查找当前${paneId === 'primary' ? '左' : '右'}栏笔记`} aria-hidden={!findOpen}>
-      <input ref={findInput} aria-label="查找文本" placeholder="查找" value={findText} onChange={event => setFindText(event.target.value)} onKeyDown={onFindKeyDown}/>
+      <div className="search find-search"><Search size={16} aria-hidden="true"/><input ref={findInput} aria-label="查找文本" placeholder="查找" value={findText} onChange={event => setFindText(event.target.value)} onKeyDown={onFindKeyDown}/></div>
       <button type="button" className="find-replace-toggle" aria-label={replaceOpen ? '收起替换' : '展开替换'} title={replaceOpen ? '收起替换' : '展开替换'} aria-expanded={replaceOpen} onClick={toggleReplace}><span aria-hidden="true">替</span></button>
-      {replaceOpen && <input ref={replaceInput} aria-label="替换为" placeholder="替换为" value={replaceText} onChange={event => setReplaceText(event.target.value)} onKeyDown={onReplaceKeyDown}/>}
+      {replaceOpen && <div className="search find-search"><input ref={replaceInput} aria-label="替换为" placeholder="替换为" value={replaceText} onChange={event => setReplaceText(event.target.value)} onKeyDown={onReplaceKeyDown}/></div>}
       <span className="find-count" aria-live="polite">{matches.length ? `${activeMatch ? currentIndex + 1 : 0} / ${matches.length}` : '0 / 0'}</span>
       <button type="button" className={caseSensitive ? 'selected' : ''} aria-label="区分大小写" aria-pressed={caseSensitive} title="区分大小写" onClick={() => setCaseSensitive(value => !value)}>Aa</button>
       <button type="button" aria-label="上一个匹配" title="上一个（Shift+Enter）" disabled={!matches.length} onClick={() => navigate(-1)}>↑</button>
@@ -449,6 +469,7 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
     <div className="note-body" ref={host}>
       {!note ? <div className="empty-state"><FileText size={28}/><p>打开或新建 Markdown 笔记</p><small>编辑后自动保存</small></div> : <div className="note-content"><div className="note-editor-surface" style={{ display: mode === 'preview' ? 'none' : 'flex' }}><MarkdownSourceEditor notePath={note.path} onView={setSourceView} onSelectionChange={handleSourceSelection} onMessage={setImageMessage} sharedDocument={sharedDocument!} tab={tab!}/></div>{mode === 'preview' && <MarkdownPreview notePath={note.path} text={text} headings={sourceView ? markdownOutline(sourceView) : []} onJump={stableJump} onToggleTask={toggleTask} onOpenLink={openMarkdownLink}/>}</div>}
       <OutlinePanel open={outline} label="Markdown 大纲" emptyText="使用标题组织笔记后，目录会出现在这里。"
+        onClose={() => setOutline(false)}
         returnFocus={() => document.querySelector(`[data-note-controls="${paneId}"] [data-outline-toggle]`) || host.current?.querySelector('[data-outline-toggle]') || null}
         items={headings.map((item, index) => ({ id: String(index), label: item.text, depth: item.level - 1, indicator: String(item.level) }))}
         onSelect={(entry, { keyboard }) => { const index = Number(entry.id), item = headings[index]; if (!item) return;

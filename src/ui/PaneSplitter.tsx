@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState, type PointerEvent, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 
-type Drag = { pointer: number; x: number; ratio: number; next: number; active: boolean; width: number; original: string; headerOriginal: string };
+type Drag = { pointer: number; x: number; ratio: number; next: number; active: boolean; width: number; original: string; headerOriginal: string; headerRatioOriginal: string };
 
 // Live PDF/Markdown resizing changes only a CSS variable. EPUB previews the
 // divider until release, so its rendition receives one committed width change.
@@ -27,6 +27,7 @@ export function PaneSplitter({ container, header, ratio, onChange, label, deferr
       root.style.removeProperty('--split-preview'); delete root.dataset.paneDragging;
     }
     header?.current?.style.setProperty('--split-at', session.headerOriginal);
+    header?.current?.style.setProperty('--split-ratio', session.headerRatioOriginal);
     setDragging(false);
     if (handle.current?.hasPointerCapture(session.pointer)) handle.current.releasePointerCapture(session.pointer);
     if (commit && session.active) latest.current.onChange(clamp(session.next, session.width));
@@ -36,7 +37,10 @@ export function PaneSplitter({ container, header, ratio, onChange, label, deferr
     const session = drag.current, root = container.current;
     cancelAnimationFrame(frame.current); cleanupEvents.current();
     if (session && root) { root.style.setProperty('--split-at', session.original); root.style.removeProperty('--split-preview'); delete root.dataset.paneDragging; }
-    if (session) header?.current?.style.setProperty('--split-at', session.headerOriginal);
+    if (session) {
+      header?.current?.style.setProperty('--split-at', session.headerOriginal);
+      header?.current?.style.setProperty('--split-ratio', session.headerRatioOriginal);
+    }
     drag.current = null;
   }, [container]);
   const down = (event: PointerEvent<HTMLDivElement>) => {
@@ -44,7 +48,7 @@ export function PaneSplitter({ container, header, ratio, onChange, label, deferr
     event.preventDefault();
     const root = container.current;
     drag.current = { pointer: event.pointerId, x: event.clientX, ratio: ratio, next: ratio, active: false,
-      width: root.getBoundingClientRect().width, original: root.style.getPropertyValue('--split-at'), headerOriginal: header?.current?.style.getPropertyValue('--split-at') || '' };
+      width: root.getBoundingClientRect().width, original: root.style.getPropertyValue('--split-at'), headerOriginal: header?.current?.style.getPropertyValue('--split-at') || '', headerRatioOriginal: header?.current?.style.getPropertyValue('--split-ratio') || '' };
     handle.current?.focus({ preventScroll: true }); event.currentTarget.setPointerCapture(event.pointerId);
     const cancel = () => finish(false);
     const escape = (key: KeyboardEvent) => {
@@ -67,6 +71,7 @@ export function PaneSplitter({ container, header, ratio, onChange, label, deferr
       if (drag.current !== session) return;
       root.style.setProperty(latest.current.deferred ? '--split-preview' : '--split-at', session.next + '%');
       header?.current?.style.setProperty('--split-at', session.next + '%');
+      header?.current?.style.setProperty('--split-ratio', String(session.next / 100));
       handle.current?.setAttribute('aria-valuenow', String(Math.round(session.next)));
     });
   };

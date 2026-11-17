@@ -48,10 +48,14 @@ let windowMinimumSyncTimer;
 const pendingMacFiles = [];
 let launchItems = { files: [] };
 
+function resolveMinimumWindowWidth(workAreaWidth) {
+  return Math.max(300, Math.min(380, Math.floor(workAreaWidth / 4)));
+}
+
 function syncWindowMinimumWidth(window) {
   if (!window || window.isDestroyed() || window !== mainWindow) return;
   const display = screen.getDisplayMatching(window.getBounds());
-  const width = Math.floor(display.workAreaSize.width / 2);
+  const width = resolveMinimumWindowWidth(display.workAreaSize.width);
   const [currentWidth, currentHeight] = window.getMinimumSize();
   if (currentWidth !== width) window.setMinimumSize(width, currentHeight);
 }
@@ -83,7 +87,7 @@ async function readSettings({ strictMove = false } = {}) {
     const window = parsed.window && typeof parsed.window === 'object' ? {
       ...(Number.isFinite(parsed.window.x) ? { x: Math.round(parsed.window.x) } : {}),
       ...(Number.isFinite(parsed.window.y) ? { y: Math.round(parsed.window.y) } : {}),
-      ...(Number.isFinite(parsed.window.width) && parsed.window.width >= 960 ? { width: Math.round(parsed.window.width) } : {}),
+      ...(Number.isFinite(parsed.window.width) && parsed.window.width >= 300 ? { width: Math.round(parsed.window.width) } : {}),
       ...(Number.isFinite(parsed.window.height) && parsed.window.height >= 640 ? { height: Math.round(parsed.window.height) } : {}),
     } : undefined;
     return { recentFiles: Array.isArray(parsed.recentFiles) ? parsed.recentFiles.filter(item => typeof item === 'string').slice(0, 30) : [], roots: Array.isArray(parsed.roots) ? parsed.roots.filter(item => typeof item === 'string').slice(0, 20) : [], window: window && Object.keys(window).length ? window : undefined, session: validateSession(parsed.session) };
@@ -439,7 +443,7 @@ function installHandlers() {
 function createWindow(settings = {}) {
   allowClose = false;
   quitRequested = false;
-  const initialMinimumWidth = Math.floor(screen.getPrimaryDisplay().workAreaSize.width / 2);
+  const initialMinimumWidth = resolveMinimumWindowWidth(screen.getPrimaryDisplay().workAreaSize.width);
   mainWindow = new BrowserWindow({
     icon: path.join(__dirname, 'assets', process.platform === 'win32' ? 'app-constructivist.ico' : 'app-constructivist.png'),
     width: settings.window?.width || 1440, height: settings.window?.height || 920,

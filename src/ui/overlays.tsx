@@ -140,7 +140,9 @@ export function DialogFrame({ children, labelledBy, describedBy, className = '',
   const ref = panel.ref as RefObject<HTMLDivElement | null>;
   useOverlayFocus(open && panel.present, ref, { kind: 'modal', onDismiss: busy ? undefined : onCancel, returnFocus });
   if (!panel.present) return null;
-  return <div ref={backdrop.ref as RefObject<HTMLDivElement | null>} className="modal-backdrop" aria-hidden={!open} data-state={open ? 'open' : 'closing'}>
+  const frame = <div ref={backdrop.ref as RefObject<HTMLDivElement | null>} className="modal-backdrop" aria-hidden={!open} data-state={open ? 'open' : 'closing'}>
     <div ref={ref} className={'dialog ' + className} role="dialog" aria-modal={open || undefined}
       aria-labelledby={labelledBy} aria-describedby={describedBy} aria-busy={busy} tabIndex={-1}>{children}</div></div>;
+  const portalHost = typeof document !== 'undefined' ? (document.querySelector?.('.app') || document.body) : null;
+  return portalHost ? createPortal(frame, portalHost) : frame;
 }

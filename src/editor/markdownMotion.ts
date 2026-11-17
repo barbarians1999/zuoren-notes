@@ -19,10 +19,11 @@ type IndentMotionBaseline = { kind: 'input.indent' | 'delete.dedent'; doc: Text;
   selection: EditorState['selection']; runs: RunPosition[]; geometry: string; caret: Rect; scrollTop: number; scrollLeft: number };
 type PointerRunBaseline = { doc: Text; tree: ReturnType<typeof syntaxTree>; selection: EditorState['selection'];
   runs: RunPosition[]; geometry: string; scrollTop: number; scrollLeft: number };
-type PointerGesture = { x: number; y: number; moved: boolean; ended: boolean; candidate: { head: number; from: Rect; to: Rect; scrollTop: number; scrollLeft: number; generation: number } | null; held: { element: HTMLElement; transform: string; priority: string } | null };
+type PointerGesture = { x: number; y: number; shiftKey: boolean; moved: boolean; ended: boolean; candidate: { head: number; from: Rect; to: Rect; scrollTop: number; scrollLeft: number; generation: number } | null; held: { element: HTMLElement; transform: string; priority: string } | null };
 type DeleteEcho = { from: number; to: number; text: string; rect: Rect; font: string; color: string; letterSpacing: string };
 type EditCapture = { doc: Text; head: number; type: EditInputType; caret: Rect; origin: Rect; scaleX: number; scaleY: number;
   clientLeft: number; clientTop: number; geometry: string; scrollTop: number; scrollLeft: number; time: number; echo: DeleteEcho | null };
+type StructuralCaretCapture = { key: 'Enter' | 'Backspace'; doc: Text; head: number; caret: Rect; scrollTop: number; scrollLeft: number; time: number };
 
 export function isSingleLeadingIndentChange(before: Text, after: Text, changes: ChangeDesc, kind: 'input.indent' | 'delete.dedent') {
   const ranges: { fromA: number; toA: number; fromB: number; toB: number }[] = [];
@@ -73,8 +74,9 @@ function tableAtSelection(view: EditorView) {
   return false;
 }
 
-function relativeCaretRect(view: EditorView): Rect | null {
-  const origin = rectOf(view.contentDOM), caret = rectOf(view.dom.querySelector('.cm-cursor-primary'));
+function relativeCaretRect(view: EditorView, measuredCaret?: Rect | null): Rect | null {
+  const origin = rectOf(view.contentDOM), caret = measuredCaret === undefined
+    ? rectOf(view.dom.querySelector('.cm-cursor-primary')) : measuredCaret;
   return origin && caret ? { left: caret.left - origin.left, top: caret.top - origin.top, width: caret.width, height: caret.height } : null;
 }
 
@@ -97,9 +99,10 @@ function runPositions(view: EditorView): RunPosition[] {
 }
 
 function runPosition(view: EditorView, element: HTMLElement, origin = rectOf(view.contentDOM)): RunPosition | null {
-  const bounds = rectOf(element), first = element.getClientRects?.()[0], key = element.dataset.mdMotionKey;
+  if (!element.isConnected) return null;
+  const first = element.getClientRects?.()[0], key = element.dataset.mdMotionKey;
   // A wrapped inline element's union can stay fixed while its first line moves.
-  const rect = first && (first.width || first.height) ? first : bounds;
+  const rect = first && (first.width || first.height) ? first : rectOf(element);
   return origin && rect && key ? { element, key, text: element.textContent || '',
     rect: { left: rect.left - origin.left, top: rect.top - origin.top, width: rect.width, height: rect.height } } : null;
 }
@@ -169,6 +172,7 @@ export function listMarkerMotion(state: EditorState): ListMarkerMotion | null {
 class MotionController {
   private readonly editGate = new EditMotionGate();
   private editCapture: EditCapture | null = null;
+  private structuralCaretCapture: StructuralCaretCapture | null = null;
   private indentMotionBaseline: IndentMotionBaseline | null = null;
   private pointerRunBaseline: PointerRunBaseline | null = null;
   private echoLayer: HTMLElement | null = null;
@@ -187,6 +191,7 @@ class MotionController {
   private caretElement: HTMLElement | null = null;
   private caretAnimation: Animation | null = null;
   private runAnimations = new Map<HTMLElement, Animation>();
+  private animBounds = new Map<HTMLElement, { minLeft: number; maxLeft: number }>();
   private taskPulse: (() => void) | null = null;
   private generation = 0;
   private baselineGeneration = 0;
@@ -200,13 +205,14 @@ class MotionController {
 
   private readonly onMouseDown = (event: MouseEvent) => {
     if (event.button !== 0 || !(event.target instanceof Node) || !this.view.dom.contains(event.target)) return;
+    this.structuralCaretCapture = null;
     this.pointerRunBaseline = null;
     if (this.editMotionEnabled()) { this.cancelMotion(); this.pointerGesture = null; }
     const view = this.view, state = view.state, selection = state.selection;
     const target = event.target instanceof HTMLElement ? event.target : event.target instanceof Node ? event.target.parentElement : null;
     const editableTarget = !!target && view.contentDOM.contains(event.target as Node)
       && !target.closest('input,textarea,button,[contenteditable="false"],.cm-widgetBuffer');
-    if (editableTarget && !state.readOnly && selection.ranges.length === 1 && selection.main.empty
+    if (editableTarget && !state.readOnly && selection.ranges.length === 1 && (selection.main.empty || event.shiftKey)
       && !view.composing && !view.compositionStarted && !reducedMotion(view)) {
       // Capture all visible runs: selection can start on a delimiter, trailing
       // whitespace or line area that has no motion-run element of its own.
@@ -216,7 +222,7 @@ class MotionController {
         geometry: runGeometry(view), scrollTop: view.scrollDOM.scrollTop, scrollLeft: view.scrollDOM.scrollLeft };
     }
     if (this.pointerGesture) this.releasePointerHold(this.pointerGesture);
-    this.pointerGesture = { x: event.clientX, y: event.clientY, moved: false, ended: false, candidate: null, held: null };
+    this.pointerGesture = { x: event.clientX, y: event.clientY, shiftKey: event.shiftKey, moved: false, ended: false, candidate: null, held: null };
   };
   private readonly onMouseMove = (event: MouseEvent) => {
     const gesture = this.pointerGesture;
@@ -242,28 +248,38 @@ class MotionController {
   };
   private readonly onWindowBlur = () => {
     this.taskPulse?.(); this.taskPulse = null;
+    this.structuralCaretCapture = null;
     if (this.pointerGesture) this.releasePointerHold(this.pointerGesture);
     this.pointerGesture = null;
     if (this.pendingIndentMotion || this.pendingFormatMotion || this.runAnimations.size || this.caretAnimation || this.echoAnimation || this.markerAnimation || this.editCapture || this.indentMotionBaseline || this.pointerRunBaseline) {
       this.cancelMotion(); this.captureScroll(); this.scheduleBaseline();
     }
   };
-  private readonly onMotionPreferenceChanged = () => { this.cancelMotion(); this.captureScroll(); this.scheduleBaseline(); };
+  private readonly onMotionPreferenceChanged = () => { this.structuralCaretCapture = null; this.cancelMotion(); this.captureScroll(); this.scheduleBaseline(); };
   private now() { return this.view.dom.ownerDocument.defaultView?.performance.now() ?? Date.now(); }
   private editMotionEnabled() { return this.view.dom.closest<HTMLElement>('.app')?.dataset.editMotion === 'soft'; }
-  private readonly onCompositionStart = () => { this.editGate.compositionStart(this.now()); this.cancelMotion(); };
+  private readonly onCompositionStart = () => { this.structuralCaretCapture = null; this.editGate.compositionStart(this.now()); this.cancelMotion(); };
   private readonly onCompositionEnd = () => { this.editGate.compositionEnd(this.now()); this.cancelMotion(); this.scheduleBaseline(); };
   private readonly onKeyDown = (event: KeyboardEvent) => {
     if (event.key === 'Tab') this.captureIndentMotionBaseline(event);
     else this.indentMotionBaseline = null;
-    if (!this.editMotionEnabled()) return;
-    if (event.repeat) { this.editGate.repeat(this.now()); this.cancelMotion(); }
-    else if (event.key === 'Enter' || event.key === 'Escape') this.cancelMotion();
-    else if ((event.key === 'Backspace' || event.key === 'Delete') && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
-      // CodeMirror's desktop keymap often deletes in keydown and suppresses
-      // beforeinput. Observe before that command, without handling the key.
-      this.captureEditInput(event.key === 'Backspace' ? 'deleteContentBackward' : 'deleteContentForward', event.isComposing, false);
+    if (this.editMotionEnabled()) {
+      if (event.repeat) { this.editGate.repeat(this.now()); this.cancelMotion(); }
+      else if (event.key === 'Enter' || event.key === 'Escape') this.cancelMotion();
+      else if ((event.key === 'Backspace' || event.key === 'Delete') && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+        // CodeMirror's desktop keymap often deletes in keydown and suppresses
+        // beforeinput. Observe before that command, without handling the key.
+        this.captureEditInput(event.key === 'Backspace' ? 'deleteContentBackward' : 'deleteContentForward', event.isComposing, false);
+      }
     }
+    if (!event.repeat && (event.key === 'Enter' || event.key === 'Backspace') && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey
+      && !event.isComposing && !this.view.composing && !this.view.compositionStarted && !reducedMotion(this.view)
+      && this.view.hasFocus && this.view.state.selection.ranges.length === 1 && this.view.state.selection.main.empty
+      && (!this.editMotionEnabled() || event.key !== 'Backspace' || !!this.editCapture)) {
+      const caret = rectOf(this.view.dom.querySelector('.cm-cursor-primary'));
+      this.structuralCaretCapture = caret ? { key: event.key, doc: this.view.state.doc, head: this.view.state.selection.main.head, caret,
+        scrollTop: this.view.scrollDOM.scrollTop, scrollLeft: this.view.scrollDOM.scrollLeft, time: this.now() } : null;
+    } else this.structuralCaretCapture = null;
   };
   private captureIndentMotionBaseline(event: KeyboardEvent) {
     const view = this.view, state = view.state, selection = state.selection;
@@ -347,18 +363,22 @@ class MotionController {
   }
 
   update(update: ViewUpdate) {
+    if (this.structuralCaretCapture && !update.docChanged && (update.selectionSet || update.focusChanged)) this.structuralCaretCapture = null;
+    const pointerSelection = update.transactions.some(transaction => transaction.isUserEvent('select.pointer'));
+    const shiftGesture = !!this.pointerGesture?.shiftKey && !this.pointerGesture.moved;
+    const shiftTap = pointerSelection && shiftGesture;
+    const pointerFocusChange = update.focusChanged && !update.docChanged && !update.selectionSet
+      && !!this.pointerGesture && !this.pointerGesture.moved;
+    const shiftFocusChange = pointerFocusChange && shiftGesture;
     const capturedIndent = this.indentMotionBaseline, updateIndent = indentUserEvent(update);
     if (capturedIndent && (capturedIndent.kind !== updateIndent || capturedIndent.doc !== update.startState.doc
       || capturedIndent.tree !== syntaxTree(update.startState) || !capturedIndent.selection.eq(update.startState.selection, true))) {
       this.indentMotionBaseline = null;
     }
-    const pointerSelection = update.transactions.some(transaction => transaction.isUserEvent('select.pointer'));
     const pointerBaseline = this.pointerRunBaseline;
-    const pointerFocusChange = update.focusChanged && !update.docChanged && !update.selectionSet
-      && !!this.pointerGesture && !this.pointerGesture.moved;
     if (pointerBaseline && ((!pointerSelection && !pointerFocusChange) || update.docChanged || pointerBaseline.doc !== update.startState.doc
       || pointerBaseline.tree !== syntaxTree(update.startState) || !pointerBaseline.selection.eq(update.startState.selection, true)
-      || update.state.readOnly || update.state.selection.ranges.length !== 1 || !update.state.selection.main.empty
+      || update.state.readOnly || update.state.selection.ranges.length !== 1 || (!update.state.selection.main.empty && !shiftTap && !shiftFocusChange)
       || !update.view.hasFocus || update.view.composing || update.view.compositionStarted || reducedMotion(update.view)
       || pointerBaseline.geometry !== runGeometry(update.view) || pointerBaseline.scrollTop !== update.view.scrollDOM.scrollTop
       || pointerBaseline.scrollLeft !== update.view.scrollDOM.scrollLeft)) this.pointerRunBaseline = null;
@@ -382,7 +402,8 @@ class MotionController {
       return;
     }
     if (update.docChanged && this.tryTaskMotion(update)) return;
-    if (update.docChanged && this.tryEditMotion(update)) return;
+    if (update.docChanged && this.tryEditMotion(update)) { this.structuralCaretCapture = null; return; }
+    if (update.docChanged && this.tryStructuralCaretMotion(update)) return;
     if (this.editMotionEnabled() && !update.docChanged && update.selectionSet) {
       this.editCapture = null; this.clearDeleteEcho();
       // A wrap/bidi association can move the visible cursor while head stays
@@ -407,6 +428,29 @@ class MotionController {
     const independentGeometry = update.geometryChanged && !update.docChanged && !update.selectionSet && !update.focusChanged
       && !this.pendingFormatMotion && !this.pendingIndentMotion;
     if (update.geometryChanged && (independentGeometry || runGeometry(view) !== this.lastRunGeometry)) {
+      if (independentGeometry && (this.caretAnimation || this.runAnimations.size) && runGeometry(view) === this.lastRunGeometry && this.lastRuns.length) {
+        const baseline = this.lastRuns, doc = view.state.doc, tree = syntaxTree(view.state), generation = this.generation;
+        const scrollTop = view.scrollDOM.scrollTop, scrollLeft = view.scrollDOM.scrollLeft, bounds = this.animBounds;
+        view.requestMeasure({
+          read: measuringView => {
+            if (generation !== this.generation || measuringView.state.doc !== doc || syntaxTree(measuringView.state) !== tree) return true;
+            if (measuringView.scrollDOM.scrollTop !== scrollTop || measuringView.scrollDOM.scrollLeft !== scrollLeft) return true;
+            const current = runPositions(measuringView), matched = matchRunFragments(baseline, current);
+            if (matched.length !== baseline.length || current.length !== baseline.length) return true;
+            return matched.some(({ before: prior, after: curr }) => {
+              const b = bounds.get(curr.element);
+              if (b) return Math.abs(curr.rect.top - prior.rect.top) >= 1.5 || curr.rect.left < b.minLeft || curr.rect.left > b.maxLeft;
+              return Math.hypot(curr.rect.left - prior.rect.left, curr.rect.top - prior.rect.top) >= 1;
+            });
+          },
+          write: moved => {
+            if (moved && generation === this.generation) {
+              this.cancelMotion(); this.captureScroll(); this.scheduleBaseline();
+            }
+          },
+        });
+        return;
+      }
       this.cancelMotion(); this.captureScroll(); this.scheduleBaseline();
       return;
     }
@@ -421,7 +465,7 @@ class MotionController {
     if (!update.selectionSet && !update.docChanged && !update.focusChanged) return;
     if (this.tryIndentMotion(update)) return;
     const eligible = !update.docChanged && view.hasFocus && !view.composing && !view.compositionStarted && !reducedMotion(view)
-      && selection.ranges.length === 1 && selection.main.empty;
+      && selection.ranges.length === 1 && (selection.main.empty || shiftTap || shiftFocusChange);
     if (!eligible) {
       this.cancelMotion();
       if (update.docChanged && view.hasFocus && !view.composing && !view.compositionStarted && !reducedMotion(view)
@@ -478,7 +522,7 @@ class MotionController {
             const to = rectOf(caret);
             const runs = first.formatChanged ? runPositions(measuringView) : null;
             return { head: first.head, from: first.from, to, runs, runsGeometry: runGeometry(measuringView), scrollTop: first.scrollTop, scrollLeft: first.scrollLeft,
-              caretRelative: relativeCaretRect(measuringView), doc: measuringView.state.doc, tree: syntaxTree(measuringView.state) };
+              caretRelative: relativeCaretRect(measuringView, to), doc: measuringView.state.doc, tree: syntaxTree(measuringView.state) };
           },
           write: final => {
             if (generation !== this.generation) return;
@@ -490,7 +534,7 @@ class MotionController {
             const caret = view.dom.querySelector<HTMLElement>('.cm-cursor-primary');
             const stable = view.scrollDOM.scrollTop === final.scrollTop && view.scrollDOM.scrollLeft === final.scrollLeft;
             const distance = final.from && final.to ? Math.hypot(final.from.left - final.to.left, final.from.top - final.to.top) : Infinity;
-            const eligibleCaret = (!this.editMotionEnabled() || !pointerSelection) && !!caret && stable && !!final.from && !!final.to && distance >= 1
+            const eligibleCaret = !!caret && stable && !!final.from && !!final.to && distance >= 1
               && (distance <= MAX_DISTANCE || pointerSelection);
             if (eligibleCaret && distance > MAX_DISTANCE) {
               if (pointerGesture && pointerGesture === this.pointerGesture) {
@@ -629,6 +673,40 @@ class MotionController {
     return true;
   }
 
+  private tryStructuralCaretMotion(update: ViewUpdate) {
+    const capture = this.structuralCaretCapture; this.structuralCaretCapture = null;
+    const view = update.view, selection = update.state.selection;
+    if (!capture || this.now() - capture.time > 300 || capture.doc !== update.startState.doc || capture.head !== update.startState.selection.main.head
+      || !update.selectionSet || selection.ranges.length !== 1 || !selection.main.empty || !view.hasFocus
+      || view.composing || view.compositionStarted || reducedMotion(view)
+      || view.scrollDOM.scrollTop !== capture.scrollTop || view.scrollDOM.scrollLeft !== capture.scrollLeft) return false;
+    const doc = update.state.doc, targetSelection = selection, generation = ++this.generation;
+    view.requestMeasure({ key: this,
+      read: measuringView => {
+        const caret = measuringView.dom.querySelector<HTMLElement>('.cm-cursor-primary');
+        const coords = measuringView.coordsAtPos(targetSelection.main.head, targetSelection.main.assoc || 1);
+        return { caret, to: coords ? { left: coords.left, top: coords.top, width: 1, height: coords.bottom - coords.top } : null };
+      },
+      write: result => {
+        if (generation !== this.generation || !result.caret?.isConnected || !result.to || view.state.doc !== doc
+          || !view.state.selection.eq(targetSelection, true) || !view.hasFocus || view.composing || view.compositionStarted
+          || reducedMotion(view) || view.scrollDOM.scrollTop !== capture.scrollTop || view.scrollDOM.scrollLeft !== capture.scrollLeft) return;
+        const distance = Math.hypot(capture.caret.left - result.to.left, capture.caret.top - result.to.top);
+        if (capture.key === 'Backspace' && Math.abs(capture.caret.top - result.to.top) > 1.5) {
+          let deletedNewline = false;
+          update.changes.iterChangedRanges((fromA, toA, fromB, toB) => {
+            if (fromA < toA && fromB === toB && update.startState.sliceDoc(fromA, toA).includes('\n')) deletedNewline = true;
+          });
+          if (!deletedNewline) { this.captureScroll(); this.scheduleBaseline(); return; }
+        }
+        if (distance >= 1) this.startCaret(result.caret, capture.caret, result.to,
+          Math.min(260, DURATION + Math.max(0, distance - MAX_DISTANCE) * .025));
+        this.captureScroll(); this.scheduleBaseline();
+      },
+    });
+    return true;
+  }
+
   private clearDeleteEcho() { const animation = this.echoAnimation; this.echoAnimation = null; animation?.cancel(); this.echoLayer?.remove(); this.echoLayer = null; }
 
   private commitPointerCaret(gesture: PointerGesture) {
@@ -636,7 +714,8 @@ class MotionController {
     if (!gesture.ended || !candidate) return;
     gesture.candidate = null;
     if (gesture.moved || gesture !== this.pointerGesture || candidate.generation !== this.generation
-      || view.state.selection.main.head !== candidate.head || !view.state.selection.main.empty || !view.hasFocus
+      || view.state.selection.main.head !== candidate.head || view.state.selection.ranges.length !== 1
+      || (!view.state.selection.main.empty && !gesture.shiftKey) || !view.hasFocus
       || view.composing || view.compositionStarted || reducedMotion(view) || view.scrollDOM.scrollTop !== candidate.scrollTop
       || view.scrollDOM.scrollLeft !== candidate.scrollLeft) { this.releasePointerHold(gesture); return; }
     const caret = view.dom.querySelector<HTMLElement>('.cm-cursor-primary');
@@ -800,7 +879,7 @@ class MotionController {
 
   private animateRuns(before: RunPosition[], after: RunPosition[], duration = DURATION, fade = false) {
     this.cancelRunAnimations();
-    const moves: { element: HTMLElement; dx: number; dy: number }[] = [];
+    const moves: { element: HTMLElement; dx: number; dy: number; fromLeft: number; toLeft: number }[] = [];
     for (const { before: previous, after: current } of matchRunFragments(before, after)) {
       const { element, rect: to } = current, from = previous.rect;
       const dx = from.left - to.left, dy = from.top - to.top;
@@ -808,20 +887,21 @@ class MotionController {
       // directly while keeping nearby source motion local and readable.
       if (Math.hypot(dx, dy) > MAX_DISTANCE) continue;
       if (Math.hypot(dx, dy) < 1) continue;
-      moves.push({ element, dx, dy });
+      moves.push({ element, dx, dy, fromLeft: from.left, toLeft: to.left });
     }
-    for (const { element, dx, dy } of moves) {
+    for (const { element, dx, dy, fromLeft, toLeft } of moves) {
       element.style.willChange = fade ? 'left, top, opacity' : 'left, top';
       const animation = element.animate([
         { left: `${dx}px`, top: `${dy}px`, ...(fade ? { opacity: .68 } : {}) },
         { left: '0px', top: '0px', ...(fade ? { opacity: 1 } : {}) },
       ], { duration, easing: 'cubic-bezier(.2,.75,.3,1)' });
       this.runAnimations.set(element, animation);
+      this.animBounds.set(element, { minLeft: Math.min(fromLeft, toLeft) - 2, maxLeft: Math.max(fromLeft, toLeft) + 2 });
       animation.onfinish = () => {
         element.style.willChange = '';
-        if (this.runAnimations.get(element) === animation) this.runAnimations.delete(element);
+        if (this.runAnimations.get(element) === animation) { this.runAnimations.delete(element); this.animBounds.delete(element); }
       };
-      animation.oncancel = () => { element.style.willChange = ''; };
+      animation.oncancel = () => { element.style.willChange = ''; this.animBounds.delete(element); };
     }
   }
 
@@ -832,7 +912,7 @@ class MotionController {
     this.view.requestMeasure({ key: this, read: () => null, write: () => {} });
     this.view.requestMeasure({ key: this.baselineKey, read: () => [], write: () => {} });
   }
-  private cancelRunAnimations() { for (const animation of this.runAnimations.values()) animation.cancel(); this.runAnimations.clear(); }
+  private cancelRunAnimations() { for (const animation of this.runAnimations.values()) animation.cancel(); this.runAnimations.clear(); this.animBounds.clear(); }
   private cancelCaretAnimation() {
     const animation = this.caretAnimation, element = this.caretElement;
     this.caretAnimation = null; this.caretElement = null;

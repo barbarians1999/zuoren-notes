@@ -365,8 +365,9 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
                 const endOpacity = Number.parseFloat(getComputedStyle(body).opacity) || 1;
                 pageAnimations.current.get(body)?.cancel();
                 const animation = body.animate([{ opacity: endOpacity * .84 }, { opacity: endOpacity }], { duration, easing });
+                if (!animation) continue;
                 pageAnimations.current.set(body, animation);
-                animation.finished.then(() => { if (pageAnimations.current.get(body) === animation) pageAnimations.current.delete(body); },
+                animation.finished?.then(() => { if (pageAnimations.current.get(body) === animation) pageAnimations.current.delete(body); },
                   () => { if (pageAnimations.current.get(body) === animation) pageAnimations.current.delete(body); });
               }
             });
@@ -663,6 +664,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
       {searchMotion.present && <EpubSearchPanel open={searchOpen} motionRef={searchMotion.ref} data={epub.data} toc={toc} onNavigate={jumpSearch} onClose={closeSearch} onClear={clearSearchHighlight}/>}
       {selectionMotion.present && lastSelection.current && <div ref={selectionMotion.ref as RefObject<HTMLDivElement | null>} className="epub-selection-actions" role="group" aria-label="处理选中文本" aria-hidden={!selection}><span title={lastSelection.current.quote}>{lastSelection.current.quote.slice(0, 72)}{lastSelection.current.quote.length > 72 ? '…' : ''}</span><ActionButton aria-label="复制 EPUB 选中文字" title="复制选中文字" identity={lastSelection.current.cfiRange} action={async () => { await navigator.clipboard.writeText(lastSelection.current!.quote); return true; }} successLabel="已复制" onError={onMessage}><Copy size={14}/>复制</ActionButton>{selectionFlow ? <><span className="epub-flow-status" role="status">{selectionFlow.error || '操作尚未完成'}</span><button className="primary" disabled={savingAnnotation || !selectionFlow.retry} onClick={() => void saveSelection(false)}>{selectionFlow.saved ? '重试摘录' : '重试保存'}</button></> : <><input aria-label="EPUB 批注" maxLength={10000} value={comment} onChange={event => setComment(event.target.value)} placeholder="可选批注"/><button className="primary" disabled={savingAnnotation} onClick={() => void saveSelection(false)}>高亮</button><button disabled={savingAnnotation} onClick={() => void saveSelection(!!excerptTarget)}>{excerptTarget ? `批注并${excerptTarget}` : '批注'}</button></>}<button disabled={savingAnnotation} onClick={() => { selectionActionGeneration.current += 1; setSelection(null); setComment(''); setSelectionFlow(null); selectionAnnotation.current = null; }}>取消</button></div>}
     </div><OutlinePanel open={outline} label="EPUB 大纲" className="epub-outline" emptyText={loading ? '正在读取目录…' : '这本电子书没有提供目录。'}
+      onClose={() => setOutline(false)}
       returnFocus={() => headerTarget?.querySelector('[data-outline-toggle]') || null}
       items={toc.map((item, index) => ({ id: String(index), label: item.label, depth: item.depth, active: item.href === currentHref }))}
       onSelect={item => { const entry = toc[Number(item.id)]; if (entry) display(entry.href); }}/></div>

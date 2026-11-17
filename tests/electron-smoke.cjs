@@ -120,13 +120,13 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   assert.equal(await page.title(), '左人笔记 · 阅读与思考');
   assert.equal(await page.locator('.window-controls button').count(), 3);
   const windowControlSize = await page.getByRole('button', { name: '最小化窗口' }).evaluate(element => {
-    const bounds = element.getBoundingClientRect(), bar = element.closest('.topbar');
-    return { width: bounds.width, height: bounds.height, gap: bar.getBoundingClientRect().bottom - bounds.bottom,
-      border: parseFloat(getComputedStyle(bar).borderBottomWidth), pixel: 1 / window.devicePixelRatio };
+    const bounds = element.getBoundingClientRect(), controls = element.closest('.window-controls').getBoundingClientRect(), bar = element.closest('.topbar').getBoundingClientRect();
+    return { width: bounds.width, height: bounds.height, controlsHeight: controls.height, inside: controls.top >= bar.top && controls.bottom <= bar.bottom, pixel: 1 / window.devicePixelRatio };
   });
-  assert.ok(Math.abs(windowControlSize.width - 44) <= windowControlSize.pixel);
-  assert.ok(Math.abs(windowControlSize.height - 47) <= windowControlSize.pixel);
-  assert.ok(windowControlSize.gap >= windowControlSize.border - 0.01, 'window controls must leave the bottom separator unobstructed');
+  assert.ok(Math.abs(windowControlSize.width - 30) <= windowControlSize.pixel);
+  assert.ok(Math.abs(windowControlSize.height - 30) <= windowControlSize.pixel);
+  assert.ok(Math.abs(windowControlSize.controlsHeight - 38) <= windowControlSize.pixel);
+  assert.equal(windowControlSize.inside, true, 'window controls capsule fits cleanly inside the floating topbar');
   await page.getByRole('button', { name: '还原窗口' }).waitFor(); // Startup is maximized.
   await page.getByRole('button', { name: '还原窗口' }).click();
   await page.getByRole('button', { name: '最大化窗口' }).waitFor();
@@ -175,7 +175,7 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   await page.locator('.file-row').filter({ hasText: '研究笔记.md' }).click({ button: 'right' });
   const contextMenu = page.getByRole('menu');
   await contextMenu.waitFor();
-  assert.equal(await contextMenu.getByRole('menuitem').count(), 5);
+  assert.equal(await contextMenu.getByRole('menuitem').count(), 6);
   await contextMenu.getByRole('menuitem', { name: '在新标签页中打开' }).click();
   await page.getByRole('button', { name: '关闭 现场笔记.md' }).click();
   const wysiwyg = page.locator('.markdown-source-editor .cm-content');
@@ -198,7 +198,7 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   await page.locator('.sidebar-toggle').click();
   await page.locator('.sidebar').waitFor({ state: 'detached' });
   const mainWithoutSidebar = await page.locator('.main').boundingBox(); assert.ok(mainWithoutSidebar);
-  assert.ok(mainWithoutSidebar.width >= mainWithSidebar.width + 240, `main area should use released sidebar width: ${JSON.stringify({ mainWithSidebar, mainWithoutSidebar })}`);
+  assert.ok(mainWithoutSidebar.width >= mainWithSidebar.width + 200, `main area should use released sidebar width: ${JSON.stringify({ mainWithSidebar, mainWithoutSidebar })}`);
   assert.ok(mainWithoutSidebar.x < mainWithSidebar.x, `main area should move to the left edge: ${JSON.stringify({ mainWithSidebar, mainWithoutSidebar })}`);
   await page.screenshot({ path: path.join(outputs, '照页-资料栏收起.png'), fullPage: true });
   await page.getByRole('button', { name: '展开资料栏', exact: true }).click();
@@ -223,7 +223,7 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   await page.getByRole('button', { name: '设置', exact: true }).click();
   assert.equal(await page.getByRole('button', { name: '资料栏 已展开', exact: true }).count(), 0, 'sidebar control lives in the topbar, not duplicated in settings');
   await page.getByRole('button', { name: /全屏阅读.*进入/ }).waitFor();
-  await page.getByRole('button', { name: '深色', exact: true }).click();
+  await page.getByRole('button', { name: '深墨夜读', exact: true }).click();
   assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'constructivist-dark');
   assert.equal(await page.evaluate(() => localStorage.getItem('zhaoye-theme')), 'constructivist-dark');
   await page.waitForTimeout(220);
@@ -236,11 +236,11 @@ test('production UI opens original files, autosaves, searches, annotates and ret
     text: getComputedStyle(document.querySelector('.markdown-source-editor .cm-content')).color,
     themeButton: getComputedStyle(document.querySelector('.theme-options button')).backgroundColor,
   }));
-  assert.equal(darkAppearance.text, 'rgb(236, 233, 224)');
-  assert.equal(darkAppearance.noteContent, 'rgb(0, 0, 0)');
+  assert.equal(darkAppearance.text, 'rgb(234, 230, 221)');
+  assert.equal(darkAppearance.noteContent, 'rgb(27, 28, 32)');
   await page.screenshot({ path: path.join(outputs, '照页-黑暗模式.png'), fullPage: true });
   assert.equal(await page.getByRole('button', { name: '跟随系统', exact: true }).count(), 1);
-  await page.getByRole('button', { name: '浅色', exact: true }).click();
+  await page.getByRole('button', { name: '极简纯白', exact: true }).click();
   assert.equal(await page.evaluate(() => localStorage.getItem('zhaoye-theme')), 'constructivist');
   assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'constructivist');
   const readingSize = page.getByRole('slider', { name: '正文字体大小' });
@@ -417,7 +417,8 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   assert.match(await epubFrame.locator('body').evaluate(element => getComputedStyle(element).fontFamily), /字体管家仿宋体 \(非商业使用\)/);
   const epubBeforeSidebar = await page.locator('.epub-viewer iframe').boundingBox(); assert.ok(epubBeforeSidebar);
   await page.getByRole('button', { name: '收起资料栏' }).first().click();
-  await page.waitForTimeout(320);
+  await page.locator('.sidebar').waitFor({ state: 'detached' });
+  await page.waitForFunction(before => (document.querySelector('.epub-viewer iframe')?.getBoundingClientRect().width || 0) > before + 100, epubBeforeSidebar.width, { timeout: 3000 });
   const epubAfterSidebar = await page.locator('.epub-viewer iframe').boundingBox(); assert.ok(epubAfterSidebar);
   assert.ok(epubAfterSidebar.width > epubBeforeSidebar.width + 100, `EPUB 阅读区域应跟随资料栏收起而变宽: before=${epubBeforeSidebar.width}, after=${epubAfterSidebar.width}`);
   const epubSplitLayout = await epubFrame.locator('body').evaluate(element => {

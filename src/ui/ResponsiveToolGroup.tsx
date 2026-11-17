@@ -10,7 +10,7 @@ export function ResponsiveToolGroup({ container, label, children }: { container:
   useEffect(() => {
     const root = container.current;
     if (!root) return;
-    const resize = () => { const narrow = root.clientWidth < 480; setCompact(narrow); if (!narrow) setOpen(false); };
+    const resize = () => { const narrow = root.clientWidth < 360; setCompact(narrow); if (!narrow) setOpen(false); };
     const observer = new ResizeObserver(resize); observer.observe(root); resize();
     return () => observer.disconnect();
   }, [container]);

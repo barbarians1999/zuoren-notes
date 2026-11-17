@@ -15,18 +15,18 @@ export const motionText = (style: CSSStyleDeclaration, name: string, fallback: s
 export function pulseControl(node: HTMLElement, kind: 'control' | 'task' = 'control', from?: string) {
   const app = node.closest<HTMLElement>('.app'), win = node.ownerDocument.defaultView;
   if (!node.isConnected || app?.dataset.motion === 'reduced' || win?.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return () => {};
-  let animation: Animation;
+  let animation: Animation | null | undefined;
   try {
     const style = getComputedStyle(node);
     animation = node.animate([
       { transform: from || (style.transform === 'none' || !style.transform ? 'scale(1)' : style.transform) },
-      { transform: kind === 'task' ? 'scale(1.16)' : 'scale(1.06)', offset: .35 },
-      { transform: kind === 'task' ? 'scale(.97)' : 'scale(.995)', offset: .72 },
+      { transform: kind === 'task' ? 'scale(1.16)' : 'scale(1.08)', offset: .36 },
+      { transform: kind === 'task' ? 'scale(.97)' : 'scale(.988)', offset: .74 },
       { transform: 'scale(1)' },
     ], { duration: motionNumber(style, kind === 'task' ? '--motion-task' : '--motion-feedback', kind === 'task' ? 240 : 180),
-      easing: motionText(style, '--motion-ease-enter', 'cubic-bezier(.2,.75,.3,1)') });
+      easing: motionText(style, '--motion-ease-enter', 'cubic-bezier(.22,1,.36,1)') });
   } catch { return () => {}; } // Feedback never vetoes an accepted operation.
-  return () => animation.cancel();
+  return () => animation?.cancel?.();
 }
 
 export function useControlFeedback(host: RefObject<HTMLElement | null>, reduced: boolean, page: string) {
@@ -89,10 +89,11 @@ export function useLayoutMotion(
     const direction = positions[layout] > positions[previous] ? 1 : -1;
     const style = getComputedStyle(node);
     const next = node.animate([{ transform: from || `translateX(${direction * 12}px)` }, { transform: 'translateX(0px)' }], {
-      duration: motionNumber(style, '--motion-mode', 180), easing: motionText(style, '--motion-ease-enter', 'cubic-bezier(.2,.75,.3,1)'),
+      duration: motionNumber(style, '--motion-mode', 180), easing: motionText(style, '--motion-ease-enter', 'cubic-bezier(.22,1,.36,1)'),
     });
+    if (!next) return;
     animation.current = next;
-    next.finished.then(() => { if (animation.current === next) animation.current = null; }).catch(() => {});
+    next.finished?.then(() => { if (animation.current === next) animation.current = null; }).catch(() => {});
   }, [host, layout, ready, reduced, requested]);
   useLayoutEffect(() => () => { animation.current?.cancel(); }, []);
 }
@@ -133,9 +134,9 @@ export function usePanelMotion(
       }
       node.inert = true;
     }
-    const enterEasing = motionText(style, '--motion-ease-enter', 'cubic-bezier(.2,.75,.3,1)');
-    const exitEasing = motionText(style, '--motion-ease-exit', 'cubic-bezier(.4,0,.6,1)');
-    const translate = (offset: string) => axis === 'scale' ? `scale(${offset === '0' ? '1' : '.975'})` : axis === 'opacity' ? 'none' : `translate${axis.toUpperCase()}(${offset})`;
+    const enterEasing = motionText(style, '--motion-ease-enter', 'cubic-bezier(.22,1,.36,1)');
+    const exitEasing = motionText(style, '--motion-ease-exit', 'cubic-bezier(.36,0,.58,1)');
+    const translate = (offset: string) => axis === 'scale' ? (offset === '0' ? 'translateY(0) scale(1)' : 'translateY(5px) scale(.972)') : axis === 'opacity' ? 'none' : `translate${axis.toUpperCase()}(${offset})`;
     const from = previous ? { transform: style.transform, opacity: style.opacity } :
       { transform: open ? translate(direction) : translate('0'), opacity: open ? 0 : 1 };
     previous?.cancel(); animation.current = null;
@@ -145,22 +146,23 @@ export function usePanelMotion(
       return;
     }
     initialized.current = true;
-    const frames = open ? axis === 'scale' ? [from, { transform: 'scale(1.008)', opacity: 1, offset: .72 }, { transform: 'scale(1)', opacity: 1 }] : [from, { transform: translate('0'), opacity: 1 }] :
+    const frames = open ? axis === 'scale' ? [from, { transform: 'translateY(-1px) scale(1.005)', opacity: 1, offset: .72 }, { transform: 'translateY(0) scale(1)', opacity: 1 }] : [from, { transform: translate('0'), opacity: 1 }] :
       [from, { opacity: from.opacity, offset: .35 }, { transform: translate(direction), opacity: 0 }];
     const duration = open
       ? motionNumber(style, durationVariables.enter || '--motion-panel', 200)
       : motionNumber(style, durationVariables.exit || '--motion-panel', 200);
-    let next: Animation;
+    let next: Animation | null | undefined;
     try { next = node.animate(frames, { duration, easing: open ? enterEasing : exitEasing, fill: 'both' }); }
     catch { if (!open) setPresent(false); return; }
+    if (!next) { if (!open) setPresent(false); return; }
     animation.current = next;
-    next.finished.then(() => {
+    next.finished?.then(() => {
       if (animation.current !== next) return;
       if (!open) {
         // Retain the invisible final frame until React actually removes the
         // panel. Cancelling here would briefly restore its visible base CSS.
         setPresent(false);
-      } else { animation.current = null; next.cancel(); }
+      } else { animation.current = null; next?.cancel?.(); }
     }).catch(() => {});
   }, [open, present, reduced, direction, axis, durationVariables.enter, durationVariables.exit, durationVariables.initial]);
   useLayoutEffect(() => () => { animation.current?.cancel(); }, []);
@@ -190,12 +192,15 @@ export function useTabMotion(host: HTMLElement | null, reduced: boolean) {
       lastTransform = transform;
       const style = getComputedStyle(host);
       if (active && active !== next && !reduced) animation = line.animate([{ transform: from }, { transform }], {
-        duration: motionNumber(style, '--motion-feedback', 140), easing: motionText(style, '--motion-ease-enter', 'cubic-bezier(.2,.75,.3,1)'),
+        duration: motionNumber(style, '--motion-feedback', 140), easing: motionText(style, '--motion-ease-enter', 'cubic-bezier(.22,1,.36,1)'),
       });
       if (active !== next) { if (active) resize.unobserve(active); resize.observe(next); active = next; }
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(update); };
-    const mutations = new MutationObserver(schedule);
+    const mutations = new MutationObserver(() => {
+      if (frame) { cancelAnimationFrame(frame); frame = 0; }
+      update();
+    });
     mutations.observe(host, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'data-view-id'] });
     resize.observe(host); host.addEventListener('scroll', schedule); update();
     return () => { cancelAnimationFrame(frame); animation?.cancel(); mutations.disconnect(); resize.disconnect(); host.removeEventListener('scroll', schedule); line.remove(); delete host.dataset.tabMotion; };

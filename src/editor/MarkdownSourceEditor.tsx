@@ -36,6 +36,7 @@ export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, onMe
   const messageCallback = useRef(onMessage); messageCallback.current = onMessage;
   const previewConfig = useRef(new Compartment());
   const extensionsRef = useRef<Extension[]>([]);
+  const measureListSpaceRef = useRef<((view: EditorView) => void) | null>(null);
   const shared = useRef({ document: sharedDocument, tab }); shared.current = { document: sharedDocument, tab };
   useEffect(() => {
     if (!root.current) return;
@@ -139,7 +140,17 @@ export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, onMe
       shared.current.document.dispatch(view, transactions);
     } });
     attachMarkdownMotion(view);
+    measureListSpaceRef.current = measureListSpace;
     measureListSpace(view);
+    const syncScrollBeforeFocus = () => {
+      // Programmatic scrolls (e.g. scrollIntoViewIfNeeded) can move scrollTop to 0
+      // before Chromium fires the async scroll event, leaving CM's lastScrollTop
+      // stale so focus() restores the previous scroll offset mid-click.
+      if (!view.hasFocus && (!view.scrollDOM.scrollTop || !view.scrollDOM.scrollLeft)) {
+        view.scrollDOM.dispatchEvent(new Event('scroll'));
+      }
+    };
+    view.scrollDOM.addEventListener('mousedown', syncScrollBeforeFocus, true);
     let measureFrame = 0, disposed = false;
     const scheduleListSpace = () => {
       if (disposed || measureFrame) return;
@@ -151,7 +162,7 @@ export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, onMe
     document.fonts.addEventListener('loadingdone', scheduleListSpace);
     void document.fonts.ready.then(scheduleListSpace);
     viewRef.current = view; callback.current(view);
-    return () => { disposed = true; cancelAnimationFrame(measureFrame); fontObserver.disconnect(); document.fonts.removeEventListener('loadingdone', scheduleListSpace); callback.current(null); viewRef.current = null; detachMarkdownMotion(view); view.destroy(); };
+    return () => { disposed = true; cancelAnimationFrame(measureFrame); fontObserver.disconnect(); document.fonts.removeEventListener('loadingdone', scheduleListSpace); view.scrollDOM.removeEventListener('mousedown', syncScrollBeforeFocus, true); measureListSpaceRef.current = null; callback.current(null); viewRef.current = null; detachMarkdownMotion(view); view.destroy(); };
   }, []);
   useEffect(() => {
     const view = viewRef.current;
@@ -161,6 +172,7 @@ export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, onMe
     detachMarkdownMotion(view);
     view.setState(EditorState.create({ doc: sharedDocument.state.doc, selection: tab.selection, extensions: extensionsRef.current }));
     attachMarkdownMotion(view);
+    measureListSpaceRef.current?.(view);
     return sharedDocument.attach(view, tab);
   }, [sharedDocument, tab]);
   useEffect(() => {

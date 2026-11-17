@@ -151,7 +151,7 @@ test('per-pane tabs keep history, shared saves, focus, drag, blanks and restart 
     await application.evaluate(()=>{globalThis.__tabsGate.fail=true;});
     await editor(right()).click(); await page.keyboard.press('Control+Home'); await page.keyboard.insertText('CRASH-DUAL-');
     const settingsFile=path.join(workspace.userData,'settings.json');
-    await page.waitForTimeout(600);
+    await waitForFile(settingsFile,text=>{try{const s=JSON.parse(text);return s.session?.noteGroups?.secondary?.tabs?.some(t=>t.path===b);}catch{return false;}});
     const settings=JSON.parse(await fs.readFile(settingsFile,'utf8'));
     const identity=settings.session.noteDocuments.find(doc=>doc.path===b);assert.ok(identity);
     const recoveryFile=path.join(workspace.fixture,'.reader','recovery',identity.recoveryId+'.json');

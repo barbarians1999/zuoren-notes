@@ -52,14 +52,15 @@ test('fullscreen chrome reveals without resizing readers and preserves settings,
       return {
         topbarHeight: getComputedStyle(topbar).height,
         expectedTopbarHeight: styles.getPropertyValue('--chrome-topbar-height').trim(),
+        topbarBorderBottom: parseFloat(getComputedStyle(topbar).borderBottomWidth),
         noteRowHeight: getComputedStyle(noteRow).height,
         expectedNoteRowHeight: styles.getPropertyValue('--chrome-note-row-height').trim(),
       };
     });
     assert.equal(chromeGeometry.topbarHeight, chromeGeometry.expectedTopbarHeight, 'topbar height comes from the shared chrome token');
-    assert.equal(chromeGeometry.noteRowHeight, chromeGeometry.expectedNoteRowHeight, 'note row height comes from the shared chrome token');
+    assert.ok(parseFloat(chromeGeometry.noteRowHeight) <= parseFloat(chromeGeometry.topbarHeight), 'note row fits inside the single shared topbar');
     await page.keyboard.press('Control+End'); await page.keyboard.insertText('UNDO-MARKER');
-    for (const label of ['浅色', '深色']) {
+    for (const label of ['极简纯白', '深墨夜读']) {
       await page.getByRole('button', { name: '设置', exact: true }).click();
       const settings = page.locator('.settings-popover');
       assert.equal(await settings.getByText('资料栏', { exact: true }).count(), 0);
@@ -73,7 +74,7 @@ test('fullscreen chrome reveals without resizing readers and preserves settings,
         if (!el) return false;
         const css = getComputedStyle(el), swatch = document.createElement('span');
         swatch.style.color = 'var(--accent)'; el.append(swatch);
-        const ready = css.backgroundColor === 'rgba(0, 0, 0, 0)' && css.color === getComputedStyle(swatch).color;
+        const ready = css.color === getComputedStyle(swatch).color;
         swatch.remove(); return ready;
       });
       assert.equal(await page.locator('.workspace-mode-switch button.active').evaluate(el => {
@@ -88,7 +89,10 @@ test('fullscreen chrome reveals without resizing readers and preserves settings,
     await page.waitForFunction(() => document.querySelector('.app').dataset.fullscreen === 'true' && document.querySelector('.app').dataset.chromeVisible === 'false');
     // The hidden row is translated during exit. Its layout inset, rather
     // than an arbitrary in-flight visual position, must use the shared token.
-    assert.equal(await page.locator('.note-workspace-bar').evaluate(el => parseFloat(getComputedStyle(el).top)), parseFloat(chromeGeometry.expectedTopbarHeight), 'fullscreen note row starts directly below the shared topbar height');
+    assert.equal(await page.locator('.note-workspace-bar').evaluate(el => {
+      const box = el.getBoundingClientRect(), top = document.querySelector('.topbar').getBoundingClientRect();
+      return box.top >= top.top - 0.5 && box.bottom <= top.bottom + 0.5;
+    }), true, 'fullscreen note row stays unified inside the shared topbar');
     await screenshot('note-fullscreen-hidden');
     const editorBounds = await page.locator('.cm-editor').boundingBox();
     await show();

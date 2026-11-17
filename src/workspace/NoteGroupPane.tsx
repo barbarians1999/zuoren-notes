@@ -21,10 +21,15 @@ export function NoteGroupPane({ workspace, group, findCommand, onJump, insertReg
   const host = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!tab || hidden || workspace.focusRequest !== tab.id) return;
-    const frame = requestAnimationFrame(() => {
-      if (!workspace.consumeFocus(tab.id)) return;
-      host.current?.querySelector<HTMLElement>(tab.mode === 'preview' ? '.markdown-preview' : '.cm-content')?.focus({ preventScroll: true });
-    });
+    let frame = 0;
+    const focusTarget = () => {
+      const target = host.current?.querySelector<HTMLElement>(tab.mode === 'preview' ? '.markdown-preview' : '.cm-content');
+      if (!target) return false;
+      if (!workspace.consumeFocus(tab.id)) return true;
+      target.focus({ preventScroll: true });
+      return true;
+    };
+    if (!focusTarget()) frame = requestAnimationFrame(() => { focusTarget(); });
     return () => cancelAnimationFrame(frame);
   }, [tab?.id, hidden, workspace, workspace.focusRequest]);
   useEffect(() => {

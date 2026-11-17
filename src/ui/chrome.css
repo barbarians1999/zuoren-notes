@@ -1,12 +1,12 @@
-/* Shared controls retain the existing square, red/ink design language. */
-.app { --control-height: 32px; --control-compact: 28px; --control-radius: 2px; --control-gap: 4px; }
+/* Shared controls use refined rounded geometry with consistent hit targets. */
+.app { --control-height: 32px; --control-compact: 28px; --control-radius: 9px; --control-gap: 4px; }
 /* Preserve mounted editors and their measurements until session restoration settles. */
-.app[data-session-ready="false"] > :is(.topbar, .body) { visibility: hidden; }
-.app :is(.workspace-icon-action, .workspace-mode-switch button, .pdf-navigation button, .epub-header-actions button, .epub-navigation > button) {
-  min-height: var(--control-height); border-radius: var(--control-radius); gap: var(--control-gap);
-  transition: color var(--motion-feedback) var(--motion-ease-enter), background-color 0s, transform 0s;
+.app[data-session-ready="false"] > :is(.left-rail, .app-shell-right) { visibility: hidden; }
+.app :is(.workspace-icon-action, .workspace-mode-switch button, .pdf-navigation button, .pdf-top-actions button, .epub-header-actions button, .epub-navigation > button) {
+  min-height: var(--control-height); border-radius: 10px; gap: var(--control-gap);
+  transition: color var(--motion-feedback) var(--motion-ease-enter), background-color var(--motion-feedback) var(--motion-ease-enter), transform var(--motion-feedback) var(--motion-ease-enter);
 }
-.app :is(.workspace-icon-action, .workspace-mode-switch button, .pdf-navigation button, .epub-header-actions button, .epub-navigation > button):not(:disabled):hover {
+.app :is(.workspace-icon-action, .workspace-mode-switch button, .pdf-navigation button, .pdf-top-actions button, .epub-header-actions button, .epub-navigation > button):not(:disabled):hover {
   color: var(--hover-text); background: transparent;
 }
 .app[data-motion="full"] :is(.workspace-icon-action, .workspace-mode-switch button, .pdf-navigation button, .epub-header-actions button, .epub-navigation > button):not(:disabled):is(:hover, :active) { transform: none; }
@@ -82,25 +82,42 @@
 }
 .app .file-context-menu { transform-origin: top left; }
 .app .settings-popover { transform-origin: top right; }
+.app .left-rail .settings-popover { transform-origin: bottom left; }
 
 .app .panes { position: relative; }
-.app .splitter { width: 8px; min-width: 8px; background: var(--surface); touch-action: none; z-index: 20; }
-.app .splitter::after { inset: 0 auto 0 50%; width: 1px; background: transparent; }
-.app .splitter:is(:hover, :focus-visible)::after, .app .panes[data-pane-dragging] .splitter::after { background: var(--accent); }
+.app .splitter { width: 12px; min-width: 12px; background: transparent; touch-action: none; z-index: 20; }
+.app .splitter::after {
+  top: 50%; bottom: auto; left: 50%; right: auto;
+  width: 3px; height: 32px; border-radius: 999px;
+  transform: translate(-50%, -50%);
+  background: color-mix(in srgb, var(--text-faint) 28%, transparent);
+  transition: background-color 150ms ease, height 150ms ease;
+}
+.app .splitter:is(:hover, :focus-visible)::after, .app .panes[data-pane-dragging] .splitter::after {
+  height: 44px;
+  background: var(--accent);
+}
 .app .splitter:focus-visible { outline: none; }
-.app .splitter:focus-visible::after { width: 2px; }
-.app .splitter:is(:hover, :active) { background: var(--surface); }
+.app .splitter:focus-visible::after { width: 3px; }
+.app .splitter:is(:hover, :active) { background: transparent; }
 .splitter-shield { position: absolute; inset: 0; z-index: 19; pointer-events: auto; touch-action: none; cursor: col-resize; }
-.splitter-preview { position: absolute; inset: 0 auto 0 calc(var(--split-preview, 50%) + 4px); width: 1px; z-index: 21; background: var(--accent); pointer-events: none; }
+.splitter-preview { position: absolute; top: 8px; bottom: 8px; left: calc(var(--split-preview, 50%) + 6px); width: 2px; border-radius: 999px; z-index: 21; background: var(--accent); pointer-events: none; }
 
 /* Keep reader and note controls on one row in the split comparison layout. */
 .app .note-workspace-bar.reader-note-row .reader-header-slot > .pane-toolbar {
-  height: 39px;
+  height: 100%;
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
   padding-inline: 8px;
+  border: 0;
+  background: transparent;
+}
+.app .note-workspace-bar .reader-header-slot > .pane-toolbar {
+  height: 100%;
+  width: 100%;
+  min-width: 0;
   border: 0;
   background: transparent;
 }
@@ -115,9 +132,8 @@
 .app .splitter:focus-visible::after { background: var(--accent); }
 .app .panes[data-pane-dragging] .splitter::after { width: 1px; }
 
-/* Portaled PDF controls belong to the note row when comparing PDF and notes.
-   Keep fullscreen chrome motion on that parent row only. */
-.app[data-fullscreen="true"] .note-workspace-bar.reader-note-row .reader-header-slot > .pdf-navigation {
+/* Portaled PDF controls belong to the topbar row when reading or comparing. */
+.app[data-fullscreen="true"] .note-workspace-bar .reader-header-slot > .pdf-navigation {
   position: static;
   inset: auto;
   z-index: auto;
@@ -126,9 +142,11 @@
 }
 
 @media (forced-colors: active) {
-  .app > .body > .sidebar { border-right: 1px solid CanvasText; }
-  .app > .topbar, .app .pane-toolbar, .app .note-workspace-bar { border-bottom: 1px solid CanvasText; }
-  .app .note-foot { border-top: 1px solid CanvasText; }
+  .app .left-rail { border-right: 1px solid CanvasText; }
+  .app .body > .sidebar { border-right: 0; }
+  .app .body > .sidebar::after { background: CanvasText; }
+  .app .topbar, .app .pane-toolbar, .app .note-workspace-bar { border-bottom: 1px solid CanvasText; }
+  .app .note-foot, .app .pdf-status-pill { border: 1px solid CanvasText; }
   .app .pane-toolbar, .app .note-workspace-bar, .app .note-foot { border-color: CanvasText; }
   .app .note-foot .word-stats > span + span::before { background: CanvasText; }
   .app .splitter::after { background: CanvasText; }

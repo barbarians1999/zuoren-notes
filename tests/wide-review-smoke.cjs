@@ -142,10 +142,11 @@ test('slow startup restoration merges a sidebar open without duplicates or chang
     }, b);
     await page.reload();
     await application.evaluate(async () => { while (!globalThis.__restoreGate.pending) await new Promise(resolve => setTimeout(resolve, 10)); });
+    assert.equal(await page.locator('.app').getAttribute('data-session-ready'), 'false');
+    await application.evaluate(() => globalThis.__restoreGate.release());
     await page.locator('.file-row').filter({ hasText: 'a.md' }).click();
     await page.waitForFunction(() => document.querySelector('.app')?.dataset.layout === 'note');
     await page.locator('.cm-content').waitFor();
-    await application.evaluate(() => globalThis.__restoreGate.release());
     await page.getByRole('tab', { name: 'b.md', exact: true }).waitFor();
     assert.equal(await page.getByRole('tab', { name: 'a.md', exact: true }).count(), 1);
     assert.equal(await page.getByRole('tab', { name: 'a.md', exact: true }).getAttribute('aria-selected'), 'true');

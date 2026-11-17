@@ -67,7 +67,7 @@ test('prose selection hugs text and real formatting shortcuts toggle at the care
       assert.equal(await shortcutLine.innerText(), 'shortcutword', key + ' all edits undo');
     }
     await page.getByRole('button', { name: '设置', exact: true }).click();
-    await page.getByRole('button', { name: '深色', exact: true }).click();
+    await page.getByRole('button', { name: '深墨夜读', exact: true }).click();
     await page.keyboard.press('Escape');
     await shortcutLine.click(); await page.keyboard.press('Home'); await page.keyboard.press('Shift+End');
     await page.locator('.cm-proseSelectionBackground').first().waitFor();

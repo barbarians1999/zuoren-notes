@@ -12,7 +12,7 @@ const { createSmokeWorkspace, cleanupSmokeWorkspace } = require('./smokeWorkspac
 const { waitForFile } = require('./waitForFile.cjs');
 const { assertGlyphActions } = require('./chromeAssertions.cjs');
 const appRoot = path.resolve(__dirname, '..');
-const labels = { constructivist: '浅色', 'constructivist-paper': '纸页红', 'constructivist-dark': '深色' };
+const labels = { constructivist: '极简纯白', 'constructivist-paper': '温润宣纸', 'constructivist-dark': '深墨夜读' };
 const custom = Object.keys(THEMES);
 let workspace, application;
 const rgb = hex => 'rgb(' + hex.slice(1).match(/../g).map(value => Number.parseInt(value, 16)).join(', ') + ')';
@@ -124,58 +124,54 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
     await chooseTheme(page, name);
     assert.equal(await page.locator('.theme-options button').count(), 4);
     if (name === 'constructivist-dark') {
-      for (const selector of ['.topbar', '.sidebar', '.note-workspace-bar', '.note-content', '.cm-editor']) {
-        assert.equal(await page.locator(selector).first().evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(0, 0, 0)', selector);
-      }
+      assert.equal(await page.locator('.topbar').first().evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)');
+      assert.equal(await page.locator('.sidebar').first().evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)');
+      assert.equal(await page.locator('.cm-editor').first().evaluate(el => getComputedStyle(el).backgroundColor), rgb(theme.colors.surface));
     }
     const colors = await page.evaluate(() => {
       const css = selector => getComputedStyle(document.querySelector(selector));
       return { background: css('.cm-editor').backgroundColor, text: css('.cm-content').color,
-        settings: css('.settings-popover').backgroundColor, sidebar: css('.sidebar').backgroundColor,
+        settingsBlur: css('.settings-popover').backdropFilter, sidebar: css('.sidebar').backgroundColor,
         scheme: getComputedStyle(document.documentElement).colorScheme, sameEditor: window.__themeEditor === document.querySelector('.cm-content') };
     });
-    assert.deepEqual(colors, { background: rgb(theme.colors.surface), text: rgb(theme.colors.text),
-      settings: rgb(theme.colors.surface), sidebar: rgb(theme.colors.sidebar), scheme: theme.colorScheme, sameEditor: true }, name);
+    assert.equal(colors.background, rgb(theme.colors.surface), name);
+    assert.equal(colors.text, rgb(theme.colors.text), name);
+    assert.match(colors.settingsBlur, /blur\(/, name);
+    assert.equal(colors.sidebar, 'rgba(0, 0, 0, 0)', name);
+    assert.equal(colors.scheme, theme.colorScheme, name);
+    assert.equal(colors.sameEditor, true, name);
     assert.deepEqual(await editor.evaluate(element => {
       const css = getComputedStyle(element); return { font: css.fontFamily, size: css.fontSize, leading: css.lineHeight, width: css.maxWidth };
     }), originalMetrics, 'theme does not alter document typography');
-    // Preserve the original selected mode surface while its fill stays static.
-    const expectedControls = { background: rgb(theme.colors['mode-bg']), color: rgb(theme.colors['on-mode']), radius: '2px', backgroundDuration: '0s' };
+    // Preserve the full-pill selected mode tab without animating its background color.
+    const expectedControls = { color: 'rgb(255, 255, 255)', radius: '999px', backgroundDuration: '0s' };
     await page.waitForFunction(expected => {
       const css = getComputedStyle(document.querySelector('.layout-tabs button.active'));
-      return css.backgroundColor === expected.background && css.color === expected.color;
+      return css.color === expected.color && css.backgroundImage !== 'none';
     }, expectedControls);
     const controls = await page.locator('.layout-tabs button.active').evaluate(button => {
       const css = getComputedStyle(button), properties = css.transitionProperty.split(',').map(value => value.trim()), durations = css.transitionDuration.split(',').map(value => value.trim());
-      return { background: css.backgroundColor, color: css.color, radius: css.borderTopLeftRadius,
+      return { color: css.color, radius: css.borderTopLeftRadius,
         backgroundDuration: durations[properties.indexOf('background-color')] };
     });
-    assert.deepEqual(controls, expectedControls, 'original selected mode surface stays in place without animating its block');
+    assert.deepEqual(controls, expectedControls, 'selected mode pill uses white text on coral gradient without color transition');
     await page.locator('.settings-menu > .quiet-action').hover();
-    assert.equal(await page.locator('.settings-menu > .quiet-action').evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)');
     assert.equal(await page.locator('.settings-menu > .quiet-action').evaluate(el => getComputedStyle(el).transform), 'none');
-    const settingsMotion = await page.locator('.settings-menu > .quiet-action').evaluate(el => ({
-      icon: getComputedStyle(el.querySelector('svg')).transform, label: getComputedStyle(el.querySelector('.action-label')).transform,
-    }));
-    assert.notEqual(settingsMotion.icon, 'none'); assert.notEqual(settingsMotion.label, 'none', 'quiet controls animate their contents only');
     await page.mouse.move(1, 1);
     await page.waitForFunction(expected => {
       const css = selector => getComputedStyle(document.querySelector(selector));
-      return css('.settings-menu > .quiet-action').color === expected.ink
-        && css('.window-controls > button').color === expected.ink
-        && css('.file-row.selected').backgroundColor === expected.selected;
-    }, { ink: rgb(theme.colors['topbar-text']), selected: rgb(theme.colors['selected-row-bg']) });
+      return css('.settings-menu > .quiet-action').color !== expected.accent
+        && css('.file-row.selected').backgroundColor !== 'rgba(0, 0, 0, 0)';
+    }, { accent: rgb(theme.colors.accent) });
     const visualRoles = await page.evaluate(() => {
       const style = selector => getComputedStyle(document.querySelector(selector));
       const md = style('.file-icon.md'), epub = style('.file-icon.epub');
       return {
         topbar: style('.topbar').backgroundColor,
-        topbarAction: style('.settings-menu > .quiet-action').color,
-        windowControl: style('.window-controls > button').color,
-        selectedFile: style('.file-row.selected').backgroundColor,
-        workspaceHead: style('.markdown-workspace-head').backgroundColor,
-        newNoteBackground: style('.top-actions .new-note-action').backgroundColor,
-        newNoteColor: style('.top-actions .new-note-action').color,
+        selectedFileBorder: style('.file-row.selected').borderTopWidth,
+        selectedFileShadow: style('.file-row.selected').boxShadow,
+        newNoteBackground: style('.left-rail .new-note-action').backgroundImage,
+        newNoteColor: style('.left-rail .new-note-action').color,
         markdownIcon: { background: md.backgroundColor, color: md.color },
         epubIcon: { background: epub.backgroundColor, color: epub.color },
         headingDecoration: style('.cm-md-heading').textDecorationLine,
@@ -183,16 +179,16 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
         codeRadius: style('.cm-md-code-preview').borderTopLeftRadius,
       };
     });
-    assert.deepEqual(visualRoles, {
-      topbar: rgb(theme.colors['topbar-bg']),
-      topbarAction: rgb(theme.colors['topbar-text']),
-      windowControl: rgb(theme.colors['topbar-text']),
-      selectedFile: rgb(theme.colors['selected-row-bg']),
-      workspaceHead: rgb(theme.colors.chrome), newNoteBackground: rgb(theme.colors['action-bg']), newNoteColor: rgb(theme.colors['on-action']),
-      markdownIcon: { background: 'rgba(0, 0, 0, 0)', color: rgb(theme.colors.accent) },
-      epubIcon: { background: rgb(theme.colors['epub-icon-bg']), color: rgb(theme.colors['epub-icon-text']) },
-      headingDecoration: 'none', quoteBackground: 'rgba(0, 0, 0, 0)', codeRadius: '2px',
-    }, 'theme chrome follows the reference palette without tinting Markdown badges');
+    assert.equal(visualRoles.topbar, 'rgba(0, 0, 0, 0)');
+    assert.equal(visualRoles.selectedFileBorder, '1px');
+    assert.notEqual(visualRoles.selectedFileShadow, 'none');
+    assert.notEqual(visualRoles.newNoteBackground, 'none');
+    assert.equal(visualRoles.newNoteColor, 'rgb(255, 255, 255)');
+    assert.equal(visualRoles.markdownIcon.color, rgb(theme.colors.accent));
+    assert.deepEqual(visualRoles.epubIcon, { background: rgb(theme.colors['epub-icon-bg']), color: rgb(theme.colors['epub-icon-text']) });
+    assert.equal(visualRoles.headingDecoration, 'none');
+    assert.equal(visualRoles.quoteBackground, 'rgba(0, 0, 0, 0)');
+    assert.equal(visualRoles.codeRadius, '6px');
     const bounds = await page.locator('.settings-popover').boundingBox();
     const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
     assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= viewport.width && bounds.y + bounds.height <= viewport.height, 'settings remain in view');
@@ -208,22 +204,23 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
       }
     }
     await closeSettings(page);
-    await assertGlyphActions(page, page.locator('.note-controls-slot .workspace-mode-switch button, .note-controls-slot .workspace-icon-action'));
+    await assertGlyphActions(page, page.locator('.note-controls-slot .workspace-icon-action'));
     await page.locator('.file-row').filter({ hasText: 'theme.md' }).click({ button: 'right' });
     const menu = page.getByRole('menu'); await menu.waitFor();
     assert.equal(await menu.evaluate(element => getComputedStyle(element).backgroundColor), rgb(theme.colors.surface));
     assert.equal(await menu.getByRole('menuitem').first().evaluate(element => getComputedStyle(element).color), rgb(theme.colors.text));
     if (custom.includes(name)) {
-      assert.deepEqual(await menu.evaluate(element => ({ radius: getComputedStyle(element).borderTopLeftRadius, shadow: getComputedStyle(element).boxShadow })),
-        { radius: '2px', shadow: 'none' });
+      assert.equal(await menu.evaluate(element => getComputedStyle(element).borderTopLeftRadius), '9px');
       await screenshot(page, name + '-menu');
       if (name === 'constructivist-dark') {
         // Force a fresh pointer entry after screenshots/native window resizing;
         // hovering the same coordinates can retain a stale Chromium hover path.
         await page.bringToFront(); await page.mouse.move(1, 1);
         const item = menu.getByRole('menuitem').first(); await item.hover();
-        await page.waitForFunction(color => getComputedStyle(document.querySelector('[role="menuitem"]')).color === color, rgb(theme.colors['hover-text']));
-        assert.equal(await item.evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(0, 0, 0)');
+        await page.waitForFunction(({ color, bg }) => {
+          const css = getComputedStyle(document.querySelector('[role="menuitem"]'));
+          return css.color === color && css.backgroundColor === bg;
+        }, { color: rgb(theme.colors['hover-text']), bg: rgb(theme.colors.hover) });
         assert.notEqual(await item.evaluate(el => getComputedStyle(el).boxShadow), 'none', 'night hover has an explicit marker');
       }
     }
@@ -268,9 +265,9 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
     });
     assert.equal(pdf.width, beforePdf.width); assert.equal(pdf.height, beforePdf.height);
     assert.deepEqual(pdf.paper, name === 'constructivist-dark' ? [0, 0, 0, 255] : [255, 255, 255, 255]);
-    assert.equal(await page.locator('[data-pdf-page="2"] .canvas-holder').evaluate(element => getComputedStyle(element).backgroundColor), name === 'constructivist-dark' ? 'rgb(0, 0, 0)' : 'rgb(255, 255, 255)');
-    assert.equal(await page.locator('.pdf-navigation').evaluate(bar => bar.getBoundingClientRect().height), 40);
-    await assertGlyphActions(page, page.locator('.pdf-navigation button'));
+    assert.equal(await page.locator('[data-pdf-page="2"] .canvas-holder').evaluate(element => getComputedStyle(element).backgroundColor), name === 'constructivist-dark' ? 'rgb(27, 28, 32)' : 'rgb(255, 255, 255)');
+    assert.equal(await page.locator('.pdf-navigation').evaluate(bar => bar.getBoundingClientRect().height), 44);
+    await assertGlyphActions(page, page.locator('.pdf-page-navigation button, .zoom-control button, .pdf-top-actions button'));
     await screenshot(page, name + '-pdf');
     await resizeWindow(page, 960, 640);
     await screenshot(page, name + '-pdf-narrow');
@@ -316,7 +313,7 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
     }), true, 'EPUB headings load the same bundled serif as Markdown, without changing the body font');
     const chrome = await page.locator('.epub-viewer').evaluate(viewer => ({ shadow: getComputedStyle(viewer).boxShadow,
       radius: getComputedStyle(viewer).borderTopLeftRadius, toolbar: document.querySelector('.epub-navigation').getBoundingClientRect().height }));
-    assert.deepEqual(chrome, { shadow: 'none', radius: '0px', toolbar: 39 });
+    assert.deepEqual(chrome, { shadow: 'none', radius: '0px', toolbar: 38 });
     assert.equal(await page.locator('.epub-reader-shell').evaluate(shell => {
       const css = getComputedStyle(shell), viewer = shell.querySelector('.epub-viewer'), inner = getComputedStyle(viewer);
       return css.padding === '0px' && css.backgroundColor === inner.backgroundColor && inner.borderTopWidth === '0px';
@@ -341,7 +338,7 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
     const doc = frame.contentDocument;
     return doc?.body?.textContent?.includes('第一章 阅读与主题')
       && frame.contentWindow.getComputedStyle(doc.body).backgroundColor === color
-      && frame.contentWindow.getComputedStyle(doc.querySelector('h1')).color === 'rgb(23, 23, 23)';
+      && frame.contentWindow.getComputedStyle(doc.querySelector('h1')).color === 'rgb(29, 29, 31)';
   }), rgb(THEMES.constructivist.colors.surface));
   await resizeWindow(page, 960, 640);
   await openSettings(page);
@@ -363,7 +360,7 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
   await page.reload(); await page.locator('.topbar').waitFor(); await openSettings(page);
   assert.equal(await page.evaluate(() => localStorage.getItem('zhaoye-theme')), 'system', 'system remains a preference across restart');
   await page.emulateMedia({ colorScheme: 'light' });
-  await page.waitForFunction(() => document.documentElement.dataset.theme === 'constructivist-paper');
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'constructivist');
   for (const name of custom) {
     await chooseTheme(page, name); await closeSettings(page);
     await page.reload(); await page.locator('.topbar').waitFor(); await openSettings(page);
@@ -371,23 +368,23 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
     assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), name);
   }
   await stopApplication(); page = await launchApplication(); await openSettings(page);
-  assert.equal(await page.getByRole('button', { name: '深色', exact: true }).getAttribute('aria-pressed'), 'true', 'cold start restores theme');
+  assert.equal(await page.getByRole('button', { name: '深墨夜读', exact: true }).getAttribute('aria-pressed'), 'true', 'cold start restores theme');
   await page.evaluate(() => localStorage.setItem('zhaoye-theme', 'invalid-theme'));
   await page.emulateMedia({ colorScheme: 'light' }); await page.reload(); await page.locator('.topbar').waitFor(); await openSettings(page);
-  assert.equal(await page.getByRole('button', { name: '浅色', exact: true }).getAttribute('aria-pressed'), 'true');
+  assert.equal(await page.getByRole('button', { name: '极简纯白', exact: true }).getAttribute('aria-pressed'), 'true');
   assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'constructivist');
 
   for (const [saved, scheme, expected] of [
     ['light', 'dark', 'constructivist'], ['blue-white', 'dark', 'constructivist'], ['red-white', 'dark', 'constructivist'],
     ['dark', 'light', 'constructivist-dark'], ['red-black', 'light', 'constructivist-dark'],
-    ['system', 'dark', 'constructivist-dark'], ['system', 'light', 'constructivist-paper'],
+    ['system', 'dark', 'constructivist-dark'], ['system', 'light', 'constructivist'],
     ['constructivist-paper', 'dark', 'constructivist-paper'],
   ]) {
     await page.evaluate(value => localStorage.setItem('zhaoye-theme', value), saved);
     await page.emulateMedia({ colorScheme: scheme }); await page.reload(); await page.locator('.topbar').waitFor();
     await page.waitForFunction(({ name, saved }) => document.documentElement.dataset.theme === name && localStorage.getItem('zhaoye-theme') === (saved === 'system' ? 'system' : name), { name: expected, saved });
     await page.emulateMedia({ colorScheme: scheme === 'dark' ? 'light' : 'dark' });
-    const switched = saved === 'system' ? (scheme === 'dark' ? 'constructivist-paper' : 'constructivist-dark') : expected;
+    const switched = saved === 'system' ? (scheme === 'dark' ? 'constructivist' : 'constructivist-dark') : expected;
     await page.waitForFunction(name => document.documentElement.dataset.theme === name, switched);
     assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), switched, saved + ' respects the preference');
   }
@@ -400,7 +397,7 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
       return window.__themeSetItem.call(this, key, value);
     };
   });
-  await page.getByRole('button', { name: '深色', exact: true }).click();
+  await page.getByRole('button', { name: '深墨夜读', exact: true }).click();
   await page.getByText('主题已更改，但无法保存；下次启动时可能恢复原设置。', { exact: true }).waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'constructivist-dark');
   await page.evaluate(() => { Storage.prototype.setItem = window.__themeSetItem; });
@@ -412,6 +409,6 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
     };
   });
   await page.reload(); await page.locator('.topbar').waitFor(); await openSettings(page);
-  assert.equal(await page.getByRole('button', { name: '浅色', exact: true }).getAttribute('aria-pressed'), 'true');
+  assert.equal(await page.getByRole('button', { name: '极简纯白', exact: true }).getAttribute('aria-pressed'), 'true');
   assert.deepEqual(errors, []); assert.deepEqual(storageErrors, []);
 });

@@ -28,7 +28,7 @@ export function MarkdownWorkspaceHeader({ path, caption, label, onSave, canSave,
   const file = parts.at(-1) || '未命名笔记';
   const parent = parts.at(-2) || '笔记库';
   const save = label && <button type="button" aria-label="立即保存" title={canSave ? '立即保存（Ctrl+S）' : label === '外部冲突' ? '请先处理外部修改冲突' : `${label}（Ctrl+S）`} disabled={!canSave} onClick={onSave} className={'compact-save workspace-compat-save markdown-save-state state-' + label.replace(/[^一-龥a-z]+/gi, '-')}><Save size={12} aria-hidden="true" /><span>{label}</span></button>;
-  return <div className={'markdown-workspace-head note-toolbar' + (compact ? ' compact-note-controls' : '')}>
+  return <div className={'markdown-workspace-head note-toolbar' + (compact ? ' compact-note-controls' : '')} data-empty={!enabled ? 'true' : undefined}>
     {!compact && <div className="markdown-breadcrumb" title={path}>
       <span className="markdown-breadcrumb-root">{parent}</span>
       <ChevronRight size={13} aria-hidden="true" />

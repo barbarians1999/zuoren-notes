@@ -73,8 +73,8 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
     assert.equal(await page.locator('.reader-document-title, .epub-font-control, .epub-navigation select, .epub-navigation .epub-chapter, .epub-navigation .keyboard-hints').count(), 0);
     const bounds = await bar.boundingBox(), epubBounds = await page.locator('.epub-pane').boundingBox();
     const tabBounds = await readerTab.boundingBox(), noteBounds = await page.getByRole('tab', { name: 'note.md', exact: true }).boundingBox();
-    assert.equal(bounds.height, 40); assert.equal(epubBounds.y, bounds.y + bounds.height);
-    assert.equal(tabBounds.y, noteBounds.y, 'book and note tabs occupy the same row');
+    assert.equal(bounds.height, 38); assert.ok(epubBounds.y >= bounds.y + bounds.height);
+    assert.ok(Math.abs(tabBounds.y - noteBounds.y) <= 2, 'book and note tabs occupy the same row');
     const paragraphSize = () => page.frameLocator('.epub-viewer iframe').first().locator('p').first().evaluate(element => getComputedStyle(element).fontSize);
     const anchorVisible = cfi => page.locator('.epub-viewer').evaluate((viewer, cfi) => {
       const bounds = viewer.getBoundingClientRect();
@@ -297,7 +297,7 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
     assert.equal(JSON.parse(await fs.readFile(metaPath, 'utf8')).cfi, savedAnchor, 'reopening must retain the saved semantic anchor for the next layout change');
     await page.locator('.layout-tabs').getByRole('button', { name: '阅读', exact: true }).click();
     assert.equal(await readerTab.getAttribute('aria-selected'), 'true');
-    assert.equal(await bar.boundingBox().then(rect => rect.height), 40);
+    assert.equal(await bar.boundingBox().then(rect => rect.height), 38);
     assert.equal(await page.getByRole('tab', { name: 'note.md', exact: true }).count(), 0, 'reading-only hides note chrome without closing its document');
     await page.waitForFunction(() => document.querySelector('.epub-viewer').getBoundingClientRect().width > 900);
     await assertCompactReaderTab();

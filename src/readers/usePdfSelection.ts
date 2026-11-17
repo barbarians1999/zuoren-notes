@@ -71,7 +71,7 @@ export function usePdfSelection({ pdf, root, tool, onTextAction, onMessage, onCl
       const element = event.target instanceof Element ? event.target : null, host = root.current, current = latest.current;
       if (!element || !host || !current.pdf) return;
       if (element.closest('.pdf-text-actions, .pdf-annotation-menu')) return;
-      if (!host.contains(element)) { clear(); return; }
+      if (!host.contains(element) && !element.closest('.pdf-navigation')) { clear(); return; }
       if (element.closest('input, textarea')) { clear(); return; }
       const holder = element.closest('.canvas-holder');
       if (!holder || event.button !== 0 || !event.isPrimary || (current.tool !== 'select' && current.tool !== 'highlight')) return;

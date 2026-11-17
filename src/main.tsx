@@ -12,7 +12,7 @@ import { ConflictDialog, UnsavedDialog, TrashConfirmation } from './workspace/Do
 import { reader, NOTE_BODY_FONTS, type Layout, type ThemePreference, type NoteBodyFont, type ActivePdf, type ActiveEpub, type FileContextMenu, type InlineEntryEdit, type FindCommand } from './readerContext';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowLeft, ChevronRight, Copy, Folder, FolderOpen, FolderPlus, FolderTree, Maximize2, Minimize2, Minus, Monitor, Moon, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings2, Square, Sun, X } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Copy, FileText, Folder, FolderOpen, FolderPlus, Maximize2, Minimize2, Minus, Monitor, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings2, Square, X } from 'lucide-react';
 import { diagnostics } from './diagnostics.cjs';
 import { LatestRequest } from './asyncRequest.cjs';
 import { SessionWriter } from './sessionWriter.cjs';
@@ -29,6 +29,7 @@ import { ReducedMotionContext, useLayoutMotion, usePanelMotion, useTabMotion, us
 import { ContextMenu, ToastMessage, useOverlayFocus } from './ui/overlays';
 import { PaneSplitter } from './ui/PaneSplitter';
 import './ui/chrome.css';
+import './ui/desk-glass.css';
 import { NOTE_FONT_FACES_CSS } from './noteFonts';
 
 Object.defineProperty(window, 'readerDiagnostics', { configurable: true, value: Object.freeze({ snapshot: () => diagnostics.snapshot() }) });
@@ -41,8 +42,10 @@ const readThemePreference = (): ThemePreference => {
 };
 function applyTheme(theme: ThemeName) {
   const root = document.documentElement;
+  const colorScheme = THEMES[theme].colorScheme;
   root.dataset.theme = theme;
-  root.style.colorScheme = THEMES[theme].colorScheme;
+  root.style.colorScheme = colorScheme;
+  document.querySelector('meta[name="color-scheme"]')?.setAttribute('content', colorScheme);
   for (const [property, value] of Object.entries(themeVariables(theme))) root.style.setProperty(property, value);
 }
 const readNoteBodyFont = (): NoteBodyFont => {
@@ -385,7 +388,7 @@ function App() {
     try {
       if (!(await workspace.saveAll())) return;
       if (!(await readerSession.flush())) { setMessage('阅读进度或标注尚未保存成功，请重试后关闭。'); return; }
-      if (!(await saveSessionNow(true))) return;
+      if (sessionRecovery.current.initialized && !(await saveSessionNow(true))) return;
       // Keep input frozen through the actual OS close, not just until saves return.
       reader().confirmClose(); confirmed = true;
     } catch (error) { setMessage(`关闭前保存失败，内容仍保留：${String(error)}`); }
@@ -425,11 +428,12 @@ function App() {
     readerCloseFlight.current = true; setReaderClosing(true);
     const request = ++openSequence.current;
     try {
-      if (!(await readerSession.close(epub))) {
+      if (!(await readerSession.close(epub, () => {
+        if (request === openSequence.current) { setTarget(null); setLayout('note'); setActiveSurface('note'); }
+      }))) {
         if (request === openSequence.current) setMessage('阅读进度或标注尚未保存成功，资料仍保留，请重试关闭。');
         return;
       }
-      if (request === openSequence.current) { setTarget(null); setLayout('note'); setActiveSurface('note'); }
     } catch (error) { setMessage(`关闭资料前保存失败，资料仍保留：${String(error)}`); }
     finally { readerCloseFlight.current = false; setReaderClosing(false); }
   }
@@ -550,7 +554,8 @@ function App() {
   }
   const onPdfTextAction: PdfTextActionHandler = async (selection, action) => {
     const pdf = readerSession.currentPdf();
-    const current = () => !!pdf && readerSession.isCurrentPdf(pdf) && pdf.data === selection.documentKey && pdf.meta.id === selection.pdfId && pdf.path === selection.path;
+    const sessionGeneration = readerSession.currentGeneration();
+    const current = () => readerSession.currentGeneration() === sessionGeneration && !!pdf && readerSession.isCurrentPdf(pdf) && pdf.data === selection.documentKey && pdf.meta.id === selection.pdfId && pdf.path === selection.path;
     if (!current() || !pdf) return { done: false, saved: false, inserted: false, error: 'PDF 已切换，未处理过期选区。' };
     const target = action === 'highlight' ? null : excerptTarget();
     if (action !== 'highlight' && !target) return { done: false, saved: false, inserted: false, error: '请先打开可写入的笔记。' };
@@ -582,7 +587,8 @@ function App() {
   };
   function createEpubExcerptFlow(anchor: EpubAnchor, quote: string, comment: string, save?: (book: ActiveEpub) => Promise<boolean>) {
     const book = readerSession.currentEpub();
-    const sourceCurrent = () => !!book && readerSession.isCurrentEpub(book) && book.meta.id === anchor.epubId;
+    const sessionGeneration = readerSession.currentGeneration();
+    const sourceCurrent = () => readerSession.currentGeneration() === sessionGeneration && !!book && readerSession.isCurrentEpub(book) && book.meta.id === anchor.epubId;
     const target = excerptTarget();
     const insert = async () => {
       if (!book || !target || !sourceCurrent() || !target.valid()) return false;
@@ -622,9 +628,10 @@ function App() {
   function capturePdfExcerpt(expected: ActivePdf): PdfExcerptContext | null {
     const pdf = readerSession.currentPdf();
     if (!pdf || !readerSession.isCurrentPdf(expected)) return null;
+    const sessionGeneration = readerSession.currentGeneration();
     const target = workspace.currentDocument() ? excerptTarget() : null;
     if (workspace.currentDocument() && !target) return null;
-    const sourceCurrent = () => readerSession.isCurrentPdf(pdf);
+    const sourceCurrent = () => readerSession.currentGeneration() === sessionGeneration && readerSession.isCurrentPdf(pdf);
     return { sourcePath: pdf.path, sourceCurrent, target: target ? {
       path: target.path, valid: target.valid,
       insert: async (asset, anchor, quote) => {
@@ -726,68 +733,81 @@ function App() {
     const box = event.currentTarget.getBoundingClientRect();
     setFileContextMenu({ entry, x: event.clientX || box.left, y: event.clientY || box.bottom });
   };
+  const layoutTabs = <nav className="layout-tabs" aria-label="工作模式">{([['read', '阅读'], ['note', '笔记'], ['split', '对照']] as const).map(([id, label]) => <button aria-pressed={layout === id} className={layout === id ? 'active' : ''} onClick={() => void changeLayout(id)} key={id}><span>{label}</span></button>)}</nav>;
   useControlFeedback(appMotionRef, motionReduced, `${layout}:${root}:${workspace.currentDocument()?.note.path || activePdf?.path || activeEpub?.path || ''}`);
-  return <ReducedMotionContext.Provider value={motionReduced}><div ref={appMotionRef} className="app" inert={!sessionReady || workspace.committing} aria-busy={!sessionReady || workspace.committing} data-session-ready={sessionReady} data-motion={motionReduced ? 'reduced' : 'full'} data-edit-motion={editMotion && !motionReduced ? 'soft' : 'off'} data-delete-echo={editMotion && deleteEcho && !motionReduced ? 'on' : 'off'} data-theme={resolvedTheme} data-fullscreen={windowState.fullscreen} data-layout={layout} style={{ '--reading-size': `${readingSize}px`, '--note-body-font': NOTE_BODY_FONTS[noteBodyFont], '--note-source-font': NOTE_BODY_FONTS[noteBodyFont] } as React.CSSProperties}>
+  return <ReducedMotionContext.Provider value={motionReduced}><div ref={appMotionRef} className="app" inert={!sessionReady || workspace.committing} aria-busy={!sessionReady || workspace.committing} data-session-ready={sessionReady} data-motion={motionReduced ? 'reduced' : 'full'} data-edit-motion={editMotion && !motionReduced ? 'soft' : 'off'} data-delete-echo={editMotion && deleteEcho && !motionReduced ? 'on' : 'off'} data-theme={resolvedTheme} data-fullscreen={windowState.fullscreen} data-layout={layout} data-sidebar={sidebar ? 'open' : 'closed'} style={{ '--reading-size': `${readingSize}px`, '--note-body-font': NOTE_BODY_FONTS[noteBodyFont], '--note-source-font': NOTE_BODY_FONTS[noteBodyFont] } as React.CSSProperties}>
     <style>{NOTE_FONT_FACES_CSS}</style>
     {windowState.fullscreen && <div className="fullscreen-reveal-edge" aria-hidden="true"/>}
-    <header className="topbar">
-      <button className="icon-button sidebar-toggle" aria-label={sidebar ? '收起资料栏' : '展开资料栏'} title={sidebar ? '收起资料栏' : '展开资料栏'} onClick={() => setSidebar(value => !value)}>{sidebar ? <PanelLeftClose size={18}/> : <PanelLeftOpen size={18}/>}</button>
-      <nav className="layout-tabs" aria-label="工作模式">{([['read', '阅读'], ['note', '笔记'], ['split', '对照']] as const).map(([id, label]) => <button aria-pressed={layout === id} className={layout === id ? 'active' : ''} onClick={() => void changeLayout(id)} key={id}><span>{label}</span></button>)}</nav>
-      <div className="top-actions">
-        <button className="quiet-action" title={sidebar ? '收起资料栏' : '展开资料栏'} onClick={() => setSidebar(value => !value)}>{sidebar ? <PanelLeftClose size={17}/> : <PanelLeftOpen size={17}/>}<span className="action-label">资料栏</span></button>
-        <div className="settings-menu" ref={settingsRef}>
-          <button className="quiet-action" aria-expanded={settingsOpen} aria-haspopup="dialog" title="设置" onClick={() => setSettingsOpen(value => !value)}><Settings2 size={17}/><span className="action-label">设置</span></button>
-          {settingsMotion.present && <div ref={settingsMotion.ref as React.RefObject<HTMLDivElement | null>} className="settings-popover" role="dialog" aria-label="阅读设置" tabIndex={-1} aria-hidden={!settingsOpen}>
-            <div className="settings-heading"><div><b>正文大小</b></div><strong>{readingSize}px</strong></div>
-            <div className="font-size-control">
-              <button aria-label="减小正文字体" title="减小" disabled={readingSize <= 14} onClick={() => setReadingSize(size => Math.max(14, size - 1))}>A−</button>
-              <input aria-label="正文字体大小" type="range" min="14" max="28" step="1" value={readingSize} onChange={event => setReadingSize(Number(event.target.value))}/>
-              <button aria-label="增大正文字体" title="增大" disabled={readingSize >= 28} onClick={() => setReadingSize(size => Math.min(28, size + 1))}>A＋</button>
+    <aside className="left-rail" aria-label="快捷工具栏">
+      <button className={'icon-button sidebar-toggle' + (sidebar ? ' active' : '')} aria-label={sidebar ? '收起资料栏' : '展开资料栏'} aria-pressed={sidebar} title={sidebar ? '收起资料栏' : '展开资料栏'} onClick={() => setSidebar(value => !value)}>{sidebar ? <PanelLeftClose size={17}/> : <PanelLeftOpen size={17}/>}</button>
+      <span className="rail-sep" aria-hidden="true"/>
+      <button className="new-note-action" aria-label="新笔记" title="新笔记" onClick={() => beginInline('note')}><Plus size={18}/></button>
+      <button className="quiet-action" aria-label="新建文件夹" title="新建文件夹" onClick={() => beginInline('folder')}><FolderPlus size={17}/></button>
+      <div className="left-rail-divider" role="separator"/>
+      <button className="quiet-action" aria-label="打开文件" title="打开文件" onClick={() => void openFiles()}><FileText size={17}/></button>
+      <button className="quiet-action" aria-label="打开文件夹" title="打开文件夹" onClick={openWorkspace}><FolderOpen size={17}/></button>
+      <span className="rail-spacer" aria-hidden="true"/>
+      <div className="settings-menu" ref={settingsRef}>
+        <button className="quiet-action" aria-label="设置" aria-expanded={settingsOpen} aria-haspopup="dialog" title="设置" onClick={() => setSettingsOpen(value => !value)}><Settings2 size={17}/></button>
+        {settingsMotion.present && <div ref={settingsMotion.ref as React.RefObject<HTMLDivElement | null>} className="settings-popover" role="dialog" aria-label="阅读设置" tabIndex={-1} aria-hidden={!settingsOpen}>
+          <div className="settings-heading"><div><b>正文大小</b></div><strong>{readingSize}px</strong></div>
+          <div className="font-size-control">
+            <button aria-label="减小正文字体" title="减小" disabled={readingSize <= 14} onClick={() => setReadingSize(size => Math.max(14, size - 1))}>A−</button>
+            <input aria-label="正文字体大小" type="range" min="14" max="28" step="1" value={readingSize} onChange={event => setReadingSize(Number(event.target.value))}/>
+            <button aria-label="增大正文字体" title="增大" disabled={readingSize >= 28} onClick={() => setReadingSize(size => Math.min(28, size + 1))}>A＋</button>
+          </div>
+          <button className="reset-reading-size" disabled={readingSize === 18} onClick={() => setReadingSize(18)}>恢复默认 18px</button>
+          <label className="note-font-control">
+            <span>正文字体</span>
+            <select aria-label="Markdown 正文字体" value={noteBodyFont} onChange={event => setNoteBodyFont(event.target.value as NoteBodyFont)}>
+              <option value="default">默认</option>
+              <option value="fangsong">字体管家仿宋</option>
+              <option value="songti">宋体</option>
+              <option value="hanyi-shufang-55w">汉仪书仿55W</option>
+            </select>
+          </label>
+          <div className="settings-section">
+            <span className="settings-section-title">外观</span>
+            <div className="theme-options" role="group" aria-label="外观主题">
+              {([
+                ['constructivist', '极简纯白', <span className="theme-swatch" style={{ background: 'linear-gradient(135deg, #ffffff 55%, #f4f4f2 55%)', borderColor: '#d0d0ca' }}/>],
+                ['constructivist-paper', '温润宣纸', <span className="theme-swatch" style={{ background: 'linear-gradient(135deg, #fefcf8 55%, #f5f2eb 55%)', borderColor: '#d8d2c6' }}/>],
+                ['constructivist-dark', '深墨夜读', <span className="theme-swatch" style={{ background: 'linear-gradient(135deg, #1b1c20 55%, #141518 55%)', borderColor: '#5a5d66' }}/>],
+                ['system', '跟随系统', <Monitor size={15}/>],
+              ] as const).map(([value, label, icon]) => <button key={value} className={themePreference === value ? 'active' : ''} aria-pressed={themePreference === value} onClick={() => setThemePreference(value)}>{icon}<span>{label}</span></button>)}
             </div>
-            <button className="reset-reading-size" disabled={readingSize === 18} onClick={() => setReadingSize(18)}>恢复默认 18px</button>
-            <label className="note-font-control">
-              <span>正文字体</span>
-              <select aria-label="Markdown 正文字体" value={noteBodyFont} onChange={event => setNoteBodyFont(event.target.value as NoteBodyFont)}>
-                <option value="default">默认</option>
-                <option value="fangsong">字体管家仿宋</option>
-                <option value="songti">宋体</option>
-                <option value="hanyi-shufang-55w">汉仪书仿55W</option>
-              </select>
-            </label>
-            <div className="settings-section">
-              <span className="settings-section-title">外观</span>
-              <div className="theme-options" role="group" aria-label="外观主题">
-                {([
-                  ['constructivist-paper', '纸页红', <Sun size={15}/>],
-                  ['constructivist', '浅色', <Sun size={15}/>],
-                  ['constructivist-dark', '深色', <Moon size={15}/>],
-                  ['system', '跟随系统', <Monitor size={15}/>],
-                ] as const).map(([value, label, icon]) => <button key={value} className={themePreference === value ? 'active' : ''} aria-pressed={themePreference === value} onClick={() => setThemePreference(value)}>{icon}<span>{label}</span></button>)}
-              </div>
-              <label className="motion-preference"><input type="checkbox" checked={motionReduced} disabled={systemReduced} onChange={event => setReduceMotion(event.target.checked)}/><span>减少动效</span>{systemReduced && <small>系统已启用</small>}</label>
-              <label className="motion-preference"><input type="checkbox" checked={editMotion} disabled={motionReduced} onChange={event => setEditMotion(event.target.checked)}/><span>输入光标动效</span><small>试验</small></label>
-              <label className="motion-preference"><input type="checkbox" checked={deleteEcho} disabled={motionReduced || !editMotion} onChange={event => setDeleteEcho(event.target.checked)}/><span>删除淡出残影</span><small>试验</small></label>
-            </div>
-            <div className="settings-section">
-              <button className="settings-row" title="F11 切换全屏；全屏时移到顶边显示工具栏，F6 聚焦工具栏" onClick={() => { setSettingsOpen(false); void reader().windowControl('fullscreen'); }}>{windowState.fullscreen ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}<span>全屏阅读</span><small>{windowState.fullscreen ? '退出' : '进入'} · F11</small></button>
-            </div>
-            <details className="settings-section settings-about">
-              <summary>关于</summary>
-              <div className="about-content"><b>{appInfo?.name || '左人笔记'}</b><span>版本 {appInfo?.version || '读取中…'}</span><a href="https://github.com/barbarians1999/zuoren-notes" target="_blank" rel="noopener noreferrer">GitHub 仓库</a></div>
-            </details>
-          </div>}
+            <label className="motion-preference"><input type="checkbox" checked={motionReduced} disabled={systemReduced} onChange={event => setReduceMotion(event.target.checked)}/><span>减少动效</span>{systemReduced && <small>系统已启用</small>}</label>
+            <label className="motion-preference"><input type="checkbox" checked={editMotion} disabled={motionReduced} onChange={event => setEditMotion(event.target.checked)}/><span>输入光标动效</span><small>试验</small></label>
+            <label className="motion-preference"><input type="checkbox" checked={deleteEcho} disabled={motionReduced || !editMotion} onChange={event => setDeleteEcho(event.target.checked)}/><span>删除淡出残影</span><small>试验</small></label>
+          </div>
+          <div className="settings-section">
+            <button className="settings-row" title="F11 切换全屏；全屏时移到顶边显示工具栏，F6 聚焦工具栏" onClick={() => { setSettingsOpen(false); void reader().windowControl('fullscreen'); }}>{windowState.fullscreen ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}<span>全屏阅读</span><small>{windowState.fullscreen ? '退出' : '进入'} · F11</small></button>
+          </div>
+          <details className="settings-section settings-about">
+            <summary>关于</summary>
+            <div className="about-content"><b>{appInfo?.name || '左人笔记'}</b><span>版本 {appInfo?.version || '读取中…'}</span><a href="https://github.com/barbarians1999/zuoren-notes" target="_blank" rel="noopener noreferrer">GitHub 仓库</a></div>
+          </details>
+        </div>}
+      </div>
+    </aside>
+    <div className="app-shell-right">
+      <header className="topbar">
+        <div className="topbar-mode-cap">
+          {layoutTabs}
         </div>
-        <button className="quiet-action" aria-label="打开文件" title="打开文件" onClick={() => void openFiles()}><FolderOpen size={17}/><span className="action-label">打开文件</span></button>
-        <button className="quiet-action" aria-label="打开文件夹" title="打开文件夹" onClick={openWorkspace}><FolderTree size={17}/><span className="action-label">打开文件夹</span></button>
-        <button className="quiet-action" aria-label="新建文件夹" title="新建文件夹" onClick={() => beginInline('folder')}><FolderPlus size={17}/><span className="action-label">新建文件夹</span></button>
-        <button className="new-note-action" aria-label="新笔记" title="新建笔记" onClick={() => beginInline('note')}><Plus size={17}/><span>新笔记</span></button>
-      </div>
-      <div className="window-controls" aria-label="窗口控制">
-        <button aria-label="最小化窗口" title="最小化" onClick={() => void reader().windowControl('minimize')}><Minus size={16}/></button>
-        {windowState.fullscreen ? <button aria-label="退出全屏" title="退出全屏（F11）" onClick={() => void reader().windowControl('fullscreen')}><Minimize2 size={15}/></button> : <button aria-label={windowState.maximized ? '还原窗口' : '最大化窗口'} title={windowState.maximized ? '还原' : '最大化'} onClick={() => void reader().windowControl('maximize').then(setWindowState)}>{windowState.maximized ? <Copy size={13}/> : <Square size={13}/>}</button>}
-        <button className="window-close" aria-label="关闭窗口" title="关闭" onClick={() => void reader().windowControl('close')}><X size={17}/></button>
-      </div>
-    </header>
+        <div ref={splitHeaderRef} className={'note-workspace-bar' + (epubVisible ? ' with-epub' : '') + (layout === 'split' ? ' reader-note-row' : '')} aria-label="资料标签与操作" style={{ '--split-at': `${splitAt}%`, '--split-ratio': splitAt / 100 } as React.CSSProperties}>
+          <div className="reader-header-slot" ref={setReaderHeaderTarget} style={epubVisible || layout === 'split' || layout === 'read' ? undefined : { display: 'none' }}/>
+          <div className="note-header-slot" style={layout === 'read' ? { display: 'none' } : undefined}>
+            <div className="document-tab-strip" ref={setNoteTabsTarget}/>
+            <div className="note-controls-slot" ref={setNoteControlsTarget}/>
+          </div>
+        </div>
+        <div className="window-controls" aria-label="窗口控制">
+          <button aria-label="最小化窗口" title="最小化" onClick={() => void reader().windowControl('minimize')}><Minus size={16}/></button>
+          {windowState.fullscreen ? <button aria-label="退出全屏" title="退出全屏（F11）" onClick={() => void reader().windowControl('fullscreen')}><Minimize2 size={15}/></button> : <button aria-label={windowState.maximized ? '还原窗口' : '最大化窗口'} title={windowState.maximized ? '还原' : '最大化'} onClick={() => void reader().windowControl('maximize').then(setWindowState)}>{windowState.maximized ? <Copy size={13}/> : <Square size={13}/>}</button>}
+          <button className="window-close" aria-label="关闭窗口" title="关闭" onClick={() => void reader().windowControl('close')}><X size={17}/></button>
+        </div>
+      </header>
     <div className={sidebarMotion.present ? 'body' : 'body sidebar-hidden'}>
       {sidebarMotion.present && <aside ref={sidebarMotion.ref} className="sidebar" aria-hidden={!sidebar}>
         <div className="search"><Search size={16}/><input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => event.key === 'Enter' && void runSearch()} placeholder="搜索文件名或笔记内容" aria-label="搜索文件名或笔记内容"/>{query && <button aria-label="清空搜索" title="清空搜索" onClick={() => { setQuery(''); setResults([]); }}><X size={14}/></button>}</div>
@@ -798,25 +818,18 @@ function App() {
         <div className={'section-title ' + (root ? 'after-address' : '')}><span>{root ? '当前文件夹' : '最近文件'}</span><span>{root ? visibleDirectory.length : visibleRecent.length}</span></div>
         {fileMoveUi.panel}
         <div key={directoryMotion?.sequence ?? 0} className="file-list" data-folder-motion={directoryMotion?.active ? directoryMotion.direction : undefined}>
-          {inlineEntryEdit && inlineEntryEdit.kind !== 'rename' && <div className="file-row inline-entry-row"><span className={inlineEntryEdit.kind === 'folder' ? 'folder-icon' : 'file-icon md'}>{inlineEntryEdit.kind === 'folder' ? <Folder size={17}/> : 'MD'}</span><input ref={inlineEntryInputRef} className="inline-entry-input" aria-label={inlineEntryEdit.kind === 'folder' ? '新文件夹名称' : '新笔记名称'} value={inlineEntryEdit.value} disabled={inlineEntryEdit.busy} onChange={event => setInlineEntryEdit(value => value && ({ ...value, value: event.target.value }))} onKeyDown={event => { if (event.key === 'Enter') void commitInline(); if (event.key === 'Escape') setInlineEntryEdit(null); }} />{inlineEntryEdit.error && <small className="inline-entry-error">{inlineEntryEdit.error}</small>}</div>}{root ? visibleDirectory.map((entry, index) => {
+          {inlineEntryEdit && inlineEntryEdit.kind !== 'rename' && <div className="file-row inline-entry-row"><span className={inlineEntryEdit.kind === 'folder' ? 'folder-icon' : 'file-icon md'}>{inlineEntryEdit.kind === 'folder' ? <Folder size={17}/> : 'MD'}</span><input ref={inlineEntryInputRef} className="inline-entry-input" aria-label={inlineEntryEdit.kind === 'folder' ? '新文件夹名称' : '新笔记名称'} value={inlineEntryEdit.value} disabled={inlineEntryEdit.busy} onChange={event => setInlineEntryEdit(value => value && ({ ...value, value: event.target.value }))} onKeyDown={event => { if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return; if (event.key === 'Enter') void commitInline(); if (event.key === 'Escape') setInlineEntryEdit(null); }} />{inlineEntryEdit.error && <small className="inline-entry-error">{inlineEntryEdit.error}</small>}</div>}{root ? visibleDirectory.map((entry, index) => {
           const activePath = entry.kind === 'file' ? entry.type === 'pdf' ? activePdf?.path : entry.type === 'epub' ? activeEpub?.path : workspace.currentDocument()?.note.path : null;
           const renaming = inlineEntryEdit?.kind === 'rename' && inlineEntryEdit.entry?.path === entry.path;
-          const body = renaming ? <><input ref={inlineEntryInputRef} className="inline-entry-input" aria-label={'重命名 ' + entry.name} value={inlineEntryEdit!.value} disabled={inlineEntryEdit!.busy} onChange={event => setInlineEntryEdit(value => value && ({ ...value, value: event.target.value }))} onKeyDown={event => { event.stopPropagation(); if (event.key === 'Enter') void commitInline(); if (event.key === 'Escape') setInlineEntryEdit(null); }} />{inlineEntryEdit?.error && <small className="inline-entry-error">{inlineEntryEdit.error}</small>}</> : <><span className={entry.kind === 'folder' ? 'folder-icon' : 'file-icon ' + entry.type}>{entry.kind === 'folder' ? <Folder size={17}/> : entry.type === 'pdf' ? 'PDF' : entry.type === 'epub' ? 'EPUB' : 'MD'}</span><span className="file-name">{entry.name}</span></>;
+          const body = renaming ? <><input ref={inlineEntryInputRef} className="inline-entry-input" aria-label={'重命名 ' + entry.name} value={inlineEntryEdit!.value} disabled={inlineEntryEdit!.busy} onChange={event => setInlineEntryEdit(value => value && ({ ...value, value: event.target.value }))} onKeyDown={event => { event.stopPropagation(); if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return; if (event.key === 'Enter') void commitInline(); if (event.key === 'Escape') setInlineEntryEdit(null); }} />{inlineEntryEdit?.error && <small className="inline-entry-error">{inlineEntryEdit.error}</small>}</> : <><span className={entry.kind === 'folder' ? 'folder-icon' : 'file-icon ' + entry.type}>{entry.kind === 'folder' ? <Folder size={17}/> : entry.type === 'pdf' ? 'PDF' : entry.type === 'epub' ? 'EPUB' : 'MD'}</span><span className="file-name">{entry.name}</span></>;
           return renaming ? <div className="file-row inline-entry-row" key={entry.path}>{body}</div> : <button {...fileMoveUi.entryProps(entry)} data-entry-path={entry.path} title={entry.path} className={'file-row ' + (activePath === entry.path ? 'selected' : '')} key={entry.path} style={{ '--folder-row-delay': `${Math.min(index, 3) * 18}ms` } as React.CSSProperties} onContextMenu={event => showContext(event, entry)} onClick={event => void openBrowserEntry(entry, event.ctrlKey)} onDoubleClick={() => void openBrowserEntry(entry, true)}>{body}{entry.kind === 'folder' && <ChevronRight size={14} className="folder-enter"/>}</button>;
         }) : visibleRecent.map(file => { const activePath = file.type === 'pdf' ? activePdf?.path : file.type === 'epub' ? activeEpub?.path : workspace.currentDocument()?.note.path; return <button title={file.path} className={'file-row ' + (activePath === file.path ? 'selected' : '')} key={file.path} onContextMenu={event => showContext(event, { ...file, kind: 'file' })} onClick={event => void openEntry(file, { replaceCurrentNote: !event.ctrlKey })} onDoubleClick={() => void openEntry(file)}><span className={'file-icon ' + file.type}>{file.type === 'pdf' ? 'PDF' : file.type === 'epub' ? 'EPUB' : 'MD'}</span><span className="file-name">{file.name}</span></button>; })}{!(root ? visibleDirectory.length : visibleRecent.length) && <div className="empty-small"><FolderOpen size={20}/><span>{root ? '这个文件夹里没有可阅读的文件' : '打开文件夹后，资料会显示在这里'}</span></div>}
         </div>
         {!!results.length && <><div className="section-title">搜索结果</div>{results.map(result => <button className="result-row" key={result.path} onContextMenu={event => showContext(event, { ...result, kind: 'file' })} onClick={event => void openEntry(result, { replaceCurrentNote: !event.ctrlKey })} onDoubleClick={() => void openEntry(result)}><b>{result.name}</b><small>{result.snippet || '文件名匹配'}</small></button>)}</>}
       </aside>}
       <main className="main">
-        <div ref={splitHeaderRef} className={'note-workspace-bar' + (epubVisible ? ' with-epub' : '') + (layout === 'split' ? ' reader-note-row' : '')} aria-label="资料标签与操作" style={{ ...(layout === 'read' && !epubVisible ? { display: 'none' } : {}), '--split-at': `${splitAt}%` } as React.CSSProperties}>
-          <div className="reader-header-slot" ref={setReaderHeaderTarget} style={epubVisible || layout === 'split' ? undefined : { display: 'none' }}/>
-          <div className="note-header-slot" style={layout === 'read' ? { display: 'none' } : undefined}>
-            <div className="document-tab-strip" ref={setNoteTabsTarget}/>
-            <div className="note-controls-slot" ref={setNoteControlsTarget}/>
-          </div>
-        </div>
         <div ref={panesRef} className={'panes ' + layout + (noteSplit ? ' dual-notes' : '')} style={{ '--split-at': `${splitAt}%` } as React.CSSProperties}>
-          {(layout === 'read' || layout === 'split') && (activeEpub ? <EpubPane key={activeEpub.path} epub={activeEpub} theme={resolvedTheme} noteBodyFont={noteBodyFont} readingSize={readingSize} headerTarget={readerHeaderTarget} active={activeSurface === 'reader'} closing={readerClosing} onActivate={() => setActiveSurface('reader')} onClose={() => void closeEpub()} onMeta={change => readerSession.updateEpub(change, activeEpub)} onMessage={setMessage} onExcerpt={insertEpubExcerpt} onSelectionAction={saveEpubSelection} excerptTarget={activeDoc ? (workspace.activeGroup === 'secondary' ? '摘录到右栏' : '摘录到当前笔记') : null} target={isEpubAnchor(target) ? target : null}/> : <PdfPane onActivate={() => setActiveSurface('reader')} dark={THEMES[resolvedTheme].colorScheme === 'dark'} pdf={activePdf} page={page} setPage={value => readerSession.setPage(value)} scale={scale} setScale={value => readerSession.setScale(value)} fullscreen={windowState.fullscreen} onToggleFullscreen={() => { void reader().windowControl('fullscreen'); }} onMeta={change => activePdf ? readerSession.updatePdf(change, activePdf) : Promise.resolve(false)} captureExcerpt={capturePdfExcerpt} onTextAction={onPdfTextAction} canExcerpt={!!activeDoc && !activeDoc.blocked()} target={target && 'pdfId' in target ? target : null} onMessage={setMessage} headerTarget={layout === 'split' ? readerHeaderTarget : null}/>)}
+          {(layout === 'read' || layout === 'split') && (activeEpub ? <EpubPane key={activeEpub.path} epub={activeEpub} theme={resolvedTheme} noteBodyFont={noteBodyFont} readingSize={readingSize} headerTarget={readerHeaderTarget} active={activeSurface === 'reader'} closing={readerClosing} onActivate={() => setActiveSurface('reader')} onClose={() => void closeEpub()} onMeta={change => readerSession.updateEpub(change, activeEpub)} onMessage={setMessage} onExcerpt={insertEpubExcerpt} onSelectionAction={saveEpubSelection} excerptTarget={activeDoc ? (workspace.activeGroup === 'secondary' ? '摘录到右栏' : '摘录到当前笔记') : null} target={isEpubAnchor(target) ? target : null}/> : <PdfPane onActivate={() => setActiveSurface('reader')} dark={THEMES[resolvedTheme].colorScheme === 'dark'} pdf={activePdf} page={page} setPage={value => readerSession.setPage(value)} scale={scale} setScale={value => readerSession.setScale(value)} fullscreen={windowState.fullscreen} onToggleFullscreen={() => { void reader().windowControl('fullscreen'); }} onMeta={change => activePdf ? readerSession.updatePdf(change, activePdf) : Promise.resolve(false)} captureExcerpt={capturePdfExcerpt} onTextAction={onPdfTextAction} canExcerpt={!!activeDoc && !activeDoc.blocked()} target={target && 'pdfId' in target ? target : null} onMessage={setMessage} headerTarget={layout === 'split' || layout === 'read' ? readerHeaderTarget : null}/>)}
           {(layout === 'split' || noteSplit) && <PaneSplitter key={'splitter:' + (noteSplit ? 'notes' : activeEpub?.path || activePdf?.path || 'reader')} container={panesRef} header={layout === 'split' ? splitHeaderRef : undefined} ratio={splitAt} onChange={setSplitAt} label={noteSplit ? '调整左右笔记宽度' : '调整阅读与笔记宽度'} deferred={!!activeEpub}/>}
           {(['primary', 'secondary'] as const).map(group => <NoteGroupPane key={group} workspace={workspace} group={group}
             split={noteSplit}
@@ -840,6 +853,7 @@ function App() {
             }}/>)}
         </div>
       </main>
+    </div>
     </div>
     <ContextMenu open={!!fileContextMenu} x={fileContextMenu?.x ?? 0} y={fileContextMenu?.y ?? 0} returnFocus={fileMenuTrigger.current} label="文件操作" onClose={() => setFileContextMenu(null)}>
       {fileContextMenu && <>

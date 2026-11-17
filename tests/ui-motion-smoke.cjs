@@ -36,14 +36,16 @@ test('short UI motion preserves editor history, panel focus, PDF page and reduce
     assert.equal(noteModeMotion.background, 'rgba(0, 0, 0, 0)');
     assert.equal(noteModeMotion.slideDuration, 160, 'edit/read content slides horizontally in 160ms');
     assert.equal(noteModeMotion.contentAnimated, false, 'reading and editing do not fade the document');
-    const readingModeButton = noteMode.getByRole('button', { name: '阅读模式', exact: true }); await readingModeButton.hover();
+    const readingModeButton = noteMode.getByRole('button', { name: '阅读模式', exact: true });
+    await readingModeButton.evaluate(button => Promise.all(button.getAnimations({ subtree: true }).map(a => a.finished.catch(() => {}))));
+    await readingModeButton.hover();
     const controlMotion = await readingModeButton.evaluate(button => ({
       button: getComputedStyle(button).transform,
       icon: getComputedStyle(button.querySelector('svg')).transform,
       label: getComputedStyle(button.querySelector('span')).transform,
     }));
     assert.equal(controlMotion.button, 'none', 'the control hit area stays in place');
-    assert.notEqual(controlMotion.icon, 'none'); assert.notEqual(controlMotion.label, 'none', 'only its icon and label lift');
+    assert.equal(controlMotion.icon, 'none'); assert.equal(controlMotion.label, 'none', 'hover feedback uses color without shifting glyphs');
     await noteMode.getByRole('button', { name: '切换到源码编辑' }).click(); await page.locator('.cm-content').waitFor();
     await page.locator('.cm-content').evaluate(el => { window.__layoutEditor = el; });
     const layoutTabs = page.locator('.layout-tabs');
@@ -104,10 +106,10 @@ test('short UI motion preserves editor history, panel focus, PDF page and reduce
     assert.equal(await page.locator('.panes').evaluate(el => el.getAnimations().length), 0, 'restoring motion does not replay the layout');
     await holdLayoutMotion(layoutLabel(nextLayout));
     await page.getByRole('button', { name: '设置', exact: true }).click();
-    await page.locator('.motion-preference input').check();
+    await page.locator('.motion-preference', { hasText: '减少动效' }).locator('input').check();
     await page.waitForFunction(() => document.querySelector('.app').dataset.motion === 'reduced');
     assert.equal(await page.evaluate(() => window.__heldLayoutAnimation.playState), 'idle', 'the app preference cancels an in-flight layout change too');
-    await page.locator('.motion-preference input').uncheck();
+    await page.locator('.motion-preference', { hasText: '减少动效' }).locator('input').uncheck();
     await page.getByRole('button', { name: '设置', exact: true }).click();
     await layoutTabs.getByRole('button', { name: layoutLabel(originalLayout), exact: true }).click();
     await page.waitForFunction(value => document.querySelector('.app')?.getAttribute('data-layout') === value, originalLayout);
@@ -145,12 +147,19 @@ test('short UI motion preserves editor history, panel focus, PDF page and reduce
     });
     const motionRecordCount = () => page.evaluate(() => window.__markdownMotionRecords.length);
     const motionRecordsSince = async (start, waitForFinish = true) => {
-      if (waitForFinish) await page.waitForFunction(index => window.__markdownMotionRecords.length > index, start);
-      return page.evaluate(async ({ start, waitForFinish }) => {
-      const records = window.__markdownMotionRecords.slice(start);
-      if (waitForFinish) await Promise.all(records.map(record => record.completion));
-      return records.map(({ animation, completion, resolveCompletion, ...record }) => ({ ...record, finalCaretColor: getComputedStyle(document.querySelector('.cm-content')).caretColor }));
-      }, { start, waitForFinish });
+      if (waitForFinish) {
+        await page.waitForFunction(index => window.__markdownMotionRecords.length > index, start);
+        await page.evaluate(async () => {
+          for (let pass = 0; pass < 3; pass++) {
+            await new Promise(resolve => requestAnimationFrame(resolve));
+            const running = window.__markdownMotionRecords.filter(r => r.status === 'running');
+            if (running.length) await Promise.all(running.map(r => r.completion));
+          }
+        });
+      }
+      return page.evaluate(({ start }) => window.__markdownMotionRecords.slice(start).map(({ animation, completion, resolveCompletion, ...record }) => ({
+        ...record, finalCaretColor: getComputedStyle(document.querySelector('.cm-content')).caretColor,
+      })), { start });
     };
     await markdownEditor.click(); await page.keyboard.press('Control+Home');
     await page.evaluate(async () => Promise.all(document.getAnimations().filter(animation => animation.effect?.getTiming().duration === 120).map(animation => animation.finished.catch(() => {}))));
@@ -250,7 +259,7 @@ test('short UI motion preserves editor history, panel focus, PDF page and reduce
     await findTrigger.click();
     const findBar = page.locator('.find-bar'); await findBar.waitFor();
     await page.waitForFunction(() => document.querySelector('.find-bar')?.getAnimations().length > 0);
-    assert.equal(await findBar.evaluate(el => el.getAnimations()[0]?.effect.getTiming().duration), 140, 'note find bar enters with the shared feedback timing');
+    assert.equal(await findBar.evaluate(el => el.getAnimations()[0]?.effect.getTiming().duration), 180, 'note find bar enters with the shared feedback timing');
     await findBar.locator('button[aria-label="关闭查找"]').click();
     await page.waitForFunction(() => document.querySelector('.find-bar')?.inert === true);
     const findExit = await findBar.evaluate(el => ({ duration: el.getAnimations()[0]?.effect.getTiming().duration,
@@ -321,7 +330,7 @@ test('short UI motion preserves editor history, panel focus, PDF page and reduce
       await new Promise(resolve => setTimeout(resolve, 45));
       return document.querySelector('.tab-motion-line').getAnimations()[0]?.effect.getTiming().duration;
     });
-    assert.equal(tabAnimation, 140, 'resize notifications do not cancel the moving underline');
+    assert.equal(tabAnimation, 180, 'resize notifications do not cancel the moving underline');
     await page.locator('.cm-content').filter({ hasText: 'Body A' }).waitFor();
     assert.equal(await page.locator('.cm-content').evaluate(el => el === window.__motionEditor), true, 'switching notes keeps the same editor view');
     assert.equal(await page.locator('.cm-content').evaluate(el => el.getAnimations().length), 0, 'switching notes does not animate or flash the document');
@@ -330,10 +339,6 @@ test('short UI motion preserves editor history, panel focus, PDF page and reduce
     const alignment = await page.evaluate(() => { const line = document.querySelector('.tab-motion-line').getBoundingClientRect(), tab = document.querySelector('.foreground-tab').getBoundingClientRect(); return Math.abs(line.left - tab.left) < 1 && Math.abs(line.width - tab.width) < 1 && Math.abs(line.bottom - tab.bottom) < 1; });
     assert.equal(alignment, true, 'activity line matches the active tab');
     const activeTab = page.locator('.foreground-tab > button[role="tab"]'); await activeTab.hover();
-    await page.waitForFunction(() => {
-      const label = document.querySelector('.foreground-tab [role="tab"] .tab-file-name');
-      return label && getComputedStyle(label).transform !== 'none';
-    });
     const tabHover = await page.evaluate(() => {
       const tab = document.querySelector('.foreground-tab'), button = tab.querySelector('[role="tab"]'), label = button.querySelector('.tab-file-name');
       return { tabBackground: getComputedStyle(tab).backgroundColor, buttonBackground: getComputedStyle(button).backgroundColor,
@@ -341,15 +346,15 @@ test('short UI motion preserves editor history, panel focus, PDF page and reduce
     });
     assert.notEqual(tabHover.tabBackground, 'rgba(0, 0, 0, 0)', 'the original foreground tab surface remains');
     assert.equal(tabHover.buttonBackground, 'rgba(0, 0, 0, 0)');
-    assert.equal(tabHover.buttonTransform, 'none'); assert.notEqual(tabHover.labelTransform, 'none', 'only the tab label moves on hover');
+    assert.equal(tabHover.buttonTransform, 'none'); assert.equal(tabHover.labelTransform, 'none', 'hover keeps tab labels still without layout shift');
     const screenshot = async name => { if (process.env.ZUOREN_SCREENSHOT_OUTPUT) { await page.waitForFunction(() => !document.querySelector('.settings-popover')?.getAnimations().length); await fs.mkdir(process.env.ZUOREN_SCREENSHOT_OUTPUT, { recursive: true }); await page.screenshot({ path: path.join(process.env.ZUOREN_SCREENSHOT_OUTPUT, name + '.png') }); } };
     await page.getByRole('button', { name: '设置', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('.settings-popover')?.getAnimations().length > 0);
     assert.equal(await page.locator('.settings-popover').evaluate(el => el.getAnimations()[0]?.effect.getTiming().duration), 150);
     await screenshot('motion-light-settings');
-    await page.getByRole('button', { name: '深色', exact: true }).click();
+    await page.getByRole('button', { name: '深墨夜读', exact: true }).click();
     await screenshot('motion-dark-settings');
-    const reduce = page.locator('.motion-preference input');
+    const reduce = page.locator('.motion-preference', { hasText: '减少动效' }).locator('input');
     await reduce.check(); await page.waitForFunction(() => document.querySelector('.app').dataset.motion === 'reduced');
     assert.equal(await page.locator('.settings-popover').evaluate(el => el.getAnimations().length), 0);
     await page.getByRole('button', { name: '设置', exact: true }).click();
@@ -393,7 +398,7 @@ test('short UI motion preserves editor history, panel focus, PDF page and reduce
       return true;
     });
     await page.getByRole('button', { name: '设置', exact: true }).click();
-    await page.locator('.motion-preference input').check();
+    await page.locator('.motion-preference', { hasText: '减少动效' }).locator('input').check();
     await page.waitForFunction(() => document.querySelector('.app')?.dataset.motion === 'reduced');
     await page.waitForTimeout(200);
     assert.deepEqual(await page.evaluate(() => {
@@ -404,7 +409,7 @@ test('short UI motion preserves editor history, panel focus, PDF page and reduce
     }), { sameCanvas: true, sameTextLayer: true, sameTextNode: true, sameText: true, animationState: 'idle' }, 'reducing motion cancels the current page fade without rerendering its canvas or text');
     await page.getByRole('button', { name: '设置', exact: true }).click();
     await page.getByRole('button', { name: '设置', exact: true }).click();
-    await page.locator('.motion-preference input').uncheck();
+    await page.locator('.motion-preference', { hasText: '减少动效' }).locator('input').uncheck();
     await page.waitForFunction(() => document.querySelector('.app')?.dataset.motion === 'full');
     await page.getByRole('button', { name: '设置', exact: true }).click();
     const input = page.getByRole('textbox', { name: '当前页码', exact: true }); await input.fill('2'); await input.press('Enter');

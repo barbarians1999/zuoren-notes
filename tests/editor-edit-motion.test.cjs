@@ -321,6 +321,66 @@ test('real Backspace command affinity skips a soft-wrap crossing after CM layer 
   } finally { mock.close(); }
 });
 
+test('Enter and Backspace over an actual LF animate structural caret travel', async () => {
+  const { EditorState } = await import('@codemirror/state');
+  const { deleteCharBackward, insertNewline } = await import('@codemirror/commands');
+  const { updateMarkdownMotion } = await import('../src/editor/markdownMotion.ts');
+  for (const key of ['Enter', 'Backspace']) {
+    const mock = await mockView({ doc: key === 'Enter' ? 'abc' : 'a\nb' });
+    try {
+      if (key === 'Backspace') {
+        mock.cursor.rect = { left: 120, top: 120, width: 1, height: 20 };
+        mock.replaceState(EditorState.create({ doc: 'a\nb', selection: { anchor: 2 } }));
+      }
+      mock.setClock(200); mock.fire('keydown', { key, repeat: false });
+      let transaction;
+      const command = key === 'Enter' ? insertNewline : deleteCharBackward;
+      assert.equal(command({ state: mock.view.state, dispatch: value => { transaction = value; } }), true);
+      const before = mock.view.state; mock.view.state = transaction.state;
+      mock.cursor.rect = key === 'Enter'
+        ? { left: 140, top: 120, width: 1, height: 20 }
+        : { left: 110, top: 100, width: 1, height: 20 };
+      updateMarkdownMotion({ view: mock.view, state: transaction.state, startState: before, transactions: [transaction],
+        changes: transaction.changes, docChanged: true, selectionSet: true, geometryChanged: false, focusChanged: false });
+      mock.flush();
+      const caret = mock.animations.find(animation => animation.element === mock.cursor && animation.playState === 'running');
+      assert.ok(caret, `${key} animates caret travel across a real structural line change`);
+      assert.notEqual(caret.frames[0].transform, 'translate(0, 0)');
+      assert.equal(mock.view.state.doc.toString(), key === 'Enter' ? 'abc\n' : 'ab');
+    } finally { mock.close(); }
+  }
+});
+
+test('repeat, IME and reduced-motion structural keys never animate but still edit', async () => {
+  const { EditorState } = await import('@codemirror/state');
+  const { deleteCharBackward, insertNewline } = await import('@codemirror/commands');
+  const { updateMarkdownMotion } = await import('../src/editor/markdownMotion.ts');
+  for (const stop of ['repeat', 'ime', 'reduced']) for (const key of ['Enter', 'Backspace']) {
+    const mock = await mockView({ doc: key === 'Enter' ? 'abc' : 'a\nb' });
+    try {
+      if (key === 'Backspace') {
+        mock.cursor.rect = { left: 120, top: 120, width: 1, height: 20 };
+        mock.replaceState(EditorState.create({ doc: 'a\nb', selection: { anchor: 2 } }));
+      }
+      if (stop === 'reduced') mock.app.dataset.motion = 'reduced';
+      mock.setClock(200);
+      mock.fire('keydown', { key, repeat: stop === 'repeat', isComposing: stop === 'ime' });
+      let transaction;
+      const command = key === 'Enter' ? insertNewline : deleteCharBackward;
+      assert.equal(command({ state: mock.view.state, dispatch: value => { transaction = value; } }), true);
+      const before = mock.view.state; mock.view.state = transaction.state;
+      mock.cursor.rect = key === 'Enter'
+        ? { left: 140, top: 120, width: 1, height: 20 }
+        : { left: 110, top: 100, width: 1, height: 20 };
+      updateMarkdownMotion({ view: mock.view, state: transaction.state, startState: before, transactions: [transaction],
+        changes: transaction.changes, docChanged: true, selectionSet: true, geometryChanged: false, focusChanged: false });
+      mock.flush();
+      assert.equal(mock.animations.some(animation => animation.element === mock.cursor), false, `${stop} ${key} must not animate`);
+      assert.equal(mock.view.state.doc.toString(), key === 'Enter' ? 'abc\n' : 'ab');
+    } finally { mock.close(); }
+  }
+});
+
 test('root movement or a scale change invalidates queued editing geometry', async () => {
   for (const kind of ['position', 'scale']) {
     const mock = await mockView();

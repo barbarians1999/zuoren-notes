@@ -46,7 +46,7 @@ test('PDF night paper, color/scan images, theme/zoom/selection and original-colo
     // dismissal, so this verifies the repaint itself leaves selection intact.
     const settings=page.getByRole('button',{name:'设置',exact:true});
     await settings.focus();await settings.press('Enter');
-    const option=page.getByRole('button',{name:dark?'深色':'浅色',exact:true});
+    const option=page.getByRole('button',{name:dark?'深墨夜读':'极简纯白',exact:true});
     await option.focus();await option.press('Enter');
     await settings.focus();await settings.press('Enter');
   };

@@ -117,9 +117,28 @@ test('nested Markdown presentation maps clicks to source and preserves paste, ou
       await content.focus(); await page.keyboard.press('Control+Home');
       const screenshots = process.env.ZUOREN_SCREENSHOT_OUTPUT;
       if (screenshots) { await fs.mkdir(screenshots, { recursive: true }); await page.screenshot({ path: path.join(screenshots, 'nested-markdown-light.png') }); }
-      await page.getByRole('button', { name: '设置', exact: true }).click(); await page.getByRole('button', { name: '深色', exact: true }).click(); await page.keyboard.press('Escape');
+      await page.getByRole('button', { name: '设置', exact: true }).click(); await page.getByRole('button', { name: '深墨夜读', exact: true }).click(); await page.keyboard.press('Escape');
       const size = await app.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; window.unmaximize(); window.setSize(Math.max(900, window.getMinimumSize()[0]), 760); return window.getContentSize(); });
-      await page.waitForFunction(([width, height]) => window.innerWidth === width && window.innerHeight === height, size);
+      try {
+        await page.waitForFunction(([width, height]) => window.innerWidth === width && window.innerHeight === height, size);
+      } catch (error) {
+        const renderer = await page.evaluate(() => {
+          const rect = element => {
+            if (!element) return null;
+            const box = element.getBoundingClientRect();
+            return { x: box.x, y: box.y, width: box.width, height: box.height };
+          };
+          return { innerWidth, innerHeight, outerWidth, outerHeight, devicePixelRatio,
+            documentElement: rect(document.documentElement), app: rect(document.querySelector('.app')) };
+        }).catch(diagnosticError => ({ diagnosticError: String(diagnosticError) }));
+        const native = await app.evaluate(({ BrowserWindow }) => {
+          const window = BrowserWindow.getAllWindows()[0];
+          return window ? { size: window.getSize(), contentSize: window.getContentSize(), bounds: window.getBounds(),
+            maximized: window.isMaximized(), fullScreen: window.isFullScreen() } : null;
+        }).catch(diagnosticError => ({ diagnosticError: String(diagnosticError) }));
+        if (error && typeof error === 'object' && 'message' in error) error.message += `\nWindow size diagnostics: ${JSON.stringify({ expectedContentSize: size, renderer, native })}`;
+        throw error;
+      }
       await quotedCode().waitFor(); assert.equal(await quotedCode().textContent(), 'first\n\n  第二行😀');
       assert.equal(await table().count(), 1);
       if (screenshots) await page.locator('.app').screenshot({ path: path.join(screenshots, 'nested-markdown-dark-narrow.png') });
@@ -148,8 +167,9 @@ test('nested Markdown presentation maps clicks to source and preserves paste, ou
       await row('outline.md').dblclick(); await content.waitFor(); await toPreview();
       await pane.getByRole('button', { name: '展开大纲', exact: true }).click();
       const outline = pane.getByRole('complementary', { name: 'Markdown 大纲', exact: true });
-      await outline.locator('button').nth(2).waitFor();
-      assert.equal(await outline.locator('button').count(), 3, 'raw HTML and code headings do not enter the source outline');
+      const entries = outline.locator('button:not(.outline-close)');
+      await entries.nth(2).waitFor();
+      assert.equal(await entries.count(), 3, 'raw HTML and code headings do not enter the source outline');
       const preview = pane.locator('.markdown-preview');
       await preview.evaluate(element => {
         window.__outlineScroll = [];
@@ -159,18 +179,19 @@ test('nested Markdown presentation maps clicks to source and preserves paste, ou
         }
       });
       for (const [index, id] of ['first-md', 'second-md'].entries()) {
-        await outline.locator('button').nth(index).click();
+        await entries.nth(index).click();
         assert.equal(await page.evaluate(() => window.__outlineScroll.at(-1)?.id), id, 'outline clicks must not land on HTML or another same-named heading');
       }
-      await outline.locator('button').nth(2).click();
+      await entries.nth(2).click();
       assert.equal(await page.evaluate(() => window.__outlineScroll.at(-1)?.text.trim()), 'Quoted heading');
-      await toEdit(); await outline.locator('button').nth(1).click();
+      await toEdit(); await entries.nth(1).click();
       assert.ok((await content.locator('.cm-activeLine').innerText()).includes('second-md'), 'editing jumps to the same source heading');
       assert.equal(await sourceText(), outlineSource);
       assert.equal(await fs.readFile(outlineNote, 'utf8'), outlineSource, 'outline navigation never changes stored Markdown');
     });
     await t.test('structural list guides stay continuous, use one stroke per level and preserve source in both themes', async () => {
       await row('guides.md').dblclick(); await content.waitFor();
+      await page.waitForFunction(() => !document.querySelector('.note-body')?.getAnimations().some(animation => animation.playState === 'running'));
       const line = text => content.locator('.cm-line').filter({ hasText: text });
       await line('Child continuation').click();
       for (const text of ['Parent', 'Continued', 'Second paragraph']) {
@@ -213,7 +234,7 @@ test('nested Markdown presentation maps clicks to source and preserves paste, ou
         return { space, guide: el.getBoundingClientRect().left + space, text: [...range.getClientRects()].map(rect => rect.left) };
       });
       assert.ok(clearance.space > 0 && clearance.text.every(left => left > clearance.guide + 1), 'the measured font-space gutter keeps every wrapped row clear of the guide');
-      for (const theme of ['纸页红', '深色']) {
+      for (const theme of ['温润宣纸', '深墨夜读']) {
         await page.getByRole('button', { name: '设置', exact: true }).click();
         await page.getByRole('button', { name: theme, exact: true }).click(); await page.keyboard.press('Escape');
         await line('Child continuation').click();
@@ -222,7 +243,7 @@ test('nested Markdown presentation maps clicks to source and preserves paste, ou
         assert.deepEqual(paint.sizes, ['auto', 'auto', '0px 100%'], 'each list stroke has its own layer; the quote pattern is clipped away outside quotes');
         if (process.env.ZUOREN_SCREENSHOT_OUTPUT) {
           await content.focus(); await page.keyboard.press('Control+Home'); await line('Child continuation').click();
-          await page.locator('.app').screenshot({ path: path.join(process.env.ZUOREN_SCREENSHOT_OUTPUT, theme === '深色' ? 'list-guides-dark.png' : 'list-guides-light.png') });
+          await page.locator('.app').screenshot({ path: path.join(process.env.ZUOREN_SCREENSHOT_OUTPUT, theme === '深墨夜读' ? 'list-guides-dark.png' : 'list-guides-light.png') });
         }
       }
       await line('Deep continuation').click(); await page.keyboard.press('End'); await page.keyboard.insertText('Z');

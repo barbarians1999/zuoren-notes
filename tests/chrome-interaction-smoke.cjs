@@ -117,7 +117,7 @@ test('shared chrome preserves focus, async failures and confirmed copy feedback'
       const pdfSearchTrigger = page.getByRole('button', { name: '在 PDF 中查找', exact: true });
       await pdfSearchTrigger.click(); const pdfFind = page.locator('.pdf-find-bar'); await pdfFind.waitFor();
       await page.waitForFunction(() => document.querySelector('.pdf-find-bar')?.getAnimations().length > 0);
-      assert.equal(await pdfFind.evaluate(el => el.getAnimations()[0]?.effect.getTiming().duration), 140);
+      assert.equal(await pdfFind.evaluate(el => el.getAnimations()[0]?.effect.getTiming().duration), 180);
       await pdfFind.getByRole('button', { name: '关闭 PDF 查找', exact: true }).click();
       await page.waitForFunction(() => document.querySelector('.pdf-find-bar')?.inert === true);
       const pdfFindExit = await pdfFind.evaluate(el => ({ hidden: el.getAttribute('aria-hidden'), duration: el.getAnimations()[0]?.effect.getTiming().duration }));
@@ -207,7 +207,7 @@ test('shared chrome preserves focus, async failures and confirmed copy feedback'
       await start(-40); await page.keyboard.press('Escape'); await page.mouse.up();
       assert.ok(Math.abs(await ratio() - committed) < .05, 'Escape restores the committed ratio');
       assert.equal(await page.locator('.splitter-shield').count(), 0);
-      await splitter.dblclick(); await page.waitForFunction(() => document.querySelector('[role="separator"]').getAttribute('aria-valuenow') === '50');
+      await splitter.dblclick(); await page.waitForFunction(() => document.querySelector('[aria-label="调整阅读与笔记宽度"]').getAttribute('aria-valuenow') === '50');
       await splitter.focus(); await page.keyboard.press('ArrowRight'); assert.equal(await ratio(), 52);
       // Playwright enables focus emulation in coreBundle.js. A native window
       // switch cannot emit renderer blur until this test-only emulation is off.

@@ -199,11 +199,32 @@ test('manual save, smooth preview and deferred counts preserve document boundari
     await page.waitForFunction(() => document.querySelector('[data-pane-id="primary"] .markdown-preview')?.textContent.includes('other-document'));
     assert.ok(!(await primary.locator('.markdown-preview').innerText()).includes('late-version'));
     await fs.writeFile(second, '# Fallback\n\nfallback-safe\n\n![image](delayed-timeout.png)\n');
-    await waitForAsset('delayed-timeout.png');
-    await page.waitForFunction(() => document.querySelector('[data-pane-id="primary"] .markdown-preview')?.textContent.includes('fallback-safe'), null, { timeout: 8000 });
-    assert.equal(await primary.locator('.preview-loading').count(), 0);
-    await releaseAssets(); await gate({ holdAssets: false });
-    await primary.getByRole('button', { name: '切换到源码编辑', exact: true }).click();
+    try {
+      await waitForAsset('delayed-timeout.png');
+      await page.waitForFunction(() => document.querySelector('[data-pane-id="primary"] .markdown-preview')?.textContent.includes('fallback-safe'), null, { timeout: 8000 });
+      assert.equal(await primary.locator('.preview-loading').count(), 0);
+    } catch (error) {
+      const details = await page.evaluate(() => {
+        const selectedTab = document.querySelector('[data-tabs-group="primary"] [role="tab"][aria-selected="true"]');
+        const preview = document.querySelector('[data-pane-id="primary"] .markdown-preview');
+        const active = document.activeElement;
+        return {
+          primaryTab: selectedTab ? { id: selectedTab.closest('[data-view-id]')?.getAttribute('data-view-id'), path: selectedTab.getAttribute('title')?.split('\n')[0] } : null,
+          preview: preview ? { notePath: preview.getAttribute('data-note-path'), previewCurrent: preview.getAttribute('data-preview-current'), tail: preview.textContent?.slice(-240) } : null,
+          hasFocus: document.hasFocus(), activeElement: active ? { tag: active.tagName, ariaLabel: active.getAttribute('aria-label'), className: typeof active.className === 'string' ? active.className : '' } : null,
+        };
+      }).catch(diagnosticError => ({ diagnosticError: String(diagnosticError) }));
+      const assets = await state().then(value => value.assets).catch(diagnosticError => [`<diagnostic failed: ${String(diagnosticError)}>`]);
+      if (error && typeof error === 'object' && 'message' in error) error.message += `\nFallback-safe diagnostics: ${JSON.stringify({ ...details, unreleasedAssets: assets })}`;
+      throw error;
+    } finally {
+      await releaseAssets().catch(() => {});
+      await gate({ holdAssets: false }).catch(() => {});
+      try {
+        const editMode = primary.getByRole('button', { name: '切换到源码编辑', exact: true });
+        if (await editMode.count() && await editMode.isVisible()) await editMode.click({ timeout: 1000 });
+      } catch {}
+    }
   });
 
   await t.test('counts update after typing settles; new documents never show stale counts', async () => {

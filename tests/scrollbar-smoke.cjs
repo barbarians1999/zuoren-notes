@@ -49,7 +49,7 @@ test('long notes keep a usable native scrollbar and stable content width', { tim
       await page.screenshot({ path: path.join(process.env.ZUOREN_SCREENSHOT_OUTPUT, 'scrollbar-light.png') });
     }
     await page.getByRole('button', { name: '设置', exact: true }).click();
-    await page.getByRole('button', { name: '深色', exact: true }).click();
+    await page.getByRole('button', { name: '深墨夜读', exact: true }).click();
     await page.keyboard.press('Escape');
     assert.equal(await page.locator('.app').getAttribute('data-theme'), 'constructivist-dark');
     if (process.env.ZUOREN_SCREENSHOT_OUTPUT) await page.screenshot({ path: path.join(process.env.ZUOREN_SCREENSHOT_OUTPUT, 'scrollbar-dark.png') });
