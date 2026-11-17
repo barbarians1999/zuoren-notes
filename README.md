@@ -4,6 +4,10 @@
 
 面向本地资料阅读与 Markdown 写作的 Electron 桌面笔记软件，提供 Windows 安装版和 macOS 测试版。以 Markdown 为核心，也可以在同一工作区阅读 PDF、EPUB，并把摘录整理进笔记。
 
+## 界面介绍
+
+0.4.6 采用浮动工作区和统一顶栏，提供三套主题与可收合的大纲面板。PDF 阅读器把主要操作放在顶部、阅读控制放在底部；窗口变窄时，设置面板与工具控件会调整排布。Markdown 笔记可与阅读器分栏使用，也可并排编辑两篇笔记。
+
 **[下载最新版](https://github.com/barbarians1999/zuoren-notes/releases/latest)** · [查看全部版本](https://github.com/barbarians1999/zuoren-notes/releases)
 
 - Windows · x64：在发布页选择 `ZuorenNotes-Setup-版本.exe`。
