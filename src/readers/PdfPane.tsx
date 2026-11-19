@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { OutlinePanel } from '../OutlinePanel';
 import { BookOpen, ChevronLeft, ChevronRight, Copy, Crop, FileText, List, Highlighter, Maximize2, MessageSquare, MousePointer2, Search, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react';
@@ -72,7 +72,12 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
   const [deletedAnnotation, setDeletedAnnotation] = useState<{ annotation: PdfAnnotation; index: number; path: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const deletionLock = useRef<object | null>(null);
-  useEffect(() => { setDeletedAnnotation(null); }, [pdf?.path, pdf?.meta.id]);
+  const [ocrPages, setOcrPages] = useState<number[]>([]);
+  const setOcrPageActive = useCallback((pageNumber: number, active: boolean) => {
+    setOcrPages(current => active ? (current.includes(pageNumber) ? current : [...current, pageNumber]) : current.filter(item => item !== pageNumber));
+  }, []);
+  useEffect(() => { setDeletedAnnotation(null); setOcrPages([]); }, [pdf?.path, pdf?.meta.id]);
+  useEffect(() => { setOcrPages([]); }, [pdf?.data]);
   useEffect(() => {
     if (!deletedAnnotation || deleting) return;
     const timer = window.setTimeout(() => setDeletedAnnotation(null), 7000);
@@ -410,7 +415,7 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
           const visible = [...host.querySelectorAll<HTMLElement>('[data-pdf-page]')].find(element => element.getBoundingClientRect().bottom > top + 80);
           const number = Number(visible?.dataset.pdfPage); if (number && number !== lastPage.current) { lastPage.current = number; setPage(number); }
         }}>
-          {!pdf ? <div className="empty-state"><BookOpen size={28}/><p>打开 PDF 或 EPUB 开始阅读</p></div> : !document ? <div className="empty-state">正在载入 PDF…</div> : Array.from({ length: pages }, (_, index) => <PdfPageSlot key={pdf.path + index} document={document} number={index+1} scale={scale} size={size} root={scroll} pinned={textSelection.pins.includes(index + 1)}><PdfPage dark={dark} document={document} pdf={pdf} page={index + 1} scale={scale} onMeta={onMeta} onShowAnnotation={showAnnotation} deleting={deleting} captureExcerpt={captureExcerpt} target={target} onMessage={onMessage} tool={tool} textSelection={textSelection.draft?.pages.find(part => part.page === index + 1) || null} search={currentSearch?.page === index + 1 ? { query: searchText.trim(), occurrence: currentSearch.occurrence, caseSensitive: searchCase } : null}/></PdfPageSlot>)}
+          {!pdf ? <div className="empty-state"><BookOpen size={28}/><p>打开 PDF 或 EPUB 开始阅读</p></div> : !document ? <div className="empty-state">正在载入 PDF…</div> : Array.from({ length: pages }, (_, index) => <PdfPageSlot key={pdf.path + index} document={document} number={index+1} scale={scale} size={size} root={scroll} pinned={textSelection.pins.includes(index + 1) || ocrPages.includes(index + 1)}><PdfPage dark={dark} document={document} pdf={pdf} page={index + 1} scale={scale} onMeta={onMeta} onShowAnnotation={showAnnotation} deleting={deleting} captureExcerpt={captureExcerpt} target={target} onMessage={onMessage} tool={tool} onOcrChange={setOcrPageActive} textSelection={textSelection.draft?.pages.find(part => part.page === index + 1) || null} search={currentSearch?.page === index + 1 ? { query: searchText.trim(), occurrence: currentSearch.occurrence, caseSensitive: searchCase } : null}/></PdfPageSlot>)}
         </div>
         {dockToolbar}
       </div>
@@ -468,7 +473,7 @@ function PdfPageSlot({ document, number, scale, size, root, pinned, children }: 
   return <div className="pdf-page-slot" ref={host} data-pdf-page={number} style={{ width: actual.width * scale, minHeight: actual.height * scale }}><span className="pdf-page-label">{number}</span>{visible || pinned ? children : <div style={{ height: actual.height * scale }}/>}</div>;
 }
 
-function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, captureExcerpt, target, onMessage, document: sharedDocument, tool, textSelection, search }: { dark: boolean; document: any; tool: PdfTool; pdf: ActivePdf | null; page: number; scale: number; onMeta: (change: (current: PdfMeta) => PdfMeta) => Promise<boolean>; onShowAnnotation: (id: string) => void; deleting: boolean; captureExcerpt: (source: ActivePdf) => PdfExcerptContext | null; target: PdfAnchor | null; onMessage: (message: string) => void; textSelection: PdfSelectedPage | null; search: { query: string; occurrence: number; caseSensitive: boolean } | null }) {
+function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, captureExcerpt, target, onMessage, document: sharedDocument, tool, onOcrChange, textSelection, search }: { dark: boolean; document: any; tool: PdfTool; pdf: ActivePdf | null; page: number; scale: number; onMeta: (change: (current: PdfMeta) => PdfMeta) => Promise<boolean>; onShowAnnotation: (id: string) => void; deleting: boolean; captureExcerpt: (source: ActivePdf) => PdfExcerptContext | null; target: PdfAnchor | null; onMessage: (message: string) => void; onOcrChange: (page: number, active: boolean) => void; textSelection: PdfSelectedPage | null; search: { query: string; occurrence: number; caseSensitive: boolean } | null }) {
   const reducedMotion = useContext(ReducedMotionContext);
   const reducedMotionRef = useRef(reducedMotion); reducedMotionRef.current = reducedMotion;
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -496,6 +501,11 @@ function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, c
   const selectionForMotion = selection || lastSelection.current;
   const [comment, setComment] = useState('');
   const [ocr, setOcr] = useState<(OcrDialog & { action: PdfRegionAction; result?: ExcerptFlowResult }) | null>(null);
+  const ocrRef = useRef<(OcrDialog & { action: PdfRegionAction; result?: ExcerptFlowResult }) | null>(null);
+  ocrRef.current = ocr;
+  const latestPdfData = useRef(pdf?.data);
+  latestPdfData.current = pdf?.data;
+  const mountedRef = useRef(true);
   const ocrTitleId = React.useId();
   const regionOperation = useRef<{ action: PdfRegionAction; doOcr: boolean } | null>(null);
   const [regionResult, setRegionResult] = useState<ExcerptFlowResult | null>(null);
@@ -503,6 +513,24 @@ function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, c
   const savingRef = useRef(false);
   const [savingAnnotation, setSavingAnnotation] = useState(false);
   useEffect(() => { setSelection(null); setComment(''); dragStart.current = null; regionOperation.current = null; setRegionResult(null); }, [tool, pdf?.data]);
+  useEffect(() => { onOcrChange(page, !!ocr); }, [onOcrChange, page, ocr]);
+  useEffect(() => {
+    const active = ocrRef.current;
+    if (!active) return;
+    if (active.status !== 'done' && !active.error) void reader().cancelOcr(active.jobId).catch(() => {});
+    ocrRef.current = null;
+    ocrTextAction.current = null;
+    setOcr(null);
+  }, [pdf?.data]);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      const active = ocrRef.current;
+      if (active && active.status !== 'done' && !active.error) void reader().cancelOcr(active.jobId).catch(() => {});
+      onOcrChange(page, false);
+    };
+  }, [onOcrChange, page]);
 
   pdfDocument.current = sharedDocument;
   useEffect(() => {
@@ -645,9 +673,16 @@ function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, c
       setRegionResult(outcome);
       if (!outcome.done) { if (outcome.error) onMessage(outcome.error); return; }
       if (operation.doOcr) {
+        const expectedData = pdf.data;
         const { jobId } = await reader().startOcr({ image: await operation.action.bytes(), languages: ['chi_sim', 'chi_tra', 'eng'] });
+        if (!mountedRef.current || latestPdfData.current !== expectedData) {
+          void reader().cancelOcr(jobId).catch(() => {});
+          return;
+        }
+        const nextOcr = { jobId, action: operation.action, annotation: operation.action.annotation, imagePath: operation.action.annotation.attachment || '', progress: 0, status: '正在准备识别', text: '' };
+        ocrRef.current = nextOcr;
         ocrTextAction.current = null;
-        setOcr({ jobId, action: operation.action, annotation: operation.action.annotation, imagePath: operation.action.annotation.attachment || '', progress: 0, status: '正在准备识别', text: '' });
+        setOcr(nextOcr);
       }
       regionOperation.current = null; setRegionResult(null); setSelection(null);
     } catch (error) { onMessage(`框选处理失败：${error instanceof Error ? error.message : String(error)}`); }

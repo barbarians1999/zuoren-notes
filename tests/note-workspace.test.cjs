@@ -251,6 +251,7 @@ test('independent open generations reject stale selection without disposing a re
   const { ws, api } = fixture(); const read = api.readNote; let release;
   api.readNote = async path => { if (path === a) await new Promise(r => release = r); return read(path); };
   const slow = ws.open(a); await ws.open(b); const right = await ws.open(c, 'secondary'); release(); assert.equal(await slow, null);
+  api.readNote = read;
   assert.equal(ws.currentDocument('primary').note.path, b); assert.equal(ws.current('secondary'), right);
   const x = ws.open(a, 'primary'), y = ws.open(a, 'primary'); const [stale, latest] = await Promise.all([x,y]);
   assert.equal(stale, null); assert.ok(latest && !latest.document.disposed);
@@ -574,4 +575,46 @@ test('a view opened during last-view draining can still accept subsequent image 
   assert.equal(second.document, doc); assert.equal(doc.disposed, false);
   doc.enqueueImagePaste({ name: 'second.png', size: 1, read: async () => new Uint8Array([2]), selection: { from: 0, to: 0 } });
   assert.equal(await doc.drainImagePastes(), true);
+});
+
+test('superseded or aborted open disposes unused recovery documents instead of stranding them', async () => {
+  const { ws, api } = fixture(), original = api.checkRecovery;
+  let releaseRecovery, enteredRecovery;
+  const recoveryStarted = new Promise(resolve => enteredRecovery = resolve);
+  const recoveryA = randomUUID(), recoveryB = randomUUID(), recoveryC = randomUUID();
+  const recoverable = (recoveryId, sourcePath, baseHash, content) => ({
+    status: 'recoverable',
+    recovery: {
+      version: 1, recoveryId, sourcePath, paneHint: 'primary',
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      baseHash, draftHash: digest(content), content, encoding: { bom: false, eol: '\n' },
+    },
+  });
+  api.checkRecovery = async input => {
+    if (input.recoveryId === recoveryA) {
+      enteredRecovery();
+      await new Promise(resolve => releaseRecovery = resolve);
+      return recoverable(recoveryA, a, '0'.repeat(64), 'recovered a');
+    }
+    if (input.recoveryId === recoveryB) return recoverable(recoveryB, b, '0'.repeat(64), 'conflicted b');
+    if (input.recoveryId === recoveryC) return recoverable(recoveryC, c, digest('# ' + c), 'recovered c');
+    return original(input);
+  };
+  const pendingOpen = ws.open(a, 'primary', true, recoveryA);
+  await recoveryStarted;
+  const strandedA = ws.documents.get(documentKey(a));
+  assert.ok(strandedA);
+  const previewB = await ws.open(b, 'primary', false);
+  assert.equal(previewB.preview, true);
+  releaseRecovery();
+  assert.equal(await pendingOpen, null);
+  assert.equal(strandedA.disposed, true);
+  assert.equal(ws.documents.has(documentKey(a)), false);
+
+  previewB.document.setConflict({ conflict: true });
+  assert.equal(await ws.open(c, 'primary', false, recoveryC), null);
+  assert.equal(ws.documents.has(documentKey(c)), false);
+  assert.equal(ws.blockingDocument, previewB.document);
+  assert.equal(previewB.document.disposed, false);
+  previewB.document.dispose();
 });

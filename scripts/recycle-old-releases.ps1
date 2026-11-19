@@ -13,12 +13,14 @@ function Add-Artifact([IO.DirectoryInfo]$Item, [string]$Group, [string]$Parent) 
     $script:candidates += [pscustomobject]@{ Path = $Item.FullName; Group = $Group; Name = $Item.Name; Parent = $Parent }
 }
 foreach ($item in Get-ChildItem -LiteralPath $releaseRoot -Directory) {
+    if ($item.FullName -eq $latestDirectory) { continue }
     if ($item.Name -match '^\d+\.\d+\.\d+$' -and [version]$item.Name -lt [version]$proof.version) { Add-Artifact $item 'releases' $releaseRoot }
+    elseif ($item.Name -match '^local-test-(\d+\.\d+\.\d+)-[a-f0-9]+$' -and [version]$Matches[1] -le [version]$proof.version) { Add-Artifact $item 'releases' $releaseRoot }
 }
-foreach ($spec in @(@('exports', '^(\d+\.\d+\.\d+)-\d{4}-\d{2}-\d{2}$'), @('outputs', '^(?:ui-|markdown-audit-|markdown-repair-)(\d+\.\d+\.\d+)$'))) {
+foreach ($spec in @(@('exports', '^(\d+\.\d+\.\d+)-\d{4}-\d{2}-\d{2}$'), @('outputs', '^(?:ui-|markdown-audit-|markdown-repair-)(\d+\.\d+\.\d+)(?:-local-test)?$'))) {
     $parent = Join-Path $root $spec[0]
     if (Test-Path -LiteralPath $parent) { foreach ($item in Get-ChildItem -LiteralPath $parent -Directory) {
-        if ($item.Name -match $spec[1] -and [version]$Matches[1] -lt [version]$proof.version) { Add-Artifact $item $spec[0] $parent }
+        if ($item.Name -match $spec[1] -and ([version]$Matches[1] -lt [version]$proof.version -or ($item.Name.EndsWith('-local-test') -and [version]$Matches[1] -le [version]$proof.version))) { Add-Artifact $item $spec[0] $parent }
     } }
 }
 $work = Join-Path $root 'work'
@@ -42,15 +44,33 @@ foreach ($target in $candidates) {
         # Snapshot verifies no links/protected subtrees before any removal.
         $snapshot = @(Get-ArtifactSnapshot $target.Path)
         if ($snapshot | Where-Object { $_.Relative -match '\.(pdf|epub)$' }) { throw 'Original reading material found; deferred.' }
+        $archiveRoot = Join-Path (Join-Path (Join-Path $root 'logs') $target.Group) $target.Name
+        [IO.Directory]::CreateDirectory($archiveRoot) | Out-Null
+        $snapshotText = (@{ Target = $target.Path; Group = $target.Group; Name = $target.Name; Files = @($snapshot) } | ConvertTo-Json -Depth 6)
+        $snapshotBytes = $encoding.GetBytes($snapshotText)
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $snapshotHash = ([BitConverter]::ToString($sha.ComputeHash($snapshotBytes))).Replace('-', '').ToLowerInvariant() }
+        finally { $sha.Dispose() }
+        $snapshotArchive = Join-Path $archiveRoot 'artifact-snapshot.json'
+        if ((Test-Path -LiteralPath $snapshotArchive) -and (Get-ArtifactHash $snapshotArchive) -ne $snapshotHash) {
+            $snapshotArchive = Join-Path $archiveRoot ('artifact-snapshot.' + $snapshotHash.Substring(0, 12) + '.json')
+        }
+        if (-not (Test-Path -LiteralPath $snapshotArchive)) { [IO.File]::WriteAllBytes($snapshotArchive, $snapshotBytes) }
+        if ((Get-ArtifactHash $snapshotArchive) -ne $snapshotHash) { throw 'Historical snapshot archive hash mismatch.' }
         $archiveNames = @('VALIDATION.json', 'BUILD.json', 'SHA256SUMS.txt', 'PUBLISHED.json', 'EXPORT-VERIFICATION.json', 'installer-integrity.json', 'builder-debug.yml', 'CHANGELOG.md', 'summary.json', 'manifest.json', 'recycled.jsonl', 'report.html', 'observations.json')
         foreach ($entry in $snapshot) {
             $file = Join-Path $target.Path $entry.Relative
             if ([IO.Path]::GetFileName($file) -notin $archiveNames -and [IO.Path]::GetExtension($file) -ne '.log') { continue }
-            $archive = Join-Path (Join-Path (Join-Path $root 'logs') $target.Group) ($target.Name + '\' + $entry.Relative)
+            $archive = Join-Path $archiveRoot $entry.Relative
             [IO.Directory]::CreateDirectory((Split-Path $archive -Parent)) | Out-Null
             if (Test-Path -LiteralPath $archive) {
-                if ((Get-ArtifactHash $archive) -ne $entry.Sha256) { throw 'Historical log archive conflict; original retained.' }
-            } else { Copy-Item -LiteralPath $file -Destination $archive }
+                if ((Get-ArtifactHash $archive) -ne $entry.Sha256) {
+                    $ext = [IO.Path]::GetExtension($archive)
+                    $stem = if ($ext) { $archive.Substring(0, $archive.Length - $ext.Length) } else { $archive }
+                    $archive = $stem + '.' + $entry.Sha256.Substring(0, 12) + $ext
+                }
+            }
+            if (-not (Test-Path -LiteralPath $archive)) { Copy-Item -LiteralPath $file -Destination $archive }
             if ((Get-ArtifactHash $archive) -ne $entry.Sha256) { throw 'Historical log archive hash mismatch.' }
         }
         # Validate the accepted package again immediately before recycling.

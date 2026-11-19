@@ -155,3 +155,47 @@ test('saved highlights paint once and leave a selected area entirely to the blue
   for (const part of parts) assert.ok(part.x + part.w <= cut.x + 1e-9 || part.x >= cut.x + cut.w - 1e-9);
   assert.deepEqual(visible([rect], [rect], 1000, 1000), []);
 });
+
+test('endpoint caret probing steps by whole code points across UTF-16 surrogate pairs', () => {
+  const previous = { Node: global.Node, NodeFilter: global.NodeFilter, getComputedStyle: global.getComputedStyle };
+  const text = 'A\u{1F600}B'; // UTF-16 length 4: A [0,1), emoji [1,3), B [3,4)
+  const node = { nodeType: 3, data: text, get length() { return this.data.length; } };
+  const rect = { left: 10, right: 34, top: 10, bottom: 20, width: 24, height: 10 };
+  const span = { firstChild: node, isConnected: true, getBoundingClientRect: () => rect, closest: () => null };
+  node.parentElement = { closest: () => span };
+  const rangesMeasured = [];
+  const boxes = new Map([
+    ['0:1', { left: 10, right: 16, top: 10, bottom: 20, width: 6, height: 10 }],
+    ['1:3', { left: 16, right: 28, top: 10, bottom: 20, width: 12, height: 10 }],
+    ['3:4', { left: 28, right: 34, top: 10, bottom: 20, width: 6, height: 10 }],
+  ]);
+  const document = {
+    caretRangeFromPoint: () => null, caretPositionFromPoint: () => null,
+    createTreeWalker: () => { let visited = false; return { currentNode: null, nextNode() { if (visited) return false; visited = true; this.currentNode = node; return true; } }; },
+    createRange: () => {
+      let start = 0, end = 0;
+      return {
+        setStart(_node, value) { start = value; },
+        setEnd(_node, value) { end = value; rangesMeasured.push([start, end]); },
+        getBoundingClientRect: () => boxes.get(`${start}:${end}`) || { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 },
+      };
+    },
+  };
+  span.ownerDocument = document;
+  const layer = { dataset: { textRevision: '1', mainRotation: '0' }, querySelectorAll: () => [span] };
+  const holder = { getBoundingClientRect: () => ({ left: 0, right: 50, top: 0, bottom: 50 }), querySelector: () => layer };
+  const root = { ownerDocument: document, querySelectorAll: selector => selector === '.canvas-holder' ? [holder] : [], contains: value => value === node };
+  try {
+    global.Node = { TEXT_NODE: 3 }; global.NodeFilter = { SHOW_TEXT: 4 };
+    global.getComputedStyle = () => ({ transform: 'none', direction: 'ltr' });
+    const leftOfEmoji = createCache(root, { x: 18, y: 15 });
+    assert.deepEqual(rangesMeasured, [[0, 1], [1, 3], [3, 4]]);
+    assert.equal(leftOfEmoji.candidates[0].position.offset, 1);
+
+    const rightOfEmoji = createCache(root, { x: 25, y: 15 });
+    assert.equal(rightOfEmoji.candidates[0].position.offset, 3);
+    assert.notEqual(rightOfEmoji.candidates[0].position.offset, 2);
+  } finally {
+    global.Node = previous.Node; global.NodeFilter = previous.NodeFilter; global.getComputedStyle = previous.getComputedStyle;
+  }
+});

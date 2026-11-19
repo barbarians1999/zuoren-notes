@@ -18,6 +18,7 @@ export class NoteWorkspace {
   ready = false;
   committing = false;
   private loads = new Map<string, Promise<NoteDocument>>();
+  private pendingOpens = new Map<string, number>();
   private requests = { primary: 0, secondary: 0 };
   private interaction = 0;
   private listeners = new Set<() => void>();
@@ -86,33 +87,47 @@ export class NoteWorkspace {
     if (this.committing) return null;
     const request = ++this.requests[group];
     const interaction = ++this.interaction;
-    if (prepare && !(await prepare())) return null;
-    if (request !== this.requests[group]) return null;
-    const doc = await this.load(path, recoveryId, group);
-    if (request !== this.requests[group]) return null;
-    const target = this.groups[group];
-    const existing = target.tabs.find(tab => tab.document === doc);
-    if (existing) { if (pinned) existing.preview = false; this.completeOpen(group, existing, interaction); return existing; }
-    const empty = this.current(group); let replace = empty && !empty.document ? empty : !pinned ? target.tabs.find(tab => tab.preview) : undefined;
-    if (replace?.document?.hasImageWork) { replace.preview = false; replace = undefined; }
-    if (!replace && this.groups.primary.tabs.length + this.groups.secondary.tabs.length >= 100) { this.releaseUnused(doc); this.message('最多可打开 100 个标签，请先关闭一些标签。'); return null; }
-    if (replace?.document && replace.document.views.size === 1 && !(await replace.document.save())) {
-      this.blockingDocument = replace.document; this.message('原临时笔记未保存成功，已保留。'); this.notify(); return null;
+    const key = documentKey(path);
+    this.pendingOpens.set(key, (this.pendingOpens.get(key) || 0) + 1);
+    let doc: NoteDocument | undefined;
+    try {
+      if (prepare && !(await prepare())) return null;
+      if (request !== this.requests[group]) return null;
+      doc = await this.load(path, recoveryId, group);
+      if (request !== this.requests[group]) return null;
+      const target = this.groups[group];
+      const existing = target.tabs.find(tab => tab.document === doc);
+      if (existing) { if (pinned) existing.preview = false; this.completeOpen(group, existing, interaction); return existing; }
+      const empty = this.current(group); let replace = empty && !empty.document ? empty : !pinned ? target.tabs.find(tab => tab.preview) : undefined;
+      if (replace?.document?.hasImageWork) { replace.preview = false; replace = undefined; }
+      if (!replace && this.groups.primary.tabs.length + this.groups.secondary.tabs.length >= 100) { this.message('最多可打开 100 个标签，请先关闭一些标签。'); return null; }
+      if (replace?.document && replace.document.views.size === 1 && !(await replace.document.save())) {
+        this.blockingDocument = replace.document; this.message('原临时笔记未保存成功，已保留。'); this.notify(); return null;
+      }
+      if (request !== this.requests[group]) return null;
+      if (replace?.document?.hasImageWork) { replace.preview = false; replace = undefined; }
+      if (replace?.document && !replace.preview) replace = undefined;
+      if (!replace && this.groups.primary.tabs.length + this.groups.secondary.tabs.length >= 100) { this.message('最多可打开 100 个标签，请先关闭一些标签。'); return null; }
+      const tab = this.newTab(doc, !pinned);
+      if (replace) { const index = target.tabs.indexOf(replace); target.tabs.splice(index, 1, tab); replace.document?.views.delete(replace); if (replace.document) this.releaseUnused(replace.document); }
+      else target.tabs.push(tab);
+      this.completeOpen(group, tab, interaction); return tab;
+    } finally {
+      const remaining = (this.pendingOpens.get(key) || 1) - 1;
+      if (remaining > 0) this.pendingOpens.set(key, remaining);
+      else this.pendingOpens.delete(key);
+      if (doc) this.abandonUnused(doc, key);
     }
-    if (request !== this.requests[group]) return null;
-    if (replace?.document?.hasImageWork) { replace.preview = false; replace = undefined; }
-    if (replace?.document && !replace.preview) replace = undefined;
-    if (!replace && this.groups.primary.tabs.length + this.groups.secondary.tabs.length >= 100) { this.message('最多可打开 100 个标签，请先关闭一些标签。'); return null; }
-    const tab = this.newTab(doc, !pinned);
-    if (replace) { const index = target.tabs.indexOf(replace); target.tabs.splice(index, 1, tab); replace.document?.views.delete(replace); if (replace.document) this.releaseUnused(replace.document); }
-    else target.tabs.push(tab);
-    this.completeOpen(group, tab, interaction); return tab;
   }
   private completeOpen(group: NoteGroupId, tab: NoteViewState, interaction: number) {
     if (interaction === this.interaction) this.activate(group, tab.id);
     else { this.groups[group].activeId = tab.id; this.notify(); }
   }
   invalidate(group: NoteGroupId) { this.requests[group]++; }
+  private abandonUnused(doc: NoteDocument, key = documentKey(doc.note.path)) {
+    if (doc.views.size || doc.hasImageWork || this.pendingOpens.has(key) || this.pendingOpens.has(documentKey(doc.note.path))) return;
+    doc.dispose(); this.documents.delete(documentKey(doc.note.path));
+  }
   private releaseUnused(doc: NoteDocument) {
     if (doc.views.size || doc.hasImageWork || !sameNoteContent(doc.text, doc.note.content) || doc.conflict || doc.recoveryConflict) return;
     doc.dispose(); this.documents.delete(documentKey(doc.note.path));

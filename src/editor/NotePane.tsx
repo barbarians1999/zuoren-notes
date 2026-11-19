@@ -245,11 +245,15 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
       return;
     }
   }, [findOpen, mode, activeMatch?.from, activeMatch?.to, sourceView, previewMap]);
+  const outlineSource = sharedDocument || sourceView;
+  const currentHeadings = useMemo(
+    () => (note?.path && outlineSource ? markdownOutline(outlineSource) : []),
+    [note?.path, outlineSource, revision, text],
+  );
   useEffect(() => {
-    if (!outline || !sourceView || !note?.path) return;
-    const next = markdownOutline(sourceView);
-    setHeadings(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
-  }, [outline, note?.path, revision, sourceView, text]);
+    if (!outline || !outlineSource || !note?.path) return;
+    setHeadings(previous => JSON.stringify(previous) === JSON.stringify(currentHeadings) ? previous : currentHeadings);
+  }, [outline, outlineSource, note?.path, currentHeadings]);
   useEffect(() => {
     setSelectedUnits(0); setParagraphUnits(0);
     const updateSelection = () => {
@@ -433,7 +437,8 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
       }
     }
     if (sourceView && !hidden && !event.defaultPrevented && !event.nativeEvent.isComposing && event.keyCode !== 229
-      && (event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'z') {
+      && (event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'z'
+      && !(event.target as Element | null)?.closest?.('input, textarea')) {
       event.preventDefault(); event.stopPropagation(); cmRedo(sourceView); sourceView.focus(); return;
     }
     if (!note || hidden || event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229 ||
@@ -467,7 +472,7 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
       {imageMessage && <button aria-label="关闭编辑提示" onClick={() => setImageMessage('')}>×</button>}
     </div>}
     <div className="note-body" ref={host}>
-      {!note ? <div className="empty-state"><FileText size={28}/><p>打开或新建 Markdown 笔记</p><small>编辑后自动保存</small></div> : <div className="note-content"><div className="note-editor-surface" style={{ display: mode === 'preview' ? 'none' : 'flex' }}><MarkdownSourceEditor notePath={note.path} onView={setSourceView} onSelectionChange={handleSourceSelection} onMessage={setImageMessage} sharedDocument={sharedDocument!} tab={tab!}/></div>{mode === 'preview' && <MarkdownPreview notePath={note.path} text={text} headings={sourceView ? markdownOutline(sourceView) : []} onJump={stableJump} onToggleTask={toggleTask} onOpenLink={openMarkdownLink}/>}</div>}
+      {!note ? <div className="empty-state"><FileText size={28}/><p>打开或新建 Markdown 笔记</p><small>编辑后自动保存</small></div> : <div className="note-content"><div className="note-editor-surface" style={{ display: mode === 'preview' ? 'none' : 'flex' }}><MarkdownSourceEditor notePath={note.path} onView={setSourceView} onSelectionChange={handleSourceSelection} onMessage={setImageMessage} sharedDocument={sharedDocument!} tab={tab!}/></div>{mode === 'preview' && <MarkdownPreview notePath={note.path} text={text} headings={currentHeadings} onJump={stableJump} onToggleTask={toggleTask} onOpenLink={openMarkdownLink}/>}</div>}
       <OutlinePanel open={outline} label="Markdown 大纲" emptyText="使用标题组织笔记后，目录会出现在这里。"
         onClose={() => setOutline(false)}
         returnFocus={() => document.querySelector(`[data-note-controls="${paneId}"] [data-outline-toggle]`) || host.current?.querySelector('[data-outline-toggle]') || null}

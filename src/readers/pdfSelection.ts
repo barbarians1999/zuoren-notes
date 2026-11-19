@@ -177,15 +177,22 @@ function nearestPdfTextPositionInSpan(span: HTMLElement, point: PdfPoint): PdfTe
   const walker = span.ownerDocument.createTreeWalker(span, NodeFilter.SHOW_TEXT);
   while (walker.nextNode()) {
     const node = walker.currentNode as Text;
-    for (let offset = 0; offset < node.length; offset += 1) {
-      const range = span.ownerDocument.createRange(); range.setStart(node, offset); range.setEnd(node, offset + 1);
+    const text = node.data;
+    for (let offset = 0; offset < node.length;) {
+      const code = text.charCodeAt(offset);
+      const nextCode = offset + 1 < node.length ? text.charCodeAt(offset + 1) : 0;
+      const step = code >= 0xd800 && code <= 0xdbff && nextCode >= 0xdc00 && nextCode <= 0xdfff ? 2 : 1;
+      const endOffset = offset + step;
+      const range = span.ownerDocument.createRange(); range.setStart(node, offset); range.setEnd(node, endOffset);
       const rect = range.getBoundingClientRect();
-      if (!rect.width || !rect.height) continue;
-      const distance = pointRectDistance(point, rect);
-      if (!best || distance < best.distance) {
-        const after = (point.x - (rect.left + rect.width / 2)) * axisX + (point.y - (rect.top + rect.height / 2)) * axisY > 0;
-        best = { node, offset: offset + (after ? 1 : 0), distance };
+      if (rect.width && rect.height) {
+        const distance = pointRectDistance(point, rect);
+        if (!best || distance < best.distance) {
+          const after = (point.x - (rect.left + rect.width / 2)) * axisX + (point.y - (rect.top + rect.height / 2)) * axisY > 0;
+          best = { node, offset: after ? endOffset : offset, distance };
+        }
       }
+      offset = endOffset;
     }
   }
   return best && { node: best.node, offset: best.offset };

@@ -25,6 +25,14 @@ async function run(name, executable, args, environment = {}) {
   } finally { await new Promise(resolve => output.end(resolve)); }
   return fs.readFile(path.join(logs, name + '.log'), 'utf8');
 }
+const MIN_DELIVERY_FREE_BYTES = 2 * 1024 ** 3;
+async function assertFreeDiskSpace(target) {
+  const stats = await fs.statfs(target);
+  const freeBytes = Number(stats.bsize) * Number(stats.bavail);
+  if (freeBytes < MIN_DELIVERY_FREE_BYTES) {
+    throw Error(`Insufficient disk space for release build/packaging: ${(freeBytes / 1024 ** 3).toFixed(2)} GiB free, need at least 2.00 GiB`);
+  }
+}
 const node = (name, args, env) => run(name, process.execPath, args, env);
 async function main() {
   const args = options(process.argv.slice(2));
@@ -60,6 +68,7 @@ async function main() {
     }
     if (checkpoint.artifactHashes) for (const [file, expected] of Object.entries(checkpoint.artifactHashes)) if (await sha256(path.join(directory, file)) !== expected) throw Error('Existing build bytes changed: ' + file);
   } else {
+    await assertFreeDiskSpace(root);
     await fs.mkdir(path.dirname(directory), { recursive: true });
     await fs.mkdir(directory); // Exclusive: never overwrite a running/failed build.
     checkpoint = { schemaVersion: 2, version, kind: args.localTest ? 'local-test' : 'official', source, tests: {}, createdAt: new Date().toISOString() };
@@ -79,6 +88,7 @@ async function main() {
   for (const stage of ['unit', 'source', 'packaged']) {
     if (stage === 'packaged' && !checkpoint.artifactHashes) {
       if ((await directoryIdentity(root, 'dist')).sha256 !== checkpoint.buildOutputs.sha256) throw Error('Production build output changed; refusing to package a different build');
+      await assertFreeDiskSpace(root);
       await node('installer', ['scripts/installer.cjs'], { ZHAOYE_INSTALLER_OUTPUT: directory, ZHAOYE_INSTALLER_NAME: installerName });
       checkpoint.artifactHashes = { [path.basename(installer)]: await sha256(installer), 'win-unpacked/resources/app.asar': await sha256(archive), 'win-unpacked/ZuorenNotes.exe': await sha256(executable) };
       await writeJson(checkpointFile, checkpoint);

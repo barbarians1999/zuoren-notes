@@ -25,3 +25,20 @@ test('mutation barriers release descendants and expire instead of blocking path 
   assert.equal(barrier.has('D:\\Notes\\Deleted\\new.md', Date.now() + 500), true);
   assert.equal(barrier.has('D:\\Notes\\Deleted\\new.md', Date.now() + 1_001), false);
 });
+
+test('case-only renames release the barrier immediately while cross-name renames release only newPath', () => {
+  const barrier = new MutationBarrier(30_000);
+  const oldCase = 'D:\\Notes\\draft.md', newCase = 'D:\\Notes\\Draft.md';
+  barrier.block(oldCase);
+  assert.equal(sameOrDescendantPath(oldCase, newCase), true);
+  barrier.release(newCase);
+  assert.equal(barrier.has(newCase), false);
+
+  const oldPath = 'D:\\Notes\\old.md', newPath = 'D:\\Notes\\renamed.md';
+  barrier.block(oldPath);
+  barrier.block(newPath);
+  assert.equal(sameOrDescendantPath(oldPath, newPath), false);
+  barrier.releaseExact(newPath);
+  assert.equal(barrier.has(newPath), false);
+  assert.equal(barrier.has(oldPath), true);
+});

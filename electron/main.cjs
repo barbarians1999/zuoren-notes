@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { fileURLToPath, pathToFileURL } = require('node:url');
-const { FileStore, digest, inside } = require('./storage.cjs');
+const { FileStore, atomicWrite, digest, inside } = require('./storage.cjs');
 const { FileMoves } = require('./file-moves.cjs');
 const { MoveJournal } = require('./move-journal.cjs');
 const { assertMoveSession, remapMoveSettings, sessionHash } = require('./move-session.cjs');
@@ -94,16 +94,8 @@ async function readSettings({ strictMove = false } = {}) {
 }
 async function writeSettings(value) {
   await fs.mkdir(path.dirname(settingsFile()), { recursive: true });
-  const temporary = `${settingsFile()}.${crypto.randomUUID()}.tmp`;
-  try {
-    await fs.writeFile(temporary, JSON.stringify(value, null, 2), 'utf8');
-    await fs.rename(temporary, settingsFile());
-    return value;
-  } finally {
-    // Antivirus/indexer interference can fail the rename.  Do not leave a
-    // growing pile of settings snapshots behind in the user-data directory.
-    await fs.unlink(temporary).catch(() => {});
-  }
+  await atomicWrite(settingsFile(), JSON.stringify(value, null, 2));
+  return value;
 }
 const settingsStore = new SettingsStore({ read: readSettings, write: writeSettings });
 async function rememberFile(file) {

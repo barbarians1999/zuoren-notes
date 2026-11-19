@@ -186,6 +186,28 @@ class FileStore {
     });
   }
 
+  async historyMigrations(source, target) {
+    const historyDir = path.join(path.dirname(source), '.reader', 'history');
+    let realHistory, entries;
+    try {
+      const realAux = await fs.realpath(path.dirname(historyDir));
+      realHistory = await fs.realpath(historyDir);
+      if (!inside(path.dirname(source), realAux) || !inside(realAux, realHistory)) throw new Error('历史目录指向资料目录以外，已停止重命名');
+      entries = await fs.readdir(realHistory);
+    } catch (error) {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    }
+    const oldPrefix = digest(path.basename(source)).slice(0, 16) + '-';
+    const newPrefix = digest(path.basename(target)).slice(0, 16) + '-';
+    if (oldPrefix === newPrefix) return [];
+    const suffixPattern = new RegExp('^' + oldPrefix + '(\\d+\\.md)$');
+    return entries.flatMap(name => {
+      const match = name.match(suffixPattern);
+      return match ? [{ from: path.join(realHistory, name), to: path.join(realHistory, newPrefix + match[1]) }] : [];
+    });
+  }
+
   async createFolderAt(directory, requestedName) {
     return this.entryMutation(async () => {
       directory = await this.checked(directory, { mutation: true });
@@ -272,6 +294,8 @@ class FileStore {
       const migrations = stat.isFile() && /\.(md|markdown)$/i.test(source)
         ? await this.recoveryMigrations(source, target, false)
         : stat.isDirectory() ? await this.recoveryMigrations(source, target, true) : [];
+      const historyMoves = stat.isFile() && /\.(md|markdown)$/i.test(source)
+        ? await this.historyMigrations(source, target) : [];
       let moved = false;
       const moveEntity = async (from, to) => {
         if (sameIdentity && from !== to) {
@@ -282,6 +306,7 @@ class FileStore {
       };
       await moveEntity(source, target); moved = true;
       const committed = [];
+      const committedHistory = [];
       try {
         for (const item of migrations) {
           const relative = path.relative(source, item.file);
@@ -289,8 +314,13 @@ class FileStore {
           committed.push({ file: movedFile, raw: item.raw });
           await this.writeRecoveryRecord(movedFile, item.next);
         }
+        for (const item of historyMoves) {
+          await fs.rename(item.from, item.to);
+          committedHistory.push(item);
+        }
       } catch (error) {
         const rollbackErrors = [];
+        for (const item of committedHistory.reverse()) try { await fs.rename(item.to, item.from); } catch (rollbackError) { rollbackErrors.push(rollbackError); }
         for (const item of committed.reverse()) try { await this.writeRecoveryRecord(item.file, item.raw); } catch (rollbackError) { rollbackErrors.push(rollbackError); }
         if (moved) try { await moveEntity(target, source); } catch (rollbackError) { rollbackErrors.push(rollbackError); }
         if (rollbackErrors.length) throw new Error(`恢复稿路径迁移失败且回滚未完全成功：${error.message}；${rollbackErrors.map(item => item.message).join('；')}`);

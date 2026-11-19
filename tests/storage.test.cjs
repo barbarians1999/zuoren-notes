@@ -251,3 +251,23 @@ test('valid JSON with an invalid recovery shape never blocks unrelated Markdown 
     assert.equal(await fs.readFile(path.join(directory, `6a8d4aa2-cc3b-4dae-84c4-86b028ad7e${30 + index}.json`), 'utf8'), content);
   }
 });
+
+test('renameEntry preserves .reader/history backups across normal and case-only Markdown renames', async t => {
+  const root = await fixture(), store = new FileStore();
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  await store.grantRoot(root);
+  const noteFile = path.join(root, '中文笔记.md');
+  const first = await store.readNote(noteFile);
+  await store.saveNote({ path: noteFile, content: '改后内容\n', hash: first.hash, bom: first.bom, eol: first.eol });
+  assert.equal((await store.history(noteFile)).length, 1);
+
+  const renamed = await store.renameEntry(noteFile, 'draft.md');
+  let entries = await store.history(renamed.path);
+  assert.equal(entries.length, 1);
+  assert.match(entries[0].content, /标题\r\n第二行/);
+
+  const recased = await store.renameEntry(renamed.path, 'Draft.md');
+  entries = await store.history(recased.path);
+  assert.equal(entries.length, 1);
+  assert.match(entries[0].content, /标题\r\n第二行/);
+});

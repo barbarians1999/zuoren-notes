@@ -264,3 +264,38 @@ test('empty indent exit preserves fenced code, nested containers, selections and
     assert.equal(exitEmptyIndent(v), false, doc);
   }
 });
+
+test('markdownOutline accepts a state holder such as NoteDocument without a mounted EditorView', async () => {
+  const { randomUUID } = await import('node:crypto');
+  const { markdownOutline } = await import('../src/editor/markdownCommands.ts');
+  const { NoteDocument } = await import('../src/workspace/noteDocument.ts');
+  const text = '# 一级标题\n\n## **加粗**二级标题\n\n正文内容\n';
+  const v = await view(text);
+  const doc = new NoteDocument(
+    { path: 'C:\\notes\\outline.md', content: text, hash: '0'.repeat(64), bom: false, eol: '\n' },
+    randomUUID(),
+    () => ({
+      readNote: async () => ({ path: 'C:\\notes\\outline.md', content: text, hash: '0'.repeat(64), bom: false, eol: '\n' }),
+      checkRecovery: async () => ({ status: 'none' }),
+      writeRecovery: async () => {},
+      deleteRecovery: async () => true,
+      saveNote: async () => ({ path: 'C:\\notes\\outline.md', content: text, hash: '0'.repeat(64), bom: false, eol: '\n', conflict: false }),
+    }),
+    { has: () => false },
+    () => {},
+    () => {},
+    () => {},
+    'primary',
+    () => true,
+  );
+  try {
+    const fromView = markdownOutline(v);
+    assert.deepEqual(markdownOutline({ state: v.state }), fromView);
+    assert.deepEqual(markdownOutline(doc), fromView);
+    assert.equal(fromView.length, 2);
+    assert.equal(fromView[0].text, '一级标题');
+    assert.equal(fromView[1].text, '加粗二级标题');
+  } finally {
+    doc.dispose();
+  }
+});

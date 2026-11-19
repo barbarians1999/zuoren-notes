@@ -382,17 +382,22 @@ function App() {
   }, [sessionReady, saveSessionNow]);
 
   const finishClosing = useCallback(async () => {
-    const release = workspace.beginCommit(); if (!release) return;
+    const release = workspace.beginCommit();
+    if (!release) { setMessage('正在执行文件操作或保存，请稍候再试关闭。'); return; }
     setClosing(true);
     let confirmed = false;
+    let keepClosingForConflict = false;
     try {
-      if (!(await workspace.saveAll())) return;
+      if (!(await workspace.saveAll())) {
+        keepClosingForConflict = !!(workspace.blockingDocument?.conflict || workspace.blockingDocument?.recoveryConflict);
+        return;
+      }
       if (!(await readerSession.flush())) { setMessage('阅读进度或标注尚未保存成功，请重试后关闭。'); return; }
       if (sessionRecovery.current.initialized && !(await saveSessionNow(true))) return;
       // Keep input frozen through the actual OS close, not just until saves return.
       reader().confirmClose(); confirmed = true;
     } catch (error) { setMessage(`关闭前保存失败，内容仍保留：${String(error)}`); }
-    finally { if (!confirmed) { release(); setClosing(false); } }
+    finally { if (!confirmed) { release(); if (!keepClosingForConflict) setClosing(false); } }
   }, [workspace, readerSession, saveSessionNow]);
   useEffect(() => reader().onAppClosing(finishClosing), [finishClosing]);
 
@@ -488,6 +493,8 @@ function App() {
         const newPath = renamed.path;
         const remap = (value: string) => remapDescendantPath(value, oldPath, newPath);
         remapWorkspacePath(oldPath, newPath);
+        if (sameOrDescendantPath(oldPath, newPath)) releaseMutationBarrier(newPath);
+        else mutationBarrier.current.releaseExact(newPath);
         setInlineEntryEdit(null); try { await loadDirectory(root, sameOrDescendantPath(startDirectory, oldPath) ? remap(startDirectory) : startDirectory); } catch (error) { setMessage(`刷新目录失败：${error instanceof Error ? error.message : String(error)}`); }
       } else if (edit.kind === 'note') {
         const loaded = await reader().createNoteAt({ directory: parentPath, name: edit.value, initialContent: '# 新笔记\n\n' });
@@ -561,7 +568,7 @@ function App() {
     if (action !== 'highlight' && !target) return { done: false, saved: false, inserted: false, error: '请先打开可写入的笔记。' };
     return createPdfTextAction(selection, action, {
       sourceCurrent: current, targetCurrent: () => !!target?.valid(),
-      save: annotations => persistPdfChange(pdf, meta => ({ ...meta, page, annotations: [...meta.annotations, ...annotations.filter(item => !meta.annotations.some(old => old.id === item.id))] })),
+      save: annotations => persistPdfChange(pdf, meta => ({ ...meta, page: readerSession.getSnapshot().page, annotations: [...meta.annotations, ...annotations.filter(item => !meta.annotations.some(old => old.id === item.id))] })),
       insert: async parts => {
         if (!target || !target.valid() || !current()) return false;
         const source = await reader().makeAnchorPath({ fromFile: target.path, toFile: pdf.path });
@@ -868,7 +875,7 @@ function App() {
     {fileMoveUi.dialogs}
     <TrashConfirmation open={!!trashCandidate} superseded={!!modalConflict || !!workspace.pendingClose} name={trashCandidate?.name || ''} onCancel={() => setTrashCandidate(null)} onConfirm={async () => { const entry = trashCandidate; if (!entry) return false; const okay = await deleteEntry(entry); if (okay) setTrashCandidate(current => current?.path === entry.path ? null : current); return okay; }}/>
     <ToastMessage open={!!message} message={message} onDismiss={() => setMessage('')}/>
-    {workspace.pendingClose && !modalConflict && <UnsavedDialog description="关闭这份未能保存的笔记" onCancel={() => { workspace.pendingClose = null; workspace.blockingDocument = null; workspace.notify(); }}
+    {workspace.pendingClose && !modalConflict && <UnsavedDialog description="关闭这份未能保存的笔记" onCancel={() => { workspace.pendingClose = null; workspace.blockingDocument = null; setClosing(false); workspace.notify(); }}
       onDiscard={async () => { await workspace.finishPendingClose(true).catch(error => setMessage(String(error))); }}
       onSave={async () => { await workspace.finishPendingClose().catch(error => setMessage(String(error))); }}/>}
     {modalConflict && conflictDoc && <ConflictDialog conflict={{ ...modalConflict, conflict: true }} mine={conflictDoc.recoveryConflict?.recovery.content || conflictDoc.text}
