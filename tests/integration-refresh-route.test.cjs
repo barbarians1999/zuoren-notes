@@ -40,9 +40,9 @@ async function wiring(workspace, options = {}) {
   let last = null;
   const marker = 'useEffect(() => reader().onRefreshNote(() => {';
   const body = expression(main, marker);
-  const onRefresh = new Function('requestNoteRefresh', 'workspace', 'sessionReady', 'closing', 'readerClosing', 'settingsOpen', 'document', 'layout', 'activeSurfaceRef', 'setMessage',
+  const onRefresh = new Function('requestNoteRefresh', 'workspace', 'sessionReady', 'closing', 'readerClosing', 'settingsOpen', 'pendingReaderSave', 'document', 'layout', 'activeSurfaceRef', 'setMessage',
     'return () => {' + body + '};')((...args) => last = requestNoteRefresh(...args), workspace, options.ready ?? true,
-    !!options.closing, !!options.readerClosing, !!options.settingsOpen, { querySelector: selector => { assert.equal(selector, '[role="dialog"]'); return options.dialogOpen ? {} : null; } }, options.layout || 'split', activeSurfaceRef, value => messages.push(value));
+    !!options.closing, !!options.readerClosing, !!options.settingsOpen, !!options.pendingReaderSave, { querySelector: selector => { assert.equal(selector, '[role="dialog"]'); return options.dialogOpen ? {} : null; } }, options.layout || 'split', activeSurfaceRef, value => messages.push(value));
   const ipc = new EventEmitter(), contents = new EventEmitter(); let api;
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../electron/preload.cjs'), 'utf8'), {
     require: name => { assert.equal(name, 'electron'); return { ipcRenderer: ipc, contextBridge: { exposeInMainWorld: (_name, value) => api = value } }; },
@@ -74,7 +74,7 @@ test('native F5: returning to a note immediately refreshes that note through the
   const stub = workspaceStub(), f = await wiring(stub.ws); f.pdfFocus(); f.note();
   assert.deepEqual(await f.key(), { prevented: true, outcome: 'unchanged' }); assert.equal(stub.refreshes, 1); f.close();
 });
-for (const reason of ['not-ready', 'closing', 'readerClosing', 'settingsOpen', 'dialogOpen', 'committing']) test(`native F5: ${reason} gate precedes any document access`, async () => {
+for (const reason of ['not-ready', 'closing', 'readerClosing', 'settingsOpen', 'pendingReaderSave', 'dialogOpen', 'committing']) test(`native F5: ${reason} gate precedes any document access`, async () => {
   const ws = { committing: reason === 'committing', currentDocument: () => assert.fail('gate must not inspect an active document') };
   const f = await wiring(ws, reason === 'not-ready' ? { ready: false } : { [reason]: true });
   assert.deepEqual(await f.key(), { prevented: true, outcome: 'blocked' }); assert.deepEqual(f.messages, []); f.close();
