@@ -90,7 +90,7 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
     if (!slotObserver.current) {
       slotObserver.current = new IntersectionObserver(entries => {
         for (const entry of entries) slotCallbacks.current.get(entry.target)?.(entry.isIntersecting);
-      }, { root: scroll.current, rootMargin: '1200px 0px' });
+      }, { root: scroll.current, rootMargin: '900px' });
     }
     slotCallbacks.current.set(element, onVisibility);
     slotObserver.current.observe(element);
