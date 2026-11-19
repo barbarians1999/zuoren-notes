@@ -5,8 +5,8 @@ $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Split-Path $PSScriptRoot -Parent))
 $proof = Read-AcceptedArtifact $Receipt $NodeExecutable
 $source = Join-Path $proof.artifacts.directory $proof.installer
-$destinationRoot = 'D:\exe'
-if (-not (Test-Path -LiteralPath $destinationRoot -PathType Container)) { throw 'D:\exe unavailable; old files retained.' }
+$destinationRoot = 'G:\exe'
+if (-not (Test-Path -LiteralPath $destinationRoot -PathType Container)) { throw 'G:\exe unavailable; old files retained.' }
 if ((Get-Item -LiteralPath $destinationRoot).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Linked destination.' }
 $destination = Join-Path $destinationRoot $proof.installer
 if ((Test-Path -LiteralPath $destination) -and ((Get-ArtifactHash $destination) -ne $proof.installerSha256 -or
@@ -18,7 +18,7 @@ if (-not $Apply) { [pscustomobject]@{ Receipt = $Receipt; Source = $source; Dest
 $logs = Join-Path $root ('logs\releases\' + $proof.version)
 [IO.Directory]::CreateDirectory($logs) | Out-Null
 $record = [ordered]@{ Version = $proof.version; Receipt = $Receipt; ReceiptSha256 = Get-ArtifactHash $Receipt; Source = $source; Destination = $destination; Sha256 = $proof.installerSha256; Status = 'started'; OldFiles = @(); Pending = @() }
-$log = Join-Path $logs ('d-exe-sync-' + (Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '.json')
+$log = Join-Path $logs ('g-exe-sync-' + (Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '.json')
 function Save-Sync { [IO.File]::WriteAllText($log, ($record | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($false))) }
 Save-Sync
 try {
@@ -43,9 +43,9 @@ try {
             Copy-Item -LiteralPath $item.FullName -Destination $copy
             if ((Get-ArtifactHash $copy) -ne $digest) { throw 'Fixed-volume retirement copy mismatch.' }
             $result = Invoke-VerifiedRecycle $copy $retirement
-            if ((Get-ArtifactHash $result.RecyclePath) -ne $digest -or (Get-ArtifactHash $item.FullName) -ne $digest) { throw 'Original or recoverable copy changed; D: original retained.' }
-            # Both copies were checked. Remove only the exact D: duplicate.
-            if ([IO.Path]::GetDirectoryName($item.FullName) -ne $destinationRoot) { throw 'Unsafe D: target.' }
+            if ((Get-ArtifactHash $result.RecyclePath) -ne $digest -or (Get-ArtifactHash $item.FullName) -ne $digest) { throw 'Original or recoverable copy changed; G: original retained.' }
+            # Both copies were checked. Remove only the exact G: duplicate.
+            if ([IO.Path]::GetDirectoryName($item.FullName) -ne $destinationRoot) { throw 'Unsafe G: target.' }
             Remove-Item -LiteralPath $item.FullName
             $record.OldFiles += [pscustomobject]@{ Original = $item.FullName; RecyclePath = $result.RecyclePath; Sha256 = $digest; Status = 'retired-with-verified-recycle-copy' }
             [IO.Directory]::Delete($retirement, $false)

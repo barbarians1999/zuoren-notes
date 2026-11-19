@@ -16,14 +16,14 @@ test('workspace sizing tolerates an application lockfile disappearing between di
   } finally { fs.lstat = stat; await fs.rm(root, { recursive: true, force: true }); }
 });
 
-test('Windows UI tests stop when D: is below reserve unless another root is explicitly selected', () => {
-  const gib = 1024 ** 3, dRoot = 'D:/C盘分担/左人笔记临时';
-  assert.throws(() => selectSmokeTempRoot({ platform: 'win32', dRoot, dFreeBytes: 0 }), /D: must have at least 9 GiB/);
-  assert.throws(() => selectSmokeTempRoot({ platform: 'win32', dRoot, dFreeBytes: 9 * gib - 1 }), /D: must have at least 9 GiB/);
-  assert.equal(selectSmokeTempRoot({ platform: 'win32', dRoot, dFreeBytes: 9 * gib }), path.win32.resolve(dRoot));
+test('Windows UI tests stop when G: is below reserve unless another root is explicitly selected', () => {
+  const gib = 1024 ** 3, gRoot = 'G:/C盘分担/左人笔记临时';
+  assert.throws(() => selectSmokeTempRoot({ platform: 'win32', gRoot, gFreeBytes: 0 }), /G: must have at least 9 GiB/);
+  assert.throws(() => selectSmokeTempRoot({ platform: 'win32', gRoot, gFreeBytes: 9 * gib - 1 }), /G: must have at least 9 GiB/);
+  assert.equal(selectSmokeTempRoot({ platform: 'win32', gRoot, gFreeBytes: 9 * gib }), path.win32.resolve(gRoot));
   assert.throws(() => selectSmokeTempRoot({ platform: 'win32', explicit: 'C:/temp/notes', explicitFreeBytes: gib - 1 }), /below its free-space reserve/);
-  assert.equal(selectSmokeTempRoot({ platform: 'win32', explicit: 'C:/temp/notes', explicitFreeBytes: gib, dRoot, dFreeBytes: 0 }), path.win32.resolve('C:/temp/notes'));
-  assert.throws(() => selectSmokeTempRoot({ platform: 'win32', explicit: dRoot, explicitFreeBytes: 9 * gib - 1 }), /below its free-space reserve/);
+  assert.equal(selectSmokeTempRoot({ platform: 'win32', explicit: 'C:/temp/notes', explicitFreeBytes: gib, gRoot, gFreeBytes: 0 }), path.win32.resolve('C:/temp/notes'));
+  assert.throws(() => selectSmokeTempRoot({ platform: 'win32', explicit: gRoot, explicitFreeBytes: 9 * gib - 1 }), /below its free-space reserve/);
 });
 
 test('managed smoke storage reserves one workspace and rejects growth beyond its cap', () => {

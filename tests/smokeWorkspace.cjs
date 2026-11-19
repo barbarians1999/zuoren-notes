@@ -5,7 +5,7 @@ const path = require('node:path');
 
 const markerName = '.zuoren-smoke-workspace.json';
 const gib = 1024 ** 3;
-const minDFree = 9 * gib; // Keep the reserved 8 GiB plus room for one test workspace.
+const minGFree = 9 * gib; // Keep the reserved 8 GiB plus room for one test workspace.
 const minFallbackFree = gib;
 const maxWorkspaceBytes = 512 * 1024 ** 2;
 const maxFailureBytes = 256 * 1024 ** 2;
@@ -21,19 +21,19 @@ async function availableBytes(candidate, platform = process.platform) {
 }
 
 function selectSmokeTempRoot({ platform = process.platform, explicit, explicitFreeBytes = 0,
-  dRoot = 'D:/C盘分担/左人笔记临时', dFreeBytes = 0, fallbackRoot = os.tmpdir(), fallbackFreeBytes = 0 }) {
+  gRoot = 'G:/C盘分担/左人笔记临时', gFreeBytes = 0, fallbackRoot = os.tmpdir(), fallbackFreeBytes = 0 }) {
   const paths = platform === 'win32' ? path.win32 : path;
   if (explicit) {
     const selected = paths.resolve(explicit);
     const volumeRoot = paths.parse(selected).root;
-    const dVolumeRoot = path.win32.parse(path.win32.resolve(dRoot)).root;
-    const reserve = platform === 'win32' && volumeRoot.toLowerCase() === dVolumeRoot.toLowerCase() ? minDFree : minFallbackFree;
+    const gVolumeRoot = path.win32.parse(path.win32.resolve(gRoot)).root;
+    const reserve = platform === 'win32' && volumeRoot.toLowerCase() === gVolumeRoot.toLowerCase() ? minGFree : minFallbackFree;
     if (explicitFreeBytes < reserve) throw new Error('Selected test temp root is below its free-space reserve.');
     return selected;
   }
   if (platform === 'win32') {
-    if (dFreeBytes < minDFree) throw new Error('D: must have at least 9 GiB free for note UI tests. Set ZUOREN_TEST_TEMP_ROOT explicitly to another volume with at least 1 GiB free; C: is not an automatic fallback.');
-    return path.win32.resolve(dRoot);
+    if (gFreeBytes < minGFree) throw new Error('G: must have at least 9 GiB free for note UI tests. Set ZUOREN_TEST_TEMP_ROOT explicitly to another volume with at least 1 GiB free; C: is not an automatic fallback.');
+    return path.win32.resolve(gRoot);
   }
   if (fallbackFreeBytes < minFallbackFree) throw new Error('The system temporary volume must have at least 1 GiB free for note UI tests.');
   return paths.resolve(fallbackRoot);
@@ -56,14 +56,14 @@ async function getSmokeTempRoot(environment = process.env) {
     const free = await availableBytes(explicit);
     const target = selectSmokeTempRoot({ explicit, explicitFreeBytes: free });
     const volumeRoot = path.win32.parse(path.win32.resolve(target)).root;
-    const required = process.platform === 'win32' && volumeRoot.toLowerCase() === path.win32.parse('D:/').root.toLowerCase() ? minDFree : minFallbackFree;
+    const required = process.platform === 'win32' && volumeRoot.toLowerCase() === path.win32.parse('G:/').root.toLowerCase() ? minGFree : minFallbackFree;
     return selectedRoot = await prepareTempRoot(target, required);
   }
   if (process.platform === 'win32') {
-    const dRoot = 'D:/C盘分担/左人笔记临时';
-    const dFreeBytes = await availableBytes('D:/').catch(() => 0);
-    const target = selectSmokeTempRoot({ dRoot, dFreeBytes });
-    return selectedRoot = await prepareTempRoot(target, minDFree);
+    const gRoot = 'G:/C盘分担/左人笔记临时';
+    const gFreeBytes = await availableBytes('G:/').catch(() => 0);
+    const target = selectSmokeTempRoot({ gRoot, gFreeBytes });
+    return selectedRoot = await prepareTempRoot(target, minGFree);
   }
   const fallbackRoot = os.tmpdir();
   const target = selectSmokeTempRoot({ platform: process.platform, fallbackRoot, fallbackFreeBytes: await availableBytes(fallbackRoot) });
