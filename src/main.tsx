@@ -25,7 +25,7 @@ import { MutationBarrier, remapDescendantPath, sameOrDescendantPath } from './fi
 import { THEMES, parseThemePreference, resolveTheme, themeVariables, type ThemeName } from './appearanceTheme.cjs';
 import './styles.css';
 import { useFullscreenChrome } from './useFullscreenChrome';
-import { ReducedMotionContext, useLayoutMotion, usePanelMotion, useTabMotion, useControlFeedback } from './uiMotion';
+import { ReducedMotionContext, useLayoutMotion, usePanelMotion, useTabMotion, useControlFeedback, useSegmentedPillMotion } from './uiMotion';
 import { ContextMenu, ToastMessage, useOverlayFocus } from './ui/overlays';
 import { PaneSplitter } from './ui/PaneSplitter';
 import './ui/chrome.css';
@@ -102,9 +102,11 @@ function App() {
   const [noteBodyFont, setNoteBodyFont] = useState<NoteBodyFont>(readNoteBodyFont);
   const [splitAt, setSplitAt] = useState(52);
   const panesRef = useRef<HTMLDivElement>(null);
+  const layoutTabsRef = useRef<HTMLElement>(null);
   const splitHeaderRef = useRef<HTMLDivElement>(null);
   const layoutMotionRequested = useRef(false);
   useLayoutMotion(panesRef, layout, sessionReady, motionReduced, layoutMotionRequested);
+  useSegmentedPillMotion(layoutTabsRef, layout, sessionReady, motionReduced);
   const [root, setRootState] = useState('');
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [directory, setDirectory] = useState<DirectoryListing | null>(null);
@@ -768,7 +770,7 @@ function App() {
     const box = event.currentTarget.getBoundingClientRect();
     setFileContextMenu({ entry, x: event.clientX || box.left, y: event.clientY || box.bottom });
   };
-  const layoutTabs = <nav className="layout-tabs" aria-label="工作模式">{([['read', '阅读'], ['note', '笔记'], ['split', '对照']] as const).map(([id, label]) => <button aria-pressed={layout === id} className={layout === id ? 'active' : ''} onClick={() => void changeLayout(id)} key={id}><span>{label}</span></button>)}</nav>;
+  const layoutTabs = <nav ref={layoutTabsRef} className="layout-tabs" aria-label="工作模式">{([['read', '阅读'], ['note', '笔记'], ['split', '对照']] as const).map(([id, label]) => <button aria-pressed={layout === id} className={layout === id ? 'active' : ''} onClick={() => void changeLayout(id)} key={id}><span>{label}</span></button>)}</nav>;
   useControlFeedback(appMotionRef, motionReduced, `${layout}:${root}:${workspace.currentDocument()?.note.path || activePdf?.path || activeEpub?.path || ''}`);
   return <ReducedMotionContext.Provider value={motionReduced}><div ref={appMotionRef} className="app" inert={!sessionReady || workspace.committing} aria-busy={!sessionReady || workspace.committing} data-session-ready={sessionReady} data-motion={motionReduced ? 'reduced' : 'full'} data-edit-motion={editMotion && !motionReduced ? 'soft' : 'off'} data-delete-echo={editMotion && deleteEcho && !motionReduced ? 'on' : 'off'} data-theme={resolvedTheme} data-fullscreen={windowState.fullscreen} data-layout={layout} data-sidebar={sidebar ? 'open' : 'closed'} style={{ '--reading-size': `${readingSize}px`, '--note-body-font': NOTE_BODY_FONTS[noteBodyFont], '--note-source-font': NOTE_BODY_FONTS[noteBodyFont] } as React.CSSProperties}>
     <style>{NOTE_FONT_FACES_CSS}</style>

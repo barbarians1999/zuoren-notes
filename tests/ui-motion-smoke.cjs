@@ -12,7 +12,7 @@ test('short UI motion preserves editor history, panel focus, PDF page and reduce
   try {
     await fs.mkdir(workspace.fixture, { recursive: true });
     await fs.writeFile(path.join(workspace.fixture, 'a.md'), '# Heading A\n\nStart **bold phrase** middle *italic phrase* and [linked phrase](https://example.test) and `inline code`\nBody A\n');
-    await fs.writeFile(path.join(workspace.fixture, 'b.md'), '# Heading B\n\nBody B\n');
+    await fs.writeFile(path.join(workspace.fixture, 'b.md'), '# Heading B\n\nBody B\n\n- bullet parent\n- bullet alpha\n- \n1. first item\n2. second item\n3. third item\n');
     const pdf = await PDFDocument.create(), font = await pdf.embedFont(StandardFonts.Helvetica);
     for (let i = 0; i < 3; i++) pdf.addPage([595, 842]).drawText('Page ' + (i + 1), { font, size: 20, x: 72, y: 740 });
     await fs.writeFile(path.join(workspace.fixture, 'book.pdf'), await pdf.save());
@@ -27,15 +27,31 @@ test('short UI motion preserves editor history, panel focus, PDF page and reduce
     const noteMode = page.locator('.note-controls-slot .workspace-mode-switch');
     await noteMode.getByRole('button', { name: '切换到预览' }).click(); await page.locator('.markdown-preview').waitFor();
     const noteModeMotion = await page.evaluate(async () => {
-      const button = document.querySelector('.workspace-mode-switch button.active');
+      const sw = document.querySelector('.workspace-mode-switch');
+      const button = sw.querySelector('button.active');
+      const thumb = sw.querySelector('.mode-switch-thumb');
+      const thumbAnim = thumb?.getAnimations().find(a => a.effect?.getKeyframes().some(k => /translate(?:3d|X)?\(/.test(k.transform || '')));
       await new Promise(resolve => setTimeout(resolve, 45));
       const content = document.querySelector('.markdown-preview');
-      return { background: getComputedStyle(button).backgroundColor, slideDuration: document.querySelector('.note-body').getAnimations()[0]?.effect.getTiming().duration,
-        contentAnimated: content.getAnimations().length > 0 };
+      return {
+        background: getComputedStyle(button).backgroundColor,
+        thumbAnimated: !!thumbAnim,
+        thumbTransformKeyframes: !!thumbAnim,
+        slideDuration: document.querySelector('.note-body').getAnimations()[0]?.effect.getTiming().duration,
+        contentAnimated: content.getAnimations().length > 0,
+      };
     });
     assert.equal(noteModeMotion.background, 'rgba(0, 0, 0, 0)');
+    assert.equal(noteModeMotion.thumbAnimated, true, 'edit/read pill slides its shared glass thumb');
+    assert.equal(noteModeMotion.thumbTransformKeyframes, true, 'edit/read thumb slides with compositor translate3d');
     assert.equal(noteModeMotion.slideDuration, 160, 'edit/read content slides horizontally in 160ms');
     assert.equal(noteModeMotion.contentAnimated, false, 'reading and editing do not fade the document');
+    await page.waitForFunction(() => !document.querySelector('.workspace-mode-switch .mode-switch-thumb')?.getAnimations().length);
+    const alignedNoteThumb = await noteMode.evaluate(sw => {
+      const btn = sw.querySelector('button.active').getBoundingClientRect(), t = sw.querySelector('.mode-switch-thumb').getBoundingClientRect();
+      return Math.abs(btn.left - t.left) <= 1 && Math.abs(btn.width - t.width) <= 1;
+    });
+    assert.equal(alignedNoteThumb, true, 'edit/read thumb lands cleanly on active button');
     const readingModeButton = noteMode.getByRole('button', { name: '阅读模式', exact: true });
     await readingModeButton.evaluate(button => Promise.all(button.getAnimations({ subtree: true }).map(a => a.finished.catch(() => {}))));
     await readingModeButton.hover();
@@ -50,27 +66,40 @@ test('short UI motion preserves editor history, panel focus, PDF page and reduce
     await page.locator('.cm-content').evaluate(el => { window.__layoutEditor = el; });
     const layoutTabs = page.locator('.layout-tabs');
     const originalLayout = await page.locator('.app').getAttribute('data-layout');
-    const originalModeBackground = await layoutTabs.locator('button.active').evaluate(el => getComputedStyle(el).backgroundColor);
     const nextLayout = originalLayout === 'read' ? 'note' : 'read';
     const layoutLabel = (value) => ({ read: '阅读', note: '笔记', split: '对照' })[value];
     await layoutTabs.getByRole('button', { name: layoutLabel(nextLayout), exact: true }).click();
     await page.waitForFunction(value => document.querySelector('.app')?.getAttribute('data-layout') === value, nextLayout);
     const modeMotion = await page.evaluate(async () => {
-      const button = document.querySelector('.layout-tabs button.active'), style = getComputedStyle(button);
-      const properties = style.transitionProperty.split(',').map(value => value.trim()), durations = style.transitionDuration.split(',').map(value => value.trim());
+      const tabs = document.querySelector('.layout-tabs'), button = tabs.querySelector('button.active'), style = getComputedStyle(button);
+      const thumb = tabs.querySelector('.mode-switch-thumb');
+      const thumbAnim = thumb?.getAnimations().find(a => a.effect?.getKeyframes().some(k => /translate(?:3d|X)?\(/.test(k.transform || '')));
       await new Promise(resolve => setTimeout(resolve, 45));
       const panes = document.querySelector('.panes'), animation = panes.getAnimations()[0];
-      return { background: style.backgroundColor, backgroundDuration: durations[properties.indexOf('background-color')],
-        slideDuration: animation?.effect.getTiming().duration, keyframes: animation?.effect.getKeyframes(),
-        editorAnimated: document.querySelector('.cm-content').getAnimations().length > 0 };
+      return {
+        buttonBg: style.backgroundColor,
+        thumbAnimated: !!thumbAnim,
+        thumbKeyframes: !!thumbAnim,
+        slideDuration: animation?.effect.getTiming().duration,
+        keyframes: animation?.effect.getKeyframes(),
+        editorAnimated: document.querySelector('.cm-content').getAnimations().length > 0,
+      };
     });
-    assert.equal(modeMotion.background, originalModeBackground, 'the original selected mode surface remains unchanged');
-    assert.equal(modeMotion.backgroundDuration, '0s', 'only the selected label animates, not its background block');
+    assert.equal(modeMotion.buttonBg, 'rgba(0, 0, 0, 0)', 'active button leaves background painting to the sliding pill thumb');
+    assert.equal(modeMotion.thumbAnimated, true, 'layout mode pill slides horizontally between tabs');
+    assert.equal(modeMotion.thumbKeyframes, true, 'layout pill thumb slides with translate3d liquid-spring transform');
     assert.equal(modeMotion.slideDuration, 180, 'mode content slides horizontally in 180ms');
     assert.match(modeMotion.keyframes[0].transform, /translateX\(/);
     assert.equal(modeMotion.editorAnimated, false, 'layout changes do not animate editor content');
+    await page.waitForFunction(() => !document.querySelector('.layout-tabs .mode-switch-thumb')?.getAnimations().length);
+    const alignedLayoutThumb = await layoutTabs.evaluate(tabs => {
+      const btn = tabs.querySelector('button.active').getBoundingClientRect(), t = tabs.querySelector('.mode-switch-thumb').getBoundingClientRect();
+      return Math.abs(btn.left - t.left) <= 1 && Math.abs(btn.width - t.width) <= 1;
+    });
+    assert.equal(alignedLayoutThumb, true, 'layout thumb aligns cleanly on destination button after settle');
     await layoutTabs.getByRole('button', { name: layoutLabel(originalLayout), exact: true }).click();
     await page.waitForFunction(value => document.querySelector('.app')?.getAttribute('data-layout') === value, originalLayout);
+    await page.waitForFunction(() => !document.querySelector('.layout-tabs .mode-switch-thumb')?.getAnimations().length);
     assert.equal(await page.locator('.cm-content').evaluate(el => el === window.__layoutEditor), true);
 
     // Hold real WAAPI motion mid-flight so interruption assertions don't depend
@@ -128,14 +157,21 @@ test('short UI motion preserves editor history, panel focus, PDF page and reduce
       const original = Element.prototype.animate;
       Element.prototype.animate = function(keyframes, options) {
         const isCaret = this.classList?.contains('cm-cursor-primary'), key = this.getAttribute?.('data-md-motion-key');
-        if (!isCaret && !key) return original.call(this, keyframes, options);
+        const isMarker = this.matches?.('.cm-md-list-marker, .cm-md-task-checkbox, .cm-md-list-prefix, .cm-md-ordered-marker');
+        if (!isCaret && !key && !isMarker) return original.call(this, keyframes, options);
         const rect = this.getBoundingClientRect(), frames = Array.isArray(keyframes) ? keyframes : [];
-        const delta = value => { const match = /translate\(\s*(-?[\d.]+)px\s*,\s*(-?[\d.]+)px/.exec(value || ''); return match ? { x: Number(match[1]), y: Number(match[2]) } : { x: Number.parseFloat(value) || 0, y: Number.parseFloat(value) || 0 }; };
-        const start = isCaret ? delta(frames[0]?.transform) : { x: Number.parseFloat(frames[0]?.left) || 0, y: Number.parseFloat(frames[0]?.top) || 0 };
-        const record = { kind: isCaret ? 'caret' : 'text', key, duration: options?.duration, baseRect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+        const delta = value => { const match = /translate(?:3d)?\(\s*(-?[\d.]+)px\s*,\s*(-?[\d.]+)px/.exec(value || ''); return match ? { x: Number(match[1]), y: Number(match[2]) } : { x: Number.parseFloat(value) || 0, y: Number.parseFloat(value) || 0 }; };
+        const start = (isCaret || isMarker) ? delta(frames[0]?.transform) : { x: Number.parseFloat(frames[0]?.left) || 0, y: Number.parseFloat(frames[0]?.top) || 0 };
+        const kind = isCaret ? 'caret' : isMarker ? 'marker' : 'text';
+        const record = { kind, key: key || this.className, positionStyle: getComputedStyle(this).position, duration: options?.duration, baseRect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
           visualStart: { left: rect.left + start.x, top: rect.top + start.y }, keyframes: frames, activeLine: this.closest('.cm-line')?.innerText || '' };
         const animation = original.call(this, keyframes, options); record.animation = animation; record.startedAt = performance.now(); record.status = 'running';
         record.completion = new Promise(resolve => { record.resolveCompletion = resolve; });
+        queueMicrotask(() => {
+          if (animation.playState !== 'running') return;
+          const mid = this.getBoundingClientRect();
+          record.initialPaintedRect = { left: mid.left, top: mid.top };
+        });
         animation.addEventListener('finish', () => { record.status = 'finished'; record.finishedAt = performance.now(); const final = this.getBoundingClientRect();
           record.finalRect = { left: final.left, top: final.top, width: final.width, height: final.height };
           queueMicrotask(() => { const content = document.querySelector('.cm-content'); record.caretColorAtFinish = getComputedStyle(content).caretColor;
@@ -243,6 +279,53 @@ test('short UI motion preserves editor history, panel focus, PDF page and reduce
     await clickText('Start'); const linkExit = await motionRecordsSince(motionStart);
     assert.ok(linkExit.some(record => record.kind === 'text' && record.status === 'finished'), 'leaving a link animates the restored layout');
     assert.doesNotMatch(await page.locator('.cm-md-link').filter({ hasText: 'linked phrase' }).innerText(), /\]\(/, 'the source link collapses after the caret leaves');
+
+    // Verify real rendered Tab / Shift+Tab indent motion on bullet, empty marker, ordered renumbering & multi-line selection in b.md.
+    await row('b.md').dblclick();
+    await page.waitForFunction(() => document.querySelector('.cm-content')?.textContent.includes('bullet alpha'));
+    await clickText('bullet alpha');
+    await page.evaluate(async () => {
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      await Promise.all(document.getAnimations().filter(a => Number.isFinite(a.effect?.getComputedTiming().endTime)).map(a => a.finished.catch(() => {})));
+    });
+    motionStart = await motionRecordCount();
+    await page.keyboard.press('Tab');
+    const bulletTab = await motionRecordsSince(motionStart);
+    assert.ok(bulletTab.some(r => r.kind === 'text' && r.status === 'finished' && r.positionStyle === 'relative'
+      && Math.abs((r.initialPaintedRect?.left ?? r.baseRect.left) - r.baseRect.left) > 2),
+      'Tab actually shifts positioned text pixels horizontally during the animation');
+    assert.ok(bulletTab.some(r => r.kind === 'marker' && r.status === 'finished'),
+      'Tab animates the bullet marker in sync with the indented text');
+    motionStart = await motionRecordCount();
+    await page.keyboard.press('Shift+Tab');
+    const bulletDedent = await motionRecordsSince(motionStart);
+    assert.ok(bulletDedent.some(r => r.kind === 'text' && r.status === 'finished' && Math.abs((r.initialPaintedRect?.left ?? r.baseRect.left) - r.baseRect.left) > 2),
+      'Shift+Tab animates the text back horizontally');
+    // Empty bullet line marker motion (`- `): click after `- ` marker on line 4
+    await clickText('bullet alpha');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('End');
+    await page.evaluate(async () => Promise.all(document.getAnimations().filter(a => Number.isFinite(a.effect?.getComputedTiming().endTime)).map(a => a.finished.catch(() => {}))));
+    motionStart = await motionRecordCount();
+    await page.keyboard.press('Tab');
+    const emptyListTab = await motionRecordsSince(motionStart);
+    assert.ok(emptyListTab.some(r => r.kind === 'marker' && r.status === 'finished'),
+      'empty list item animates its leading bullet marker on Tab');
+    await page.keyboard.press('Shift+Tab');
+    await page.evaluate(async () => Promise.all(document.getAnimations().filter(a => Number.isFinite(a.effect?.getComputedTiming().endTime)).map(a => a.finished.catch(() => {}))));
+    // Ordered list indent + sibling renumbering (`2. second item` -> nested `1.`)
+    await clickText('second item');
+    await page.evaluate(async () => Promise.all(document.getAnimations().filter(a => Number.isFinite(a.effect?.getComputedTiming().endTime)).map(a => a.finished.catch(() => {}))));
+    motionStart = await motionRecordCount();
+    await page.keyboard.press('Tab');
+    const orderedTab = await motionRecordsSince(motionStart);
+    assert.ok(orderedTab.some(r => r.kind === 'text' && r.status === 'finished'),
+      'ordered list Tab with sibling renumbering still triggers indent motion');
+    await page.keyboard.press('Control+z');
+    // Switch back to a.md for the remaining IME / find / outline checks
+    await row('a.md').dblclick();
+    await page.waitForFunction(() => document.querySelector('.cm-content')?.textContent.includes('linked phrase'));
+
     const compositionCdp = await page.context().newCDPSession(page);
     await markdownEditor.click(); await page.keyboard.press('Control+End');
     const compositionMotionStart = await motionRecordCount();

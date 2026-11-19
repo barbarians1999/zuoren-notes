@@ -9,14 +9,17 @@ const DURATION = 120;
 const INDENT_RUN_DURATION = 190;
 const DISTANT_CARET_DURATION = 80;
 const MAX_DISTANCE = 88;
+const INDENT_MAX_DISTANCE = 160;
+const INDENT_MARKER_SELECTOR = '.cm-md-list-marker, .cm-md-task-checkbox, .cm-md-list-prefix, .cm-md-ordered-marker';
 type Rect = { left: number; top: number; width: number; height: number };
 type RunPosition = { element: HTMLElement; key: string; text: string; rect: Rect };
+type MarkerPosition = { lineNumber: number; element: HTMLElement; rect: Rect };
 type FirstCaretMeasure = { head: number; from: Rect | null; formatChanged: boolean; runsBefore: RunPosition[]; runsGeometry: string; scrollTop: number; scrollLeft: number };
 type SecondCaretMeasure = { head: number; from: Rect | null; to: Rect | null; runs: RunPosition[] | null; runsGeometry: string; scrollTop: number; scrollLeft: number; caretRelative: Rect | null; doc: Text; tree: ReturnType<typeof syntaxTree> };
 type MotionMeasureRequest<T> = { key?: unknown; read(view: EditorView): T; write?(measure: T, view: EditorView): void };
-type IndentMotionMeasure = { runs: RunPosition[]; geometry: string; caret: Rect | null; scrollTop: number; scrollLeft: number } | null;
+type IndentMotionMeasure = { runs: RunPosition[]; markers: MarkerPosition[]; geometry: string; caret: Rect | null; scrollTop: number; scrollLeft: number } | null;
 type IndentMotionBaseline = { kind: 'input.indent' | 'delete.dedent'; doc: Text; tree: ReturnType<typeof syntaxTree>;
-  selection: EditorState['selection']; runs: RunPosition[]; geometry: string; caret: Rect; scrollTop: number; scrollLeft: number };
+  selection: EditorState['selection']; runs: RunPosition[]; markers: MarkerPosition[]; geometry: string; caret: Rect | null; scrollTop: number; scrollLeft: number };
 type PointerRunBaseline = { doc: Text; tree: ReturnType<typeof syntaxTree>; selection: EditorState['selection'];
   runs: RunPosition[]; geometry: string; scrollTop: number; scrollLeft: number };
 type PointerGesture = { x: number; y: number; shiftKey: boolean; moved: boolean; ended: boolean; candidate: { head: number; from: Rect; to: Rect; scrollTop: number; scrollLeft: number; generation: number } | null; held: { element: HTMLElement; transform: string; priority: string } | null };
@@ -41,6 +44,52 @@ export function isSingleLeadingIndentChange(before: Text, after: Text, changes: 
     && toA === fromA + removedPrefixLength && toB === fromB;
   const wholeIndentRewrite = toA === fromA + oldIndent.length && toB === fromB + newIndent.length;
   return prefixDelete || wholeIndentRewrite;
+}
+
+function isEligibleIndentSelection(state: EditorState) {
+  const { selection } = state;
+  if (selection.ranges.length !== 1) return false;
+  if (selection.main.empty) return true;
+  return state.doc.lineAt(selection.main.from).number !== state.doc.lineAt(selection.main.to).number;
+}
+
+function stripOrderedPrefix(text: string) {
+  const match = /^\d+([.)](?:[\t ]|$).*)$/s.exec(text);
+  return match ? match[1] : null;
+}
+
+export function isIndentMotionChange(before: Text, after: Text, changes: ChangeDesc, kind: 'input.indent' | 'delete.dedent') {
+  if (before.lines !== after.lines) return false;
+  const lineNumbers = new Set<number>();
+  let overflow = false;
+  changes.iterChangedRanges((fromA, toA, fromB, toB) => {
+    const first = after.lineAt(fromB).number, last = after.lineAt(toB).number;
+    const oldFirst = before.lineAt(fromA).number, oldLast = before.lineAt(toA).number;
+    if (first !== oldFirst || last !== oldLast || last - first > 40) { overflow = true; return; }
+    for (let number = first; number <= last; number++) {
+      lineNumbers.add(number);
+      if (lineNumbers.size > 40) { overflow = true; return; }
+    }
+  });
+  if (overflow || !lineNumbers.size) return false;
+  let hasIndentShift = false;
+  for (const number of lineNumbers) {
+    const oldText = before.line(number).text, newText = after.line(number).text;
+    const oldIndent = /^[\t ]*/.exec(oldText)![0], newIndent = /^[\t ]*/.exec(newText)![0];
+    const oldRest = oldText.slice(oldIndent.length), newRest = newText.slice(newIndent.length);
+    const sameBody = oldRest === newRest;
+    const renumberedOrdered = !sameBody && (() => {
+      const oldOrdered = stripOrderedPrefix(oldRest), newOrdered = stripOrderedPrefix(newRest);
+      return oldOrdered !== null && oldOrdered === newOrdered;
+    })();
+    if (!sameBody && !renumberedOrdered) return false;
+    if (oldIndent !== newIndent) {
+      if (kind === 'input.indent' && newIndent.length >= oldIndent.length) hasIndentShift = true;
+      else if (kind === 'delete.dedent' && oldIndent.length >= newIndent.length) hasIndentShift = true;
+      else if (kind === 'input.indent' || kind === 'delete.dedent') hasIndentShift = true;
+    }
+  }
+  return hasIndentShift;
 }
 
 export function mapMarkdownMotionRangeThroughChanges(from: number, to: number, changes: ChangeDesc, before: Text, after: Text) {
@@ -98,6 +147,26 @@ function runPositions(view: EditorView): RunPosition[] {
     .flatMap(element => { const run = runPosition(view, element, origin); return run ? [run] : []; });
 }
 
+function markerPositions(view: EditorView): MarkerPosition[] {
+  const origin = rectOf(view.contentDOM);
+  if (!origin) return [];
+  const positions: MarkerPosition[] = [];
+  for (const element of view.contentDOM.querySelectorAll<HTMLElement>(INDENT_MARKER_SELECTOR)) {
+    if (!element.isConnected) continue;
+    const rect = rectOf(element);
+    if (!rect) continue;
+    let pos: number;
+    try { pos = view.posAtDOM(element); } catch { continue; }
+    if (pos < 0 || pos > view.state.doc.length) continue;
+    positions.push({
+      lineNumber: view.state.doc.lineAt(pos).number,
+      element,
+      rect: { left: rect.left - origin.left, top: rect.top - origin.top, width: rect.width, height: rect.height },
+    });
+  }
+  return positions;
+}
+
 function runPosition(view: EditorView, element: HTMLElement, origin = rectOf(view.contentDOM)): RunPosition | null {
   if (!element.isConnected) return null;
   const first = element.getClientRects?.()[0], key = element.dataset.mdMotionKey;
@@ -129,6 +198,24 @@ function runGeometry(view: EditorView) {
 
 export function hasMovedIndentRun(before: RunPosition[], after: RunPosition[]) {
   return matchRunFragments(before, after).some(({ before: prior, after: next }) =>
+    Math.hypot(next.rect.left - prior.rect.left, next.rect.top - prior.rect.top) >= 1);
+}
+
+function matchMarkersByLine(before: MarkerPosition[], after: MarkerPosition[]) {
+  const previous = new Map<number, MarkerPosition[]>();
+  const used = new Map<number, number>();
+  for (const marker of before) {
+    previous.set(marker.lineNumber, [...(previous.get(marker.lineNumber) || []), marker]);
+  }
+  return after.flatMap(marker => {
+    const candidates = previous.get(marker.lineNumber) || [], index = used.get(marker.lineNumber) || 0;
+    used.set(marker.lineNumber, index + 1);
+    return candidates[index] ? [{ before: candidates[index], after: marker }] : [];
+  });
+}
+
+function hasMovedIndentMarkers(before: MarkerPosition[], after: MarkerPosition[]) {
+  return matchMarkersByLine(before, after).some(({ before: prior, after: next }) =>
     Math.hypot(next.rect.left - prior.rect.left, next.rect.top - prior.rect.top) >= 1);
 }
 
@@ -181,6 +268,7 @@ class MotionController {
   private readonly markerAnimationKey = {};
   private markerGeneration = 0;
   private lastRuns: RunPosition[] = [];
+  private lastMarkers: MarkerPosition[] = [];
   private lastRunGeometry = '';
   private lastCaretRect: Rect | null = null;
   private lastDoc: Text | null = null;
@@ -191,6 +279,7 @@ class MotionController {
   private caretElement: HTMLElement | null = null;
   private caretAnimation: Animation | null = null;
   private runAnimations = new Map<HTMLElement, Animation>();
+  private indentMarkerAnimations = new Map<HTMLElement, Animation>();
   private animBounds = new Map<HTMLElement, { minLeft: number; maxLeft: number }>();
   private taskPulse: (() => void) | null = null;
   private generation = 0;
@@ -242,7 +331,7 @@ class MotionController {
     this.taskPulse?.(); this.taskPulse = null;
     const gesture = this.pointerGesture;
     if (gesture?.held) { gesture.candidate = null; this.releasePointerHold(gesture); }
-    if (this.pendingIndentMotion || this.pendingFormatMotion || this.runAnimations.size || this.caretAnimation || this.echoAnimation || this.markerAnimation || this.editCapture || this.indentMotionBaseline || this.pointerRunBaseline) {
+    if (this.pendingIndentMotion || this.pendingFormatMotion || this.runAnimations.size || this.indentMarkerAnimations.size || this.caretAnimation || this.echoAnimation || this.markerAnimation || this.editCapture || this.indentMotionBaseline || this.pointerRunBaseline) {
       this.cancelMotion(); this.captureScroll(); this.scheduleBaseline();
     }
   };
@@ -251,7 +340,7 @@ class MotionController {
     this.structuralCaretCapture = null;
     if (this.pointerGesture) this.releasePointerHold(this.pointerGesture);
     this.pointerGesture = null;
-    if (this.pendingIndentMotion || this.pendingFormatMotion || this.runAnimations.size || this.caretAnimation || this.echoAnimation || this.markerAnimation || this.editCapture || this.indentMotionBaseline || this.pointerRunBaseline) {
+    if (this.pendingIndentMotion || this.pendingFormatMotion || this.runAnimations.size || this.indentMarkerAnimations.size || this.caretAnimation || this.echoAnimation || this.markerAnimation || this.editCapture || this.indentMotionBaseline || this.pointerRunBaseline) {
       this.cancelMotion(); this.captureScroll(); this.scheduleBaseline();
     }
   };
@@ -286,16 +375,16 @@ class MotionController {
     const target = event.target as Node | null;
     if (event.repeat || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.isComposing
       || view.composing || view.compositionStarted || state.readOnly || !view.hasFocus || reducedMotion(view)
-      || selection.ranges.length !== 1 || !selection.main.empty || !target || !view.contentDOM.contains(target)
+      || !isEligibleIndentSelection(state) || !target || !view.contentDOM.contains(target)
       || (target instanceof HTMLElement && target.closest('input,textarea,button,[contenteditable="false"],.cm-widgetBuffer'))
       || tableAtSelection(view)) { this.indentMotionBaseline = null; return; }
     const kind = event.shiftKey ? 'delete.dedent' : 'input.indent';
     this.cancelMotion(); this.captureScroll();
     try {
-      const runs = runPositions(view), caret = relativeCaretRect(view);
-      if (!runs.length || !caret) { this.scheduleBaseline(); return; }
+      const runs = runPositions(view), markers = markerPositions(view), caret = relativeCaretRect(view);
+      if ((!runs.length && !markers.length) || (selection.main.empty && !caret)) { this.scheduleBaseline(); return; }
       this.indentMotionBaseline = { kind, doc: state.doc, tree: syntaxTree(state), selection,
-        runs, geometry: runGeometry(view), caret, scrollTop: view.scrollDOM.scrollTop, scrollLeft: view.scrollDOM.scrollLeft };
+        runs, markers, geometry: runGeometry(view), caret, scrollTop: view.scrollDOM.scrollTop, scrollLeft: view.scrollDOM.scrollLeft };
     } catch { this.scheduleBaseline(); }
   }
   private readonly onBeforeInput = (event: InputEvent) => this.captureEditInput(event.inputType, event.isComposing, true);
@@ -428,13 +517,14 @@ class MotionController {
     const independentGeometry = update.geometryChanged && !update.docChanged && !update.selectionSet && !update.focusChanged
       && !this.pendingFormatMotion && !this.pendingIndentMotion;
     if (update.geometryChanged && (independentGeometry || runGeometry(view) !== this.lastRunGeometry)) {
-      if (independentGeometry && (this.caretAnimation || this.runAnimations.size) && runGeometry(view) === this.lastRunGeometry && this.lastRuns.length) {
+      if (independentGeometry && (this.caretAnimation || this.runAnimations.size || this.indentMarkerAnimations.size) && runGeometry(view) === this.lastRunGeometry && (this.lastRuns.length || this.indentMarkerAnimations.size)) {
         const baseline = this.lastRuns, doc = view.state.doc, tree = syntaxTree(view.state), generation = this.generation;
         const scrollTop = view.scrollDOM.scrollTop, scrollLeft = view.scrollDOM.scrollLeft, bounds = this.animBounds;
         view.requestMeasure({
           read: measuringView => {
             if (generation !== this.generation || measuringView.state.doc !== doc || syntaxTree(measuringView.state) !== tree) return true;
             if (measuringView.scrollDOM.scrollTop !== scrollTop || measuringView.scrollDOM.scrollLeft !== scrollLeft) return true;
+            if (!baseline.length) return false;
             const current = runPositions(measuringView), matched = matchRunFragments(baseline, current);
             if (matched.length !== baseline.length || current.length !== baseline.length) return true;
             return matched.some(({ before: prior, after: curr }) => {
@@ -740,11 +830,11 @@ class MotionController {
   private scheduleBaseline() {
     const generation = ++this.baselineGeneration;
     this.view.requestMeasure({ key: this.baselineKey,
-      read: view => ({ runs: runPositions(view), geometry: runGeometry(view), caret: relativeCaretRect(view), doc: view.state.doc, tree: syntaxTree(view.state) }),
+      read: view => ({ runs: runPositions(view), markers: markerPositions(view), geometry: runGeometry(view), caret: relativeCaretRect(view), doc: view.state.doc, tree: syntaxTree(view.state) }),
       write: result => {
         if (generation !== this.baselineGeneration) return;
         if (this.view.state.doc !== result.doc || syntaxTree(this.view.state) !== result.tree) { this.scheduleBaseline(); return; }
-        this.lastRuns = result.runs; this.lastRunGeometry = result.geometry; this.lastCaretRect = result.caret;
+        this.lastRuns = result.runs; this.lastMarkers = result.markers; this.lastRunGeometry = result.geometry; this.lastCaretRect = result.caret;
         this.lastDoc = result.doc; this.lastTree = result.tree;
       },
     });
@@ -759,16 +849,17 @@ class MotionController {
       && captured.geometry === runGeometry(view) && captured.scrollTop === view.scrollDOM.scrollTop
       && captured.scrollLeft === view.scrollDOM.scrollLeft;
     if (!kind || !update.docChanged || !update.selectionSet || !view.hasFocus || view.composing || view.compositionStarted || reducedMotion(view)
-      || selection.ranges.length !== 1 || !selection.main.empty) return false;
+      || !isEligibleIndentSelection(update.state)) return false;
     const targetTree = syntaxTree(update.state);
-    if (this.pendingIndentMotion || this.caretAnimation?.playState === 'running' || this.runAnimations.size > 0
-      || (!capturedMatches && (this.lastDoc !== update.startState.doc || this.lastTree !== startTree || !this.lastRuns.length || !this.lastCaretRect))
+    if (this.pendingIndentMotion || this.caretAnimation?.playState === 'running' || this.runAnimations.size > 0 || this.indentMarkerAnimations.size > 0
+      || (!capturedMatches && (this.lastDoc !== update.startState.doc || this.lastTree !== startTree || (!this.lastRuns.length && !this.lastMarkers.length)))
       || (!capturedMatches && this.lastRunGeometry !== runGeometry(view))
       || (!capturedMatches && (view.scrollDOM.scrollTop !== this.lastScroll.top || view.scrollDOM.scrollLeft !== this.lastScroll.left))
-      || !isSingleLeadingIndentChange(update.startState.doc, update.state.doc, update.changes, kind)) return false;
+      || !isIndentMotionChange(update.startState.doc, update.state.doc, update.changes, kind)) return false;
 
     const beforeRuns = capturedMatches ? captured!.runs : this.lastRuns;
-    const beforeCaret = capturedMatches ? captured!.caret : this.lastCaretRect!;
+    const beforeMarkers = capturedMatches ? captured!.markers : this.lastMarkers;
+    const beforeCaret = capturedMatches ? captured!.caret : this.lastCaretRect;
     const beforeGeometry = capturedMatches ? captured!.geometry : this.lastRunGeometry;
     const beforeScroll = capturedMatches ? { top: captured!.scrollTop, left: captured!.scrollLeft } : { top: this.lastScroll.top, left: this.lastScroll.left };
     const mappedBefore: RunPosition[] = [];
@@ -778,7 +869,7 @@ class MotionController {
       const mapped = mapMarkdownMotionRangeThroughChanges(Number(match[1]), Number(match[2]), update.changes, update.startState.doc, update.state.doc);
       if (mapped) mappedBefore.push({ ...run, key: mapped.key });
     }
-    if (!mappedBefore.length) return false;
+    if (!mappedBefore.length && !beforeMarkers.length) return false;
 
     const generation = ++this.generation, targetDoc = update.state.doc, targetSelection = update.state.selection;
     this.pendingFormatMotion = false; this.pendingIndentMotion = true;
@@ -787,7 +878,7 @@ class MotionController {
       read: measuringView => {
         if (measuringView.state.doc !== targetDoc || !measuringView.state.selection.eq(targetSelection)
           || syntaxTree(measuringView.state) !== targetTree) return null;
-        return { runs: runPositions(measuringView), geometry: runGeometry(measuringView), caret: relativeCaretRect(measuringView),
+        return { runs: runPositions(measuringView), markers: markerPositions(measuringView), geometry: runGeometry(measuringView), caret: relativeCaretRect(measuringView),
           scrollTop: measuringView.scrollDOM.scrollTop, scrollLeft: measuringView.scrollDOM.scrollLeft } satisfies IndentMotionMeasure;
       },
       write: (result: IndentMotionMeasure) => {
@@ -796,20 +887,23 @@ class MotionController {
         const stable = !!result && result.geometry === beforeGeometry && result.scrollTop === beforeScroll.top
           && result.scrollLeft === beforeScroll.left && view.state.doc === targetDoc && view.state.selection.eq(targetSelection)
           && syntaxTree(view.state) === targetTree && view.hasFocus && !view.composing && !view.compositionStarted && !reducedMotion(view);
-        if (!stable || !result?.caret) { this.cancelMotion(); this.captureScroll(); this.scheduleBaseline(); return; }
+        if (!stable || (selection.main.empty && !result?.caret)) { this.cancelMotion(); this.captureScroll(); this.scheduleBaseline(); return; }
 
         const afterRuns = remapIndentMotionRuns(measuredBeforeRuns, result.runs);
         const hasMovedRun = hasMovedIndentRun(measuredBeforeRuns, afterRuns);
-        const caret = view.dom.querySelector<HTMLElement>('.cm-cursor-primary');
-        const caretDistance = Math.hypot(beforeCaret.left - result.caret.left, beforeCaret.top - result.caret.top);
-        if (!caret || !hasMovedRun) {
+        const hasMovedMarker = hasMovedIndentMarkers(beforeMarkers, result.markers);
+        const caret = selection.main.empty ? view.dom.querySelector<HTMLElement>('.cm-cursor-primary') : null;
+        const caretDistance = beforeCaret && result.caret ? Math.hypot(beforeCaret.left - result.caret.left, beforeCaret.top - result.caret.top) : 0;
+        if ((!hasMovedRun && !hasMovedMarker) || (selection.main.empty && !caret)) {
           this.cancelMotion(); this.captureScroll(); this.scheduleBaseline(); return;
         }
 
-        this.animateRuns(measuredBeforeRuns, afterRuns, INDENT_RUN_DURATION, true);
-        if (caretDistance >= 1 && caretDistance <= MAX_DISTANCE) this.startCaret(caret, beforeCaret, result.caret, DURATION);
-        else this.cancelCaretAnimation();
-        this.lastRuns = result.runs; this.lastRunGeometry = result.geometry; this.lastCaretRect = result.caret;
+        this.animateRuns(measuredBeforeRuns, afterRuns, INDENT_RUN_DURATION, true, INDENT_MAX_DISTANCE);
+        this.animateIndentMarkers(beforeMarkers, result.markers, INDENT_RUN_DURATION);
+        if (caret && beforeCaret && result.caret && caretDistance >= 1 && caretDistance <= MAX_DISTANCE) {
+          this.startCaret(caret, beforeCaret, result.caret, INDENT_RUN_DURATION);
+        } else this.cancelCaretAnimation();
+        this.lastRuns = result.runs; this.lastMarkers = result.markers; this.lastRunGeometry = result.geometry; this.lastCaretRect = result.caret;
         this.lastDoc = targetDoc; this.lastTree = targetTree; this.captureScroll();
       },
     });
@@ -877,7 +971,7 @@ class MotionController {
     };
   }
 
-  private animateRuns(before: RunPosition[], after: RunPosition[], duration = DURATION, fade = false) {
+  private animateRuns(before: RunPosition[], after: RunPosition[], duration = DURATION, fade = false, maxDistance = MAX_DISTANCE) {
     this.cancelRunAnimations();
     const moves: { element: HTMLElement; dx: number; dy: number; fromLeft: number; toLeft: number }[] = [];
     for (const { before: previous, after: current } of matchRunFragments(before, after)) {
@@ -885,7 +979,7 @@ class MotionController {
       const dx = from.left - to.left, dy = from.top - to.top;
       // Reflow can overlap a requested format change. Let distant runs settle
       // directly while keeping nearby source motion local and readable.
-      if (Math.hypot(dx, dy) > MAX_DISTANCE) continue;
+      if (Math.hypot(dx, dy) > maxDistance) continue;
       if (Math.hypot(dx, dy) < 1) continue;
       moves.push({ element, dx, dy, fromLeft: from.left, toLeft: to.left });
     }
@@ -905,14 +999,49 @@ class MotionController {
     }
   }
 
+  private animateIndentMarkers(before: MarkerPosition[], after: MarkerPosition[], duration = INDENT_RUN_DURATION) {
+    for (const { before: previous, after: current } of matchMarkersByLine(before, after)) {
+      const dx = previous.rect.left - current.rect.left, dy = previous.rect.top - current.rect.top;
+      const distance = Math.hypot(dx, dy);
+      if (distance < 1 || distance > INDENT_MAX_DISTANCE) continue;
+      const { element } = current;
+      element.style.willChange = 'transform';
+      let animation: Animation;
+      try {
+        animation = element.animate([
+          { transform: `translate3d(${dx}px, ${dy}px, 0)`, opacity: .72 },
+          { transform: 'translate3d(0, 0, 0)', opacity: 1 },
+        ], { duration, easing: 'cubic-bezier(.2,.75,.3,1)' });
+      } catch {
+        element.style.willChange = '';
+        continue;
+      }
+      this.indentMarkerAnimations.set(element, animation);
+      animation.onfinish = () => {
+        element.style.willChange = '';
+        if (this.indentMarkerAnimations.get(element) === animation) this.indentMarkerAnimations.delete(element);
+      };
+      animation.oncancel = () => {
+        element.style.willChange = '';
+        if (this.indentMarkerAnimations.get(element) === animation) this.indentMarkerAnimations.delete(element);
+      };
+    }
+  }
+
   private captureScroll() { this.lastScroll = { top: this.view.scrollDOM.scrollTop, left: this.view.scrollDOM.scrollLeft }; }
-  private cancelMotion() { this.editCapture = null; this.indentMotionBaseline = null; this.pointerRunBaseline = null; this.clearDeleteEcho(); this.cancelAnimations(); this.cancelMarkerAnimation(); this.lastRuns = []; this.lastCaretRect = null; this.lastDoc = null; this.lastTree = null; this.pendingIndentMotion = false; if (this.pointerGesture) { this.pointerGesture.candidate = null; this.releasePointerHold(this.pointerGesture); } }
+  private cancelMotion() { this.editCapture = null; this.indentMotionBaseline = null; this.pointerRunBaseline = null; this.clearDeleteEcho(); this.cancelAnimations(); this.cancelMarkerAnimation(); this.lastRuns = []; this.lastMarkers = []; this.lastCaretRect = null; this.lastDoc = null; this.lastTree = null; this.pendingIndentMotion = false; if (this.pointerGesture) { this.pointerGesture.candidate = null; this.releasePointerHold(this.pointerGesture); } }
   private invalidatePending() {
     this.generation++; this.baselineGeneration++; this.pendingFormatMotion = false;
     this.view.requestMeasure({ key: this, read: () => null, write: () => {} });
     this.view.requestMeasure({ key: this.baselineKey, read: () => [], write: () => {} });
   }
-  private cancelRunAnimations() { for (const animation of this.runAnimations.values()) animation.cancel(); this.runAnimations.clear(); this.animBounds.clear(); }
+  private cancelRunAnimations() {
+    for (const animation of this.runAnimations.values()) animation.cancel();
+    this.runAnimations.clear();
+    for (const animation of this.indentMarkerAnimations.values()) animation.cancel();
+    this.indentMarkerAnimations.clear();
+    this.animBounds.clear();
+  }
   private cancelCaretAnimation() {
     const animation = this.caretAnimation, element = this.caretElement;
     this.caretAnimation = null; this.caretElement = null;

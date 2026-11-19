@@ -7,16 +7,16 @@
   --topbar-cap-w: 206px;
   --radius: 14px;
   --card-radius: 18px;
-  --glass-bg: rgba(255, 255, 255, 0.80);
-  --glass-bg-strong: rgba(255, 255, 255, 0.94);
-  --liquid-glass-bg: rgba(255, 255, 255, 0.78);
-  --liquid-glass-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(255, 255, 255, 0.34) 32%, rgba(255, 255, 255, 0.08) 68%, rgba(255, 255, 255, 0.32) 100%);
-  --liquid-glass-blur: blur(20px) saturate(165%);
-  --glass-border: rgba(255, 255, 255, 0.96);
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-bg-strong: rgba(255, 255, 255, 0.90);
+  --liquid-glass-bg: rgba(255, 255, 255, 0.58);
+  --liquid-glass-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.80) 0%, rgba(255, 255, 255, 0.24) 32%, rgba(255, 255, 255, 0.04) 68%, rgba(255, 255, 255, 0.28) 100%);
+  --liquid-glass-blur: blur(24px) saturate(185%) brightness(1.03);
+  --glass-border: rgba(255, 255, 255, 0.90);
   --glass-edge: rgba(40, 32, 24, 0.055);
-  --glass-shadow: 0 4px 12px rgba(34, 28, 22, 0.045), 0 1px 3px rgba(34, 28, 22, 0.025), inset 0 1.5px 2px rgba(255, 255, 255, 0.98), inset 0 -1.5px 3px rgba(130, 118, 102, 0.065);
-  --mode-pill-active-bg: linear-gradient(175deg, rgba(222, 104, 76, 0.20) 0%, rgba(210, 88, 60, 0.10) 100%);
-  --mode-pill-active-border: rgba(216, 102, 74, 0.24);
+  --glass-shadow: 0 5px 14px rgba(34, 28, 22, 0.055), 0 1px 3px rgba(34, 28, 22, 0.03), inset 0 1.5px 2px rgba(255, 255, 255, 0.96), inset 0 -1.5px 3px rgba(130, 118, 102, 0.065);
+  --mode-pill-active-bg: linear-gradient(175deg, rgba(226, 108, 78, 0.24) 0%, rgba(210, 88, 60, 0.12) 100%);
+  --mode-pill-active-border: rgba(216, 102, 74, 0.30);
   --card-bg: #ffffff;
   --card-border: rgba(34, 28, 22, 0.09);
   --card-shadow: 0 8px 22px rgba(34, 28, 22, 0.052), 0 2px 6px rgba(34, 28, 22, 0.026), inset 0 1px 0 rgba(255, 255, 255, 0.95);
@@ -29,11 +29,11 @@
 }
 
 .app[data-theme="constructivist-paper"] {
-  --glass-bg: rgba(255, 252, 246, 0.82);
-  --glass-bg-strong: rgba(255, 252, 246, 0.94);
-  --liquid-glass-bg: rgba(255, 251, 244, 0.80);
-  --liquid-glass-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 252, 246, 0.36) 32%, rgba(255, 251, 242, 0.08) 68%, rgba(255, 253, 248, 0.34) 100%);
-  --glass-border: rgba(255, 255, 255, 0.96);
+  --glass-bg: rgba(255, 252, 246, 0.74);
+  --glass-bg-strong: rgba(255, 252, 246, 0.90);
+  --liquid-glass-bg: rgba(255, 250, 240, 0.60);
+  --liquid-glass-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.82) 0%, rgba(255, 252, 246, 0.26) 32%, rgba(255, 251, 242, 0.05) 68%, rgba(255, 253, 248, 0.28) 100%);
+  --glass-border: rgba(255, 255, 255, 0.90);
   --glass-edge: rgba(68, 52, 32, 0.06);
   --glass-shadow: 0 4px 12px rgba(56, 42, 22, 0.045), 0 1px 3px rgba(56, 42, 22, 0.025), inset 0 1.5px 2px rgba(255, 255, 255, 0.98), inset 0 -1.5px 3px rgba(150, 128, 98, 0.07);
   --card-bg: #fffbf3;
@@ -47,15 +47,16 @@
 }
 
 .app[data-theme="constructivist-dark"] {
-  --glass-bg: rgba(34, 36, 44, 0.80);
-  --glass-bg-strong: rgba(40, 43, 52, 0.94);
-  --liquid-glass-bg: rgba(34, 37, 46, 0.76);
-  --liquid-glass-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.03) 30%, rgba(255, 255, 255, 0.005) 62%, rgba(0, 0, 0, 0.10) 90%, rgba(255, 255, 255, 0.03) 100%);
-  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-bg: rgba(34, 36, 44, 0.72);
+  --glass-bg-strong: rgba(40, 43, 52, 0.90);
+  --liquid-glass-bg: rgba(34, 38, 48, 0.56);
+  --liquid-glass-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.04) 30%, rgba(255, 255, 255, 0.008) 64%, rgba(0, 0, 0, 0.10) 90%, rgba(255, 255, 255, 0.04) 100%);
+  --liquid-glass-blur: blur(24px) saturate(175%) brightness(1.06);
+  --glass-border: rgba(255, 255, 255, 0.15);
   --glass-edge: rgba(0, 0, 0, 0.26);
-  --glass-shadow: 0 5px 14px rgba(0, 0, 0, 0.24), 0 1px 4px rgba(0, 0, 0, 0.14), inset 0 1px 1.5px rgba(255, 255, 255, 0.11), inset 0 -1px 2px rgba(0, 0, 0, 0.18);
-  --mode-pill-active-bg: linear-gradient(175deg, rgba(224, 118, 94, 0.26) 0%, rgba(224, 118, 94, 0.13) 100%);
-  --mode-pill-active-border: rgba(224, 118, 94, 0.30);
+  --glass-shadow: 0 6px 16px rgba(0, 0, 0, 0.28), 0 1px 4px rgba(0, 0, 0, 0.16), inset 0 1px 1.5px rgba(255, 255, 255, 0.14), inset 0 -1px 2px rgba(0, 0, 0, 0.18);
+  --mode-pill-active-bg: linear-gradient(175deg, rgba(224, 118, 94, 0.30) 0%, rgba(224, 118, 94, 0.15) 100%);
+  --mode-pill-active-border: rgba(224, 118, 94, 0.34);
   --card-bg: #1b1c20;
   --card-border: rgba(255, 255, 255, 0.10);
   --card-shadow: 0 8px 22px rgba(0, 0, 0, 0.28), 0 2px 6px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.06);
@@ -238,6 +239,19 @@
   transition: background-color 0s, color var(--motion-feedback) var(--motion-ease-enter), box-shadow var(--motion-feedback) var(--motion-ease-enter), transform 0s;
 }
 
+.app[data-theme^="constructivist"] .topbar .layout-tabs .mode-switch-thumb {
+  border-radius: 999px;
+  background-color: var(--accent);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.03) 50%, rgba(0, 0, 0, 0.06) 100%), var(--coral-grad);
+  box-shadow: var(--coral-glow);
+  transition: box-shadow 180ms ease-out, filter 180ms ease-out;
+}
+
+.app[data-theme^="constructivist"] .topbar .layout-tabs .mode-switch-thumb.is-gliding {
+  box-shadow: 0 6px 16px rgba(192, 72, 50, 0.30), 0 2px 5px rgba(192, 72, 50, 0.18), inset 0 1.5px 3px rgba(255, 255, 255, 0.52), inset 0 -1.5px 3px rgba(120, 28, 16, 0.16);
+  filter: saturate(1.08) brightness(1.03);
+}
+
 .app[data-theme^="constructivist"] .topbar .layout-tabs button:not(.active):hover {
   color: var(--text);
   background: var(--pill-hover) !important;
@@ -249,6 +263,13 @@
   color: #ffffff;
   font-weight: 600;
   box-shadow: var(--coral-glow);
+}
+
+.app[data-theme^="constructivist"] .topbar .layout-tabs[data-pill-motion="true"] button.active,
+.app[data-theme^="constructivist"] .topbar .layout-tabs[data-pill-motion="true"] button.active:hover {
+  background: transparent !important;
+  box-shadow: none !important;
+  color: #ffffff;
 }
 
 .app .note-workspace-bar {
@@ -463,6 +484,21 @@
   gap: 2px;
 }
 
+.app[data-theme^="constructivist"] .note-workspace-bar .workspace-mode-switch .mode-switch-thumb {
+  border-radius: 999px;
+  background-color: rgba(255, 255, 255, 0.34);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.56) 0%, rgba(255, 255, 255, 0.08) 48%, transparent 100%), var(--mode-pill-active-bg);
+  border: 1px solid var(--mode-pill-active-border);
+  backdrop-filter: blur(12px) saturate(165%);
+  -webkit-backdrop-filter: blur(12px) saturate(165%);
+  box-shadow: 0 2px 7px rgba(193, 75, 53, 0.13), inset 0 1px 0 rgba(255, 255, 255, 0.78);
+  transition: box-shadow 180ms ease-out, border-color 180ms ease-out;
+}
+
+.app[data-theme^="constructivist"] .note-workspace-bar .workspace-mode-switch .mode-switch-thumb.is-gliding {
+  box-shadow: 0 4px 12px rgba(193, 75, 53, 0.20), inset 0 1.5px 2px rgba(255, 255, 255, 0.90);
+}
+
 .app[data-theme^="constructivist"] .note-workspace-bar .workspace-mode-switch button {
   height: 26px;
   min-height: 26px;
@@ -494,11 +530,39 @@
   box-shadow: 0 2px 6px rgba(193, 75, 53, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.65);
 }
 
+.app[data-theme^="constructivist"] .note-workspace-bar .workspace-mode-switch[data-pill-motion="true"] button.active,
+.app[data-theme^="constructivist"] .note-workspace-bar .workspace-mode-switch[data-pill-motion="true"] button.active:hover {
+  background: transparent !important;
+  background-image: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  color: var(--accent);
+}
+
+.app[data-theme="constructivist-dark"] .note-workspace-bar .workspace-mode-switch .mode-switch-thumb {
+  background-color: rgba(255, 255, 255, 0.04);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.01) 52%, transparent 100%), var(--mode-pill-active-bg);
+  border: 1px solid var(--mode-pill-active-border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+
+.app[data-theme="constructivist-dark"] .note-workspace-bar .workspace-mode-switch .mode-switch-thumb.is-gliding {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.36), inset 0 1px 2px rgba(255, 255, 255, 0.24);
+}
+
 .app[data-theme="constructivist-dark"] .note-workspace-bar .workspace-mode-switch button.active,
 .app[data-theme="constructivist-dark"] .note-workspace-bar .workspace-mode-switch button.active:hover {
   background-image: var(--mode-pill-active-bg);
   border: 1px solid var(--mode-pill-active-border);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+.app[data-theme="constructivist-dark"] .note-workspace-bar .workspace-mode-switch[data-pill-motion="true"] button.active,
+.app[data-theme="constructivist-dark"] .note-workspace-bar .workspace-mode-switch[data-pill-motion="true"] button.active:hover {
+  background: transparent !important;
+  background-image: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
 }
 
 .app[data-theme^="constructivist"] .note-workspace-bar .workspace-icon-action {

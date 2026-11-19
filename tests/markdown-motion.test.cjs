@@ -37,6 +37,33 @@ test('indent motion accepts only one leading whitespace edit with unchanged line
   assert.equal(isSingleLeadingIndentChange(nonIndent.before, nonIndent.after, nonIndent.changeSet, 'input.indent'), false);
 });
 
+test('indent motion policy supports multi-line indents and ordered list renumbering', async () => {
+  const { isIndentMotionChange } = await import('../src/editor/markdownMotion.ts');
+  const multi = '- parent\n- child\n- third';
+  const multiIndent = await changes(multi, [
+    { from: multi.indexOf('- child'), insert: '\t' },
+    { from: multi.indexOf('- third'), insert: '\t' },
+  ]);
+  assert.equal(isIndentMotionChange(multiIndent.before, multiIndent.after, multiIndent.changeSet, 'input.indent'), true);
+
+  const ordered = '1. first\n2. second\n3. third';
+  const ordIndent = await changes(ordered, [
+    { from: ordered.indexOf('2. second'), to: ordered.indexOf('2. second') + 1, insert: '\t1' },
+    { from: ordered.indexOf('3. third'), to: ordered.indexOf('3. third') + 1, insert: '2' },
+  ]);
+  assert.equal(isIndentMotionChange(ordIndent.before, ordIndent.after, ordIndent.changeSet, 'input.indent'), true,
+    'indenting an ordered item together with sibling renumbering stays eligible for indent motion');
+
+  const bodyChanged = await changes(ordered, [
+    { from: ordered.indexOf('2. second'), insert: '\t' },
+    { from: ordered.length, insert: '!' },
+  ]);
+  assert.equal(isIndentMotionChange(bodyChanged.before, bodyChanged.after, bodyChanged.changeSet, 'input.indent'), false);
+
+  const newlineInserted = await changes('- a', { from: 3, insert: '\n' });
+  assert.equal(isIndentMotionChange(newlineInserted.before, newlineInserted.after, newlineInserted.changeSet, 'input.indent'), false);
+});
+
 test('motion ranges map only when their source identity is unchanged', async () => {
   const { mapMarkdownMotionRangeThroughChanges } = await import('../src/editor/markdownMotion.ts');
   const doc = '- parent\n  - child';

@@ -1,5 +1,6 @@
-import type { ReactNode } from 'react';
+import { useContext, useRef, type ReactNode } from 'react';
 import { ChevronRight, Eye, List, Pencil, Search, Save } from 'lucide-react';
+import { ReducedMotionContext, useSegmentedPillMotion } from './uiMotion';
 
 export type WorkspaceMode = 'edit' | 'preview';
 
@@ -24,6 +25,9 @@ function pathParts(path: string) {
 }
 
 export function MarkdownWorkspaceHeader({ path, caption, label, onSave, canSave, mode, outline, onFind, onToggleMode, onToggleOutline, compact = false, enabled = true, controls }: WorkspaceHeaderProps) {
+  const modeSwitchRef = useRef<HTMLDivElement>(null);
+  const reduced = useContext(ReducedMotionContext);
+  useSegmentedPillMotion(modeSwitchRef, mode, true, reduced);
   const parts = pathParts(path);
   const file = parts.at(-1) || '未命名笔记';
   const parent = parts.at(-2) || '笔记库';
@@ -38,7 +42,7 @@ export function MarkdownWorkspaceHeader({ path, caption, label, onSave, canSave,
     {compact && save}
     <div className="markdown-workspace-actions">
       <button className="workspace-icon-action" aria-label="查找" title="查找（Ctrl+F）" disabled={!enabled} onClick={onFind}><Search size={15} /></button>
-      <div className="workspace-mode-switch" role="group" aria-label="笔记模式">
+      <div ref={modeSwitchRef} className="workspace-mode-switch" role="group" aria-label="笔记模式">
         <button disabled={!enabled} className={mode === 'edit' ? 'active' : ''} aria-pressed={mode === 'edit'} aria-label={mode === 'edit' ? '源码编辑模式' : '切换到源码编辑'} title={mode === 'edit' ? '源码编辑模式（Obsidian）' : '切换到源码编辑'} onClick={() => mode !== 'edit' && onToggleMode()}><Pencil size={14} /><span>编辑</span></button>
         <button disabled={!enabled} className={mode === 'preview' ? 'active' : ''} aria-pressed={mode === 'preview'} aria-label={mode === 'preview' ? '阅读模式' : '切换到预览'} title={mode === 'preview' ? '阅读模式' : '切换到预览'} onClick={() => mode !== 'preview' && onToggleMode()}><Eye size={14} /><span>阅读</span></button>
       </div>

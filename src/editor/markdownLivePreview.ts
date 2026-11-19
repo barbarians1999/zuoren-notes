@@ -658,11 +658,22 @@ export const livePreview = StateField.define<DecorationSet>({
       if (!transaction.selection || activeLineKey(transaction.startState) === activeLineKey(transaction.state)) return value;
     }
     const motionLines = new Set<number>();
-    if (transaction.state.selection.ranges.length === 1 && transaction.state.selection.main.empty) {
-      motionLines.add(transaction.state.doc.lineAt(transaction.state.selection.main.head).from);
-      if (!transaction.docChanged && transaction.startState.selection.ranges.length === 1 && transaction.startState.selection.main.empty) {
-        motionLines.add(transaction.startState.doc.lineAt(transaction.startState.selection.main.head).from);
+    const addLineRange = (doc: EditorState['doc'], from: number, to: number, limit = 40) => {
+      const first = doc.lineAt(from).number, last = doc.lineAt(to).number;
+      for (let number = first; number <= last && motionLines.size < limit; number++) motionLines.add(doc.line(number).from);
+    };
+    if (transaction.state.selection.ranges.length === 1) {
+      if (transaction.state.selection.main.empty) {
+        motionLines.add(transaction.state.doc.lineAt(transaction.state.selection.main.head).from);
+        if (!transaction.docChanged && transaction.startState.selection.ranges.length === 1 && transaction.startState.selection.main.empty) {
+          motionLines.add(transaction.startState.doc.lineAt(transaction.startState.selection.main.head).from);
+        }
+      } else {
+        addLineRange(transaction.state.doc, transaction.state.selection.main.from, transaction.state.selection.main.to);
       }
+    }
+    if (transaction.isUserEvent('input.indent') || transaction.isUserEvent('delete.dedent')) {
+      transaction.changes.iterChangedRanges((_fromA, _toA, fromB, toB) => addLineRange(transaction.state.doc, fromB, toB));
     }
     const previousKey = !transaction.docChanged && transaction.selection ? activeLineKey(transaction.startState) : '';
     const nextKey = activeLineKey(transaction.state);

@@ -313,6 +313,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 }
 
 .layout-tabs, .mode-tabs {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 2px;
@@ -323,7 +324,26 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   width: 100%;
 }
 
+.layout-tabs .mode-switch-thumb, .workspace-mode-switch .mode-switch-thumb {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 0;
+  box-sizing: border-box;
+  pointer-events: none;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.layout-tabs .mode-switch-thumb {
+  border-radius: calc(var(--radius) - 3px);
+  background: var(--mode-bg, var(--surface));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .06);
+}
+
 .layout-tabs button, .mode-tabs button {
+  position: relative;
+  z-index: 1;
   flex: 1;
   min-width: 0;
   min-height: 28px;
@@ -342,6 +362,12 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   color: var(--on-mode, var(--accent));
   font-weight: 650;
   box-shadow: 0 1px 2px rgba(0, 0, 0, .06);
+}
+
+.layout-tabs[data-pill-motion="true"] button.active,
+.layout-tabs[data-pill-motion="true"] button.active:hover {
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 .top-actions {
@@ -1315,6 +1341,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .markdown-source-editor .cm-md-indent-tab { display: inline-block; width: calc(var(--md-tab-columns) * var(--md-list-space-width, .5ch)); tab-size: var(--md-tab-columns); text-indent: 0; white-space: pre; }
 .markdown-source-editor .cm-md-list { color: var(--text); }
 .markdown-source-editor :is(.cm-md-list-marker, .cm-md-list-prefix, .cm-md-ordered-marker) { display: inline-block; box-sizing: border-box; width: var(--md-list-gutter); padding-right: .5em; color: var(--accent); font-weight: 700; text-align: right; text-indent: 0; white-space: pre; }
+.markdown-source-editor .cm-md-motion-run { position: relative; }
 .markdown-source-editor .cm-md-ordered-marker {
   --md-prefix-space-width: calc(var(--md-prefix-space-columns, 0) * var(--md-list-space-width, .5ch));
   position: relative;
@@ -1694,8 +1721,9 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .pdf-navigation button[aria-pressed="true"] { color: var(--accent); background: transparent; }
 .app .pdf-navigation button:not(:disabled):is(:hover, :active) { transform: none; }
 .workspace-icon-action:disabled { cursor: not-allowed; opacity: .45; }
-.workspace-mode-switch { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid transparent; border-radius: 6px; background: transparent; }
-.workspace-mode-switch button { padding: 4px 8px; font-size: 12px; }
+.workspace-mode-switch { position: relative; display: inline-flex; gap: 2px; padding: 2px; border: 1px solid transparent; border-radius: 6px; background: transparent; }
+.workspace-mode-switch .mode-switch-thumb { border-radius: 6px; background: var(--accent-soft); border: 1px solid color-mix(in oklab, var(--accent) 24%, transparent); }
+.workspace-mode-switch button { position: relative; z-index: 1; padding: 4px 8px; font-size: 12px; }
 .workspace-mode-switch button.active { color: var(--accent); background: transparent; box-shadow: none; }
 /* One continuous chrome row; pane ownership remains in the workspace model. */
 .note-workspace-bar { container: note-topbar / inline-size; display: flex; align-items: center; gap: 10px; height: 100%; min-height: 0; padding: 0 8px; flex: 1; min-width: 0; border-bottom: 0; background: transparent; }
@@ -2028,7 +2056,8 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .app[data-motion="full"] .left-rail :is(.sidebar-toggle, .quiet-action):not(:disabled):active > :is(svg, .action-label, span) { transform: scale(1.025); }
 .app .topbar .layout-tabs button { transition: background-color 0s, color var(--motion-feedback) var(--motion-ease-enter), transform 0s; }
 .app .topbar .layout-tabs button:not(.active):hover { background: transparent !important; color: var(--accent); }
-.app .topbar .layout-tabs button.active:hover { background: var(--mode-bg, var(--accent-soft)) !important; color: var(--on-mode, var(--accent)); }
+.app .topbar .layout-tabs:not([data-pill-motion="true"]) button.active:hover { background: var(--mode-bg, var(--accent-soft)) !important; color: var(--on-mode, var(--accent)); }
+.app .topbar .layout-tabs[data-pill-motion="true"] button.active:hover { color: var(--on-mode, var(--accent)); }
 .app .topbar .layout-tabs button:active { transform: none; }
 .app .topbar .layout-tabs button > span { display: inline-block; }
 .app .topbar .layout-tabs button > span { transition: color var(--motion-feedback) var(--motion-ease-enter), transform var(--motion-press) var(--motion-ease-enter); }

@@ -206,3 +206,184 @@ export function useTabMotion(host: HTMLElement | null, reduced: boolean) {
     return () => { cancelAnimationFrame(frame); animation?.cancel(); mutations.disconnect(); resize.disconnect(); host.removeEventListener('scroll', schedule); line.remove(); delete host.dataset.tabMotion; };
   }, [host, reduced]);
 }
+
+type PillRect = { x: number; y: number; width: number; height: number };
+type PillController = {
+  sync(activeKey: string, ready: boolean, reduced: boolean): void;
+};
+
+const APPLE_SPRING_LINEAR = 'linear(0, 0.008, 0.035, 0.138, 0.33, 0.555, 0.76, 0.912, 1.006, 1.042, 1.04, 1.022, 1.006, 0.997, 0.998, 1)';
+
+// Shared sliding liquid-glass pill thumb for segmented switchers (layout tabs & edit/preview switch).
+export function useSegmentedPillMotion(
+  host: RefObject<HTMLElement | null>,
+  activeKey: string,
+  ready: boolean,
+  reduced: boolean,
+) {
+  const controllerRef = useRef<PillController | null>(null);
+  const latestRef = useRef({ activeKey, ready, reduced });
+  latestRef.current = { activeKey, ready, reduced };
+
+  useLayoutEffect(() => {
+    const root = host.current;
+    if (!root) return;
+    const thumb = document.createElement('span');
+    thumb.className = 'mode-switch-thumb';
+    thumb.setAttribute('aria-hidden', 'true');
+    thumb.hidden = true;
+    root.prepend(thumb);
+    root.dataset.pillMotion = 'true';
+
+    let settledKey = '';
+    let wasReady = false;
+    let lastRect: PillRect | null = null;
+    let animation: Animation | null = null;
+    let observedBtn: HTMLElement | null = null;
+    let frame = 0;
+
+    const measureActive = (): { button: HTMLElement; rect: PillRect } | null => {
+      const button = root.querySelector<HTMLElement>('button.active');
+      if (!button || !button.isConnected) return null;
+      const width = button.offsetWidth, height = button.offsetHeight;
+      if (width <= 0 || height <= 0) return null;
+      return { button, rect: { x: button.offsetLeft, y: button.offsetTop, width, height } };
+    };
+
+    const stopAnimation = () => {
+      animation?.cancel();
+      animation = null;
+      thumb.classList.remove('is-gliding');
+    };
+
+    const snapThumb = (rect: PillRect) => {
+      thumb.hidden = false;
+      thumb.style.width = `${rect.width}px`;
+      thumb.style.height = `${rect.height}px`;
+      thumb.style.transform = `translate3d(${rect.x}px, ${rect.y}px, 0) scale(1, 1)`;
+      lastRect = rect;
+    };
+
+    const resize = new ResizeObserver(() => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        const measured = measureActive();
+        if (!measured) { stopAnimation(); thumb.hidden = true; lastRect = null; return; }
+        if (animation?.playState === 'running') return;
+        snapThumb(measured.rect);
+      });
+    });
+
+    const observeButton = (button: HTMLElement | null) => {
+      if (observedBtn === button) return;
+      if (observedBtn) resize.unobserve(observedBtn);
+      observedBtn = button;
+      if (button) resize.observe(button);
+    };
+
+    const sync = (nextKey: string, nextReady: boolean, nextReduced: boolean) => {
+      const measured = measureActive();
+      observeButton(measured?.button ?? null);
+      if (!measured) {
+        stopAnimation();
+        thumb.hidden = true;
+        lastRect = null;
+        settledKey = nextKey;
+        wasReady = nextReady;
+        return;
+      }
+      const { rect: target } = measured;
+      const appReduced = nextReduced || root.closest<HTMLElement>('.app')?.dataset.motion === 'reduced';
+      const canAnimate = nextReady && !appReduced && wasReady && !!lastRect && settledKey !== '' && settledKey !== nextKey;
+
+      if (!canAnimate) {
+        stopAnimation();
+        snapThumb(target);
+        settledKey = nextKey;
+        wasReady = nextReady;
+        return;
+      }
+
+      let fromX = lastRect!.x, fromY = lastRect!.y, fromW = lastRect!.width, fromH = lastRect!.height;
+      if (animation && animation.playState === 'running') {
+        try {
+          const style = getComputedStyle(thumb);
+          const matrix = new DOMMatrixReadOnly(style.transform);
+          if (Number.isFinite(matrix.m41) && Number.isFinite(matrix.m42)) {
+            const baseW = parseFloat(thumb.style.width) || target.width;
+            const baseH = parseFloat(thumb.style.height) || target.height;
+            fromX = matrix.m41;
+            fromY = matrix.m42;
+            fromW = baseW * (matrix.a || 1);
+            fromH = baseH * (matrix.d || 1);
+          }
+        } catch {}
+      }
+      stopAnimation();
+      snapThumb(target);
+      settledKey = nextKey;
+      wasReady = nextReady;
+
+      const dx = target.x - fromX, dy = target.y - fromY;
+      if (Math.hypot(dx, dy) < 1 && Math.abs(fromW - target.width) < 1) return;
+
+      const sx = Math.max(0.5, fromW / target.width);
+      const sy = Math.max(0.5, fromH / target.height);
+      const midStretchX = 1 + Math.min(0.055, Math.abs(dx) / Math.max(target.width, 40) * 0.032);
+      const midSquashY = Math.abs(dx) >= 4 ? 0.96 : 1;
+      const midShiftX = -target.width * (midStretchX - 1) * 0.5;
+      const midShiftY = -target.height * (midSquashY - 1) * 0.5;
+      const midX = fromX + dx * 0.56 + midShiftX;
+      const midY = fromY + dy * 0.56 + midShiftY;
+
+      const frames: Keyframe[] = [
+        { transform: `translate3d(${fromX}px, ${fromY}px, 0) scale(${sx}, ${sy})` },
+        { transform: `translate3d(${midX}px, ${midY}px, 0) scale(${midStretchX}, ${midSquashY})`, offset: 0.42 },
+        { transform: `translate3d(${target.x}px, ${target.y}px, 0) scale(1, 1)` },
+      ];
+      const hostStyle = getComputedStyle(root);
+      const duration = Math.max(240, motionNumber(hostStyle, '--motion-mode', 180) + 120);
+      let nextAnim: Animation | null = null;
+      try {
+        nextAnim = thumb.animate(frames, { duration, easing: APPLE_SPRING_LINEAR });
+      } catch {
+        try {
+          nextAnim = thumb.animate(frames, { duration: 240, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
+        } catch {
+          nextAnim = null;
+        }
+      }
+      if (!nextAnim) return;
+      animation = nextAnim;
+      thumb.classList.add('is-gliding');
+      nextAnim.onfinish = () => {
+        if (animation !== nextAnim) return;
+        animation = null;
+        thumb.classList.remove('is-gliding');
+      };
+      nextAnim.oncancel = () => {
+        if (animation !== nextAnim) return;
+        animation = null;
+        thumb.classList.remove('is-gliding');
+      };
+    };
+
+    controllerRef.current = { sync };
+    resize.observe(root);
+    sync(latestRef.current.activeKey, latestRef.current.ready, latestRef.current.reduced);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      stopAnimation();
+      resize.disconnect();
+      controllerRef.current = null;
+      thumb.remove();
+      delete root.dataset.pillMotion;
+    };
+  }, [host]);
+
+  useLayoutEffect(() => {
+    controllerRef.current?.sync(activeKey, ready, reduced);
+  }, [host, activeKey, ready, reduced]);
+}

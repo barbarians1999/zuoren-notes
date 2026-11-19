@@ -143,18 +143,26 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
     assert.deepEqual(await editor.evaluate(element => {
       const css = getComputedStyle(element); return { font: css.fontFamily, size: css.fontSize, leading: css.lineHeight, width: css.maxWidth };
     }), originalMetrics, 'theme does not alter document typography');
-    // Preserve the full-pill selected mode tab without animating its background color.
-    const expectedControls = { color: 'rgb(255, 255, 255)', radius: '999px', backgroundDuration: '0s' };
-    await page.waitForFunction(expected => {
-      const css = getComputedStyle(document.querySelector('.layout-tabs button.active'));
-      return css.color === expected.color && css.backgroundImage !== 'none';
-    }, expectedControls);
-    const controls = await page.locator('.layout-tabs button.active').evaluate(button => {
-      const css = getComputedStyle(button), properties = css.transitionProperty.split(',').map(value => value.trim()), durations = css.transitionDuration.split(',').map(value => value.trim());
-      return { color: css.color, radius: css.borderTopLeftRadius,
-        backgroundDuration: durations[properties.indexOf('background-color')] };
+    // Preserve the full-pill selected mode tab with its sliding liquid-glass coral thumb.
+    const expectedControls = { color: 'rgb(255, 255, 255)', buttonBg: 'rgba(0, 0, 0, 0)', thumbRadius: '999px', hasGradient: true, aligned: true };
+    await page.waitForFunction(() => {
+      const btn = document.querySelector('.layout-tabs button.active');
+      const thumb = document.querySelector('.layout-tabs .mode-switch-thumb');
+      return !!btn && !!thumb && getComputedStyle(btn).color === 'rgb(255, 255, 255)' && getComputedStyle(thumb).backgroundImage !== 'none';
     });
-    assert.deepEqual(controls, expectedControls, 'selected mode pill uses white text on coral gradient without color transition');
+    const controls = await page.locator('.layout-tabs').evaluate(tabs => {
+      const btn = tabs.querySelector('button.active'), thumb = tabs.querySelector('.mode-switch-thumb');
+      const btnCss = getComputedStyle(btn), thumbCss = getComputedStyle(thumb);
+      const bRect = btn.getBoundingClientRect(), tRect = thumb.getBoundingClientRect();
+      return {
+        color: btnCss.color,
+        buttonBg: btnCss.backgroundColor,
+        thumbRadius: thumbCss.borderTopLeftRadius,
+        hasGradient: thumbCss.backgroundImage !== 'none',
+        aligned: Math.abs(bRect.left - tRect.left) <= 1 && Math.abs(bRect.width - tRect.width) <= 1,
+      };
+    });
+    assert.deepEqual(controls, expectedControls, 'selected mode pill uses white text on coral gradient sliding thumb');
     await page.locator('.settings-menu > .quiet-action').hover();
     assert.equal(await page.locator('.settings-menu > .quiet-action').evaluate(el => getComputedStyle(el).transform), 'none');
     await page.mouse.move(1, 1);
