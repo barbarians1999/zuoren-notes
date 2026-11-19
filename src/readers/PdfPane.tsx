@@ -23,11 +23,22 @@ import { createPdfRegionAction, type PdfExcerptContext, type PdfRegionAction } f
 import type { ExcerptFlowResult } from './excerptFlow';
 import { groupedPdfImages, paintPdfAppearance } from './pdfAppearance';
 import { findVisiblePdfPage } from './pdfScroll';
+import { PdfBitmapCache, pdfBitmapCacheKey } from './pdfBitmapCache';
+import { PdfRenderQueue } from './pdfRenderQueue';
 
 const EMPTY_ANNOTATIONS: PdfAnnotation[] = [];
 type PdfSearchSpec = { query: string; occurrence: number; caseSensitive: boolean };
 type SlotObserverRegister = (element: HTMLElement, onVisibility: (visible: boolean) => void) => () => void;
-type LazyPdfRaster = { source: HTMLCanvasElement | null; images: ArrayLike<number> | null; pdfPage: any; viewport: any };
+type WaitForScrollIdle = (bypass: boolean) => { promise: Promise<void>; cancel: () => void };
+type LazyPdfRaster = { source: HTMLCanvasElement | null; images: ArrayLike<number> | null; pdfPage: any; viewport: any; fromDarkCache?: boolean };
+
+function clonePdfCanvas(source: HTMLCanvasElement): HTMLCanvasElement {
+  const copy = source.ownerDocument.createElement('canvas');
+  copy.width = source.width;
+  copy.height = source.height;
+  copy.getContext('2d')?.drawImage(source, 0, 0);
+  return copy;
+}
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 // PDF.js 6 loads JBIG2/OpenJPEG/ICC decoders on demand.  The desktop build
 // runs from a file:// URL, so leaving wasmUrl unset makes the fallback module
@@ -75,17 +86,40 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
   }, []);
   const scroll = useRef<HTMLDivElement>(null), lastPage = useRef(0), searchGeneration = useRef(0);
   const scrollRaf = useRef(0);
+  const scrollingRef = useRef(false);
+  const scrollIdleTimer = useRef<number | null>(null);
+  const scrollIdleWaiters = useRef(new Set<() => void>());
   const scrolledStateRef = useRef<{ scrolled: boolean; immersive: boolean } | null>(null);
   const searchOpenRef = useRef(searchOpen); searchOpenRef.current = searchOpen;
   const slotCallbacks = useRef(new Map<Element, (visible: boolean) => void>());
   const slotObserver = useRef<IntersectionObserver | null>(null);
   const pageSizeCache = useRef(new Map<number, { width: number; height: number }>());
+  const bitmapCache = useRef(new PdfBitmapCache());
+  const renderQueue = useRef(new PdfRenderQueue(2, () => lastPage.current || 1));
   const zoomAnchor = useRef<{ page: number; ratio: number; scale: number; token: number } | null>(null);
   const zoomToken = useRef(0), restoringZoom = useRef(false);
   const pageTextCache = useRef(new Map<number, string>());
   const pageTextErrors = useRef(new Set<number>());
   const latest = useRef({ pdf, onMeta }); latest.current = { pdf, onMeta };
   const captureCurrentExcerpt = useCallback(() => latest.current.pdf ? captureExcerpt(latest.current.pdf) : null, [captureExcerpt]);
+  const flushScrollWaiters = useCallback(() => {
+    scrollingRef.current = false;
+    const waiters = [...scrollIdleWaiters.current];
+    scrollIdleWaiters.current.clear();
+    for (const wake of waiters) wake();
+  }, []);
+  const waitForScrollIdle = useCallback<WaitForScrollIdle>(bypass => {
+    if (bypass || !scrollingRef.current) return { promise: Promise.resolve(), cancel: () => {} };
+    let done = () => {};
+    const promise = new Promise<void>(resolve => {
+      done = () => {
+        scrollIdleWaiters.current.delete(done);
+        resolve();
+      };
+      scrollIdleWaiters.current.add(done);
+    });
+    return { promise, cancel: done };
+  }, []);
   const observeSlot = useCallback<SlotObserverRegister>((element, onVisibility) => {
     if (!slotObserver.current) {
       slotObserver.current = new IntersectionObserver(entries => {
@@ -101,10 +135,14 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
   }, []);
   useEffect(() => () => {
     if (scrollRaf.current) cancelAnimationFrame(scrollRaf.current);
+    if (scrollIdleTimer.current !== null) window.clearTimeout(scrollIdleTimer.current);
+    flushScrollWaiters();
+    renderQueue.current.clear();
+    bitmapCache.current.clear();
     slotObserver.current?.disconnect();
     slotObserver.current = null;
     slotCallbacks.current.clear();
-  }, []);
+  }, [flushScrollWaiters]);
   // Undo belongs to the document, not a virtualized page that may unmount.
   const [deletedAnnotation, setDeletedAnnotation] = useState<{ annotation: PdfAnnotation; index: number; path: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -152,7 +190,7 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
     finally { if (deletionLock.current === token) { deletionLock.current = null; setDeleting(false); } }
   }
   useEffect(() => {
-    setLoadedDocument(null); setPages(0); setToc([]); setSearchMatches([]); setSearchIndex(-1); setSearching(false); setSearchStatus({ processed: 0, totalPages: 0, totalMatches: 0, errors: 0, truncated: false }); pageTextCache.current.clear(); pageTextErrors.current.clear(); pageSizeCache.current.clear(); lastPage.current = 0; zoomToken.current += 1; zoomAnchor.current = null; restoringZoom.current = false; searchGeneration.current += 1;
+    setLoadedDocument(null); setPages(0); setToc([]); setSearchMatches([]); setSearchIndex(-1); setSearching(false); setSearchStatus({ processed: 0, totalPages: 0, totalMatches: 0, errors: 0, truncated: false }); pageTextCache.current.clear(); pageTextErrors.current.clear(); pageSizeCache.current.clear(); bitmapCache.current.clear(); renderQueue.current.clear(); if (scrollIdleTimer.current !== null) { window.clearTimeout(scrollIdleTimer.current); scrollIdleTimer.current = null; } flushScrollWaiters(); lastPage.current = 0; zoomToken.current += 1; zoomAnchor.current = null; restoringZoom.current = false; searchGeneration.current += 1;
     slotObserver.current?.disconnect(); slotObserver.current = null; slotCallbacks.current.clear();
     if (!pdf) return;
     let disposed = false;
@@ -351,6 +389,12 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
   }, []);
   const onPdfScroll = useCallback(() => {
     const host = scroll.current; if (!host) return;
+    scrollingRef.current = true;
+    if (scrollIdleTimer.current !== null) window.clearTimeout(scrollIdleTimer.current);
+    scrollIdleTimer.current = window.setTimeout(() => {
+      scrollIdleTimer.current = null;
+      flushScrollWaiters();
+    }, 90);
     syncScrolledState(host.scrollTop > 42, searchOpenRef.current);
     if (restoringZoom.current || scrollRaf.current) return;
     scrollRaf.current = requestAnimationFrame(() => {
@@ -362,7 +406,7 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
       const number = Number(visible?.dataset.pdfPage);
       if (number && number !== lastPage.current) { lastPage.current = number; setPage(number); }
     });
-  }, [syncScrolledState]);
+  }, [flushScrollWaiters, syncScrolledState]);
   const annotationsByPage = useMemo(() => {
     const map = new Map<number, PdfAnnotation[]>();
     for (const annotation of pdf?.meta.annotations || EMPTY_ANNOTATIONS) {
@@ -485,6 +529,7 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
         <div className="pdf-canvas-wrap continuous-pdf" ref={scroll} onScroll={onPdfScroll}>
           {!pdf ? <div className="empty-state"><BookOpen size={28}/><p>打开 PDF 或 EPUB 开始阅读</p></div> : !document ? <div className="empty-state">正在载入 PDF…</div> : Array.from({ length: pages }, (_, index) => {
             const pageNumber = index + 1;
+            const isPinned = textSelection.pins.includes(pageNumber) || ocrPages.includes(pageNumber);
             return <PdfPageSlot
               key={pdf.path + index}
               document={document}
@@ -493,7 +538,10 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
               size={size}
               observeSlot={observeSlot}
               pageSizeCache={pageSizeCache}
-              pinned={textSelection.pins.includes(pageNumber) || ocrPages.includes(pageNumber)}
+              bitmapCache={bitmapCache}
+              renderQueue={renderQueue}
+              waitForScrollIdle={waitForScrollIdle}
+              pinned={isPinned}
               dark={dark}
               pdfPath={pdf.path}
               pdfData={pdf.data}
@@ -545,9 +593,11 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
   </section>;
 }
 
-const PdfPageSlot = memo(function PdfPageSlot({ document, number, scale, size, observeSlot, pageSizeCache, pinned, dark, pdfPath, pdfData, pdfId, pageAnnotations, onMeta, onShowAnnotation, deleting, captureExcerpt, targetActive, onMessage, tool, onOcrChange, textSelection, search }: {
+const PdfPageSlot = memo(function PdfPageSlot({ document, number, scale, size, observeSlot, pageSizeCache, bitmapCache, renderQueue, waitForScrollIdle, pinned, dark, pdfPath, pdfData, pdfId, pageAnnotations, onMeta, onShowAnnotation, deleting, captureExcerpt, targetActive, onMessage, tool, onOcrChange, textSelection, search }: {
   document: any; number: number; scale: number; size: { width: number; height: number };
   observeSlot: SlotObserverRegister; pageSizeCache: React.RefObject<Map<number, { width: number; height: number }>>;
+  bitmapCache: React.RefObject<PdfBitmapCache>; renderQueue: React.RefObject<PdfRenderQueue>;
+  waitForScrollIdle: WaitForScrollIdle;
   pinned: boolean; dark: boolean; pdfPath: string; pdfData: ActivePdf['data']; pdfId: string;
   pageAnnotations: PdfAnnotation[]; onMeta: (change: (current: PdfMeta) => PdfMeta) => Promise<boolean>;
   onShowAnnotation: (id: string) => void; deleting: boolean; captureExcerpt: () => PdfExcerptContext | null;
@@ -581,13 +631,15 @@ const PdfPageSlot = memo(function PdfPageSlot({ document, number, scale, size, o
   }, [document, number, observeSlot, pageSizeCache]);
   return <div className="pdf-page-slot" ref={host} data-pdf-page={number} style={{ width: actual.width * scale, minHeight: actual.height * scale }}>
     <span className="pdf-page-label">{number}</span>
-    {visible || pinned ? <PdfPage dark={dark} document={document} pdfPath={pdfPath} pdfData={pdfData} pdfId={pdfId} page={number} scale={scale} pageAnnotations={pageAnnotations} onMeta={onMeta} onShowAnnotation={onShowAnnotation} deleting={deleting} captureExcerpt={captureExcerpt} targetActive={targetActive} onMessage={onMessage} tool={tool} onOcrChange={onOcrChange} textSelection={textSelection} search={search}/> : <div className="pdf-page-placeholder" style={{ height: actual.height * scale }}/>}
+    {visible || pinned ? <PdfPage dark={dark} document={document} bitmapCache={bitmapCache} renderQueue={renderQueue} waitForScrollIdle={waitForScrollIdle} pinned={pinned} pdfPath={pdfPath} pdfData={pdfData} pdfId={pdfId} page={number} scale={scale} pageAnnotations={pageAnnotations} onMeta={onMeta} onShowAnnotation={onShowAnnotation} deleting={deleting} captureExcerpt={captureExcerpt} targetActive={targetActive} onMessage={onMessage} tool={tool} onOcrChange={onOcrChange} textSelection={textSelection} search={search}/> : <div className="pdf-page-placeholder" style={{ height: actual.height * scale }}/>}
   </div>;
 });
 
-const PdfPage = memo(function PdfPage({ dark, pdfPath, pdfData, pdfId, page, scale, pageAnnotations, onMeta, onShowAnnotation, deleting, captureExcerpt, targetActive, onMessage, document: sharedDocument, tool, onOcrChange, textSelection, search }: {
+const PdfPage = memo(function PdfPage({ dark, pdfPath, pdfData, pdfId, page, scale, pageAnnotations, onMeta, onShowAnnotation, deleting, captureExcerpt, targetActive, onMessage, document: sharedDocument, bitmapCache, renderQueue, waitForScrollIdle, pinned, tool, onOcrChange, textSelection, search }: {
   dark: boolean; document: any; tool: PdfTool; pdfPath: string; pdfData: ActivePdf['data']; pdfId: string;
   page: number; scale: number; pageAnnotations: PdfAnnotation[];
+  bitmapCache: React.RefObject<PdfBitmapCache>; renderQueue: React.RefObject<PdfRenderQueue>;
+  waitForScrollIdle: WaitForScrollIdle; pinned: boolean;
   onMeta: (change: (current: PdfMeta) => PdfMeta) => Promise<boolean>; onShowAnnotation: (id: string) => void;
   deleting: boolean; captureExcerpt: () => PdfExcerptContext | null; targetActive: boolean;
   onMessage: (message: string) => void; onOcrChange: (page: number, active: boolean) => void;
@@ -595,23 +647,37 @@ const PdfPage = memo(function PdfPage({ dark, pdfPath, pdfData, pdfId, page, sca
 }) {
   const reducedMotion = useContext(ReducedMotionContext);
   const reducedMotionRef = useRef(reducedMotion); reducedMotionRef.current = reducedMotion;
+  const pinnedRef = useRef(pinned); pinnedRef.current = pinned;
+  const searchRef = useRef(search); searchRef.current = search;
   const canvas = useRef<HTMLCanvasElement>(null);
   const raster = useRef<LazyPdfRaster | null>(null);
   const pagePainted = useRef(false);
+  const textRenderedKey = useRef('');
   const night = useRef(dark); night.current = dark;
   const [pageSize, setPageSize] = useState<{ width: number; height: number } | null>(null);
+  const [renderNonce, setRenderNonce] = useState(0);
   useLayoutEffect(() => {
     const currentCanvas = canvas.current, entry = raster.current;
     if (!currentCanvas || !entry) return;
     if (!dark) {
-      if (entry.source) paintPdfAppearance(currentCanvas, { source: entry.source, images: entry.images || [] }, false);
+      if (entry.source) {
+        paintPdfAppearance(currentCanvas, { source: entry.source, images: entry.images || [] }, false);
+        return;
+      }
+      if (!entry.fromDarkCache) return;
+      const outputScale = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+      const lightCached = bitmapCache.current.get(pdfBitmapCacheKey(pdfPath, page, scale, outputScale, false));
+      if (lightCached && lightCached.canvas.width === currentCanvas.width && lightCached.canvas.height === currentCanvas.height) {
+        currentCanvas.getContext('2d')?.drawImage(lightCached.canvas, 0, 0);
+        entry.fromDarkCache = false;
+      } else {
+        setRenderNonce(value => value + 1);
+      }
       return;
     }
+    if (entry.fromDarkCache && !entry.source) return;
     if (!entry.source) {
-      const copy = window.document.createElement('canvas');
-      copy.width = currentCanvas.width; copy.height = currentCanvas.height;
-      copy.getContext('2d')?.drawImage(currentCanvas, 0, 0);
-      entry.source = copy;
+      entry.source = clonePdfCanvas(currentCanvas);
     }
     if (entry.images) {
       paintPdfAppearance(currentCanvas, { source: entry.source, images: entry.images }, true);
@@ -621,14 +687,31 @@ const PdfPage = memo(function PdfPage({ dark, pdfPath, pdfData, pdfId, page, sca
     let cancelled = false;
     void (async () => {
       try {
-        const operators = await entry.pdfPage.getOperatorList();
+        const pdfPage = entry.pdfPage || await sharedDocument.getPage(Math.min(page, sharedDocument.numPages));
         if (cancelled || raster.current !== entry || !canvas.current || !entry.source) return;
-        entry.images = [...entry.pdfPage.imageCoordinates || [], ...groupedPdfImages(operators, entry.viewport, pdfjsLib.OPS)];
-        if (night.current) paintPdfAppearance(canvas.current, { source: entry.source, images: entry.images }, true);
+        const viewport = entry.viewport || pdfPage.getViewport({ scale });
+        entry.pdfPage = pdfPage;
+        entry.viewport = viewport;
+        const operators = await pdfPage.getOperatorList();
+        if (cancelled || raster.current !== entry || !canvas.current || !entry.source) return;
+        entry.images = [...pdfPage.imageCoordinates || [], ...groupedPdfImages(operators, viewport, pdfjsLib.OPS)];
+        if (night.current) {
+          paintPdfAppearance(canvas.current, { source: entry.source, images: entry.images }, true);
+          const outputScale = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+          const darkKey = pdfBitmapCacheKey(pdfPath, page, scale, outputScale, true);
+          bitmapCache.current.set(darkKey, {
+            canvas: clonePdfCanvas(canvas.current),
+            cssWidth: viewport.width,
+            cssHeight: viewport.height,
+            rotation: (((pdfPage.rotate % 360) + 360) % 360) as 0 | 90 | 180 | 270,
+            bytes: canvas.current.width * canvas.current.height * 4,
+            hasDarkImages: entry.images.length > 0,
+          });
+        }
       } catch { /* Base dark appearance already painted with recorded images. */ }
     })();
     return () => { cancelled = true; };
-  }, [dark]);
+  }, [dark, bitmapCache, pdfPath, page, scale, sharedDocument]);
   useLayoutEffect(() => {
     if (reducedMotion) canvas.current?.getAnimations().forEach(animation => animation.cancel());
   }, [reducedMotion]);
@@ -683,49 +766,114 @@ const PdfPage = memo(function PdfPage({ dark, pdfPath, pdfData, pdfId, page, sca
     const document = pdfDocument.current; if (!document || !canvas.current || !textLayer.current) return;
     let cancelled = false;
     let renderTask: any, textTask: InstanceType<typeof pdfjsLib.TextLayer> | undefined;
-    setLoading(true);
+    let cancelQueue: (() => void) | null = null;
+    let cancelScrollWait: (() => void) | null = null;
+    const outputScale = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+    const isDark = night.current;
+    const cacheKey = pdfBitmapCacheKey(pdfPath, page, scale, outputScale, isDark);
+    const cached = bitmapCache.current.get(cacheKey);
+    if (!cached) setLoading(true);
     void (async () => {
       try {
-        const pdfPage = await document.getPage(Math.min(page, document.numPages));
-        if (cancelled || !canvas.current) return;
-        setRotation((((pdfPage.rotate % 360) + 360) % 360) as 0 | 90 | 180 | 270);
-        const viewport = pdfPage.getViewport({ scale });
-        if (cancelled || !canvas.current) return;
-        const outputScale = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
-        const currentCanvas = canvas.current!; currentCanvas.width = Math.ceil(viewport.width * outputScale); currentCanvas.height = Math.ceil(viewport.height * outputScale);
-        currentCanvas.style.width = `${viewport.width}px`; currentCanvas.style.height = `${viewport.height}px`;
-        setPageSize(prev => prev && prev.width === viewport.width && prev.height === viewport.height ? prev : { width: viewport.width, height: viewport.height });
-        const transform = outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0];
-        if (night.current) {
-          // Render offscreen in dark mode so it never flashes a white page.
-          const source = window.document.createElement('canvas');
-          source.width = currentCanvas.width; source.height = currentCanvas.height;
-          renderTask = pdfPage.render({ canvas: source, canvasContext: source.getContext('2d')!, viewport, transform, recordImages: true });
-          await renderTask.promise;
-          if (cancelled || canvas.current !== currentCanvas || !textLayer.current) return;
-          const operators = await pdfPage.getOperatorList();
-          if (cancelled || canvas.current !== currentCanvas || !textLayer.current) return;
-          const images = [...pdfPage.imageCoordinates || [], ...groupedPdfImages(operators, viewport, pdfjsLib.OPS)];
-          raster.current = { source, images, pdfPage, viewport };
-          paintPdfAppearance(currentCanvas, { source, images }, true);
+        let pdfPage: any = null;
+        let viewport: any = null;
+        let fromCache = false;
+        const currentCanvas = canvas.current!;
+        if (cached) {
+          fromCache = true;
+          currentCanvas.width = cached.canvas.width;
+          currentCanvas.height = cached.canvas.height;
+          currentCanvas.style.width = `${cached.cssWidth}px`;
+          currentCanvas.style.height = `${cached.cssHeight}px`;
+          currentCanvas.getContext('2d')?.drawImage(cached.canvas, 0, 0);
+          setRotation(cached.rotation);
+          setPageSize(prev => prev && prev.width === cached.cssWidth && prev.height === cached.cssHeight ? prev : { width: cached.cssWidth, height: cached.cssHeight });
+          raster.current = { source: null, images: null, pdfPage: null, viewport: null, fromDarkCache: isDark };
+          setLoading(false);
         } else {
-          // Light mode renders directly to the display canvas and defers
-          // operator-list image extraction until dark mode is actually toggled.
-          renderTask = pdfPage.render({ canvas: currentCanvas, canvasContext: currentCanvas.getContext('2d')!, viewport, transform, recordImages: true });
-          await renderTask.promise;
-          if (cancelled || canvas.current !== currentCanvas || !textLayer.current) return;
-          raster.current = { source: null, images: null, pdfPage, viewport };
+          const queued = renderQueue.current.enqueue(page, async () => {
+            if (cancelled || !canvas.current || !textLayer.current) return null;
+            const loadedPage = await document.getPage(Math.min(page, document.numPages));
+            if (cancelled || !canvas.current) return null;
+            const pageRotation = (((loadedPage.rotate % 360) + 360) % 360) as 0 | 90 | 180 | 270;
+            setRotation(pageRotation);
+            const pageViewport = loadedPage.getViewport({ scale });
+            if (cancelled || !canvas.current) return null;
+            const targetCanvas = canvas.current;
+            const pixelWidth = Math.ceil(pageViewport.width * outputScale);
+            const pixelHeight = Math.ceil(pageViewport.height * outputScale);
+            targetCanvas.width = pixelWidth;
+            targetCanvas.height = pixelHeight;
+            targetCanvas.style.width = `${pageViewport.width}px`;
+            targetCanvas.style.height = `${pageViewport.height}px`;
+            setPageSize(prev => prev && prev.width === pageViewport.width && prev.height === pageViewport.height ? prev : { width: pageViewport.width, height: pageViewport.height });
+            const transform = outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0];
+            let hasDarkImages = false;
+            if (night.current) {
+              // Render offscreen in dark mode so it never flashes a white page.
+              const source = window.document.createElement('canvas');
+              source.width = pixelWidth; source.height = pixelHeight;
+              renderTask = loadedPage.render({ canvas: source, canvasContext: source.getContext('2d')!, viewport: pageViewport, transform, recordImages: true });
+              await renderTask.promise;
+              if (cancelled || canvas.current !== targetCanvas || !textLayer.current) return null;
+              const operators = await loadedPage.getOperatorList();
+              if (cancelled || canvas.current !== targetCanvas || !textLayer.current) return null;
+              const images = [...loadedPage.imageCoordinates || [], ...groupedPdfImages(operators, pageViewport, pdfjsLib.OPS)];
+              hasDarkImages = images.length > 0;
+              raster.current = { source, images, pdfPage: loadedPage, viewport: pageViewport, fromDarkCache: false };
+              paintPdfAppearance(targetCanvas, { source, images }, true);
+            } else {
+              // Light mode renders directly to the display canvas and defers
+              // operator-list image extraction until dark mode is actually toggled.
+              renderTask = loadedPage.render({ canvas: targetCanvas, canvasContext: targetCanvas.getContext('2d')!, viewport: pageViewport, transform, recordImages: true });
+              await renderTask.promise;
+              if (cancelled || canvas.current !== targetCanvas || !textLayer.current) return null;
+              raster.current = { source: null, images: null, pdfPage: loadedPage, viewport: pageViewport, fromDarkCache: false };
+            }
+            const actualCacheKey = pdfBitmapCacheKey(pdfPath, page, scale, outputScale, night.current);
+            bitmapCache.current.set(actualCacheKey, {
+              canvas: clonePdfCanvas(targetCanvas),
+              cssWidth: pageViewport.width,
+              cssHeight: pageViewport.height,
+              rotation: pageRotation,
+              bytes: pixelWidth * pixelHeight * 4,
+              hasDarkImages,
+            });
+            return { pdfPage: loadedPage, viewport: pageViewport };
+          });
+          cancelQueue = queued.cancel;
+          const rendered = await queued.promise;
+          if (!rendered || cancelled) return;
+          pdfPage = rendered.pdfPage;
+          viewport = rendered.viewport;
+          setLoading(false);
         }
-        setLoading(false);
         if (!pagePainted.current) {
           pagePainted.current = true;
-          if (!reducedMotionRef.current) {
-            currentCanvas.animate([{ opacity: 0.86 }, { opacity: 1 }], { duration: 120, easing: 'cubic-bezier(.2,.75,.3,1)' });
+          if (!fromCache && !reducedMotionRef.current && canvas.current) {
+            canvas.current.animate([{ opacity: 0.86 }, { opacity: 1 }], { duration: 120, easing: 'cubic-bezier(.2,.75,.3,1)' });
           }
         }
-        // Yield one frame so the compositor paints the scrolled page before
-        // building the text layer DOM.
+        const textKey = `${pdfPath}::${page}::${scale}`;
+        const existingLayer = textLayer.current;
+        if (textRenderedKey.current === textKey && existingLayer?.firstChild) return;
+        // Yield one frame and wait for scrolling to settle before building the
+        // text layer DOM (pinned/search pages bypass the idle wait).
         await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        if (cancelled) return;
+        const idle = waitForScrollIdle(pinnedRef.current || !!searchRef.current);
+        cancelScrollWait = idle.cancel;
+        await idle.promise;
+        if (cancelled) return;
+        if (!pdfPage) {
+          pdfPage = await document.getPage(Math.min(page, document.numPages));
+          if (cancelled) return;
+          viewport = pdfPage.getViewport({ scale });
+          if (raster.current) {
+            raster.current.pdfPage = pdfPage;
+            raster.current.viewport = viewport;
+          }
+        }
         const layer = textLayer.current;
         if (cancelled || !layer) return;
         layer.replaceChildren(); layer.style.width = `${viewport.width}px`; layer.style.height = `${viewport.height}px`;
@@ -735,12 +883,15 @@ const PdfPage = memo(function PdfPage({ dark, pdfPath, pdfData, pdfId, page, sca
         if (cancelled || textLayer.current !== layer) return;
         textTask = new pdfjsLib.TextLayer({ textContentSource: text, container: layer, viewport });
         await textTask.render();
-        if (!cancelled) setTextRevision(value => value + 1);
+        if (!cancelled) {
+          textRenderedKey.current = textKey;
+          setTextRevision(value => value + 1);
+        }
       } catch (error: any) { if (!cancelled && error?.name !== 'RenderingCancelledException') onMessage(`页面显示失败：${error?.message || error}`); }
       finally { if (!cancelled) setLoading(false); }
     })();
-    return () => { cancelled = true; renderTask?.cancel?.(); textTask?.cancel(); raster.current = null; };
-  }, [pdfPath, page, scale, sharedDocument]);
+    return () => { cancelled = true; cancelQueue?.(); cancelScrollWait?.(); renderTask?.cancel?.(); textTask?.cancel(); raster.current = null; };
+  }, [pdfPath, page, scale, sharedDocument, bitmapCache, renderQueue, waitForScrollIdle, renderNonce]);
 
   useEffect(() => {
     const layer = textLayer.current;

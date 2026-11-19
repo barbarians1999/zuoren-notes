@@ -18,8 +18,10 @@ const { noteImageBytes, openImage } = require('./note-image.cjs');
 if (process.env.ZHAOYE_TEST_USER_DATA) app.setPath('userData', process.env.ZHAOYE_TEST_USER_DATA);
 else app.setPath('userData', path.join(app.getPath('appData'), '照页'));
 app.setName('左人笔记');
-app.disableHardwareAcceleration();
-app.commandLine.appendSwitch('disable-gpu');
+if (process.env.ZUOREN_DISABLE_GPU === '1') {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch('disable-gpu');
+}
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'reader-asset', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 const store = new FileStore();

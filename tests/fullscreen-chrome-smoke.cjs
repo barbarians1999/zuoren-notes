@@ -99,6 +99,40 @@ test('fullscreen chrome reveals without resizing readers and preserves settings,
     assert.deepEqual(await page.locator('.cm-editor').boundingBox(), editorBounds);
     assert.equal(await page.getByRole('button', { name: '退出全屏', exact: true }).locator('svg.lucide-minimize-2').count(), 1, 'fullscreen exit uses inward arrows');
     assert.equal(await page.getByRole('button', { name: '退出全屏', exact: true }).locator('svg.lucide-maximize-2').count(), 0);
+    const chromeLayout = await page.evaluate(() => {
+      for (const el of document.querySelectorAll('.topbar, .left-rail')) for (const animation of el.getAnimations()) animation.finish();
+      const topbar = document.querySelector('.topbar');
+      const leftRail = document.querySelector('.left-rail');
+      const closeBtn = document.querySelector('.window-controls .window-close');
+      const exitBtn = document.querySelector('.window-controls button[aria-label="退出全屏"]');
+      const body = document.querySelector('.body');
+      const sidebarSearch = document.querySelector('.body > .sidebar .search');
+      const topbarBox = topbar.getBoundingClientRect();
+      const leftRailBox = leftRail.getBoundingClientRect();
+      const closeBox = closeBtn.getBoundingClientRect();
+      const exitBox = exitBtn.getBoundingClientRect();
+      const bodyBox = body.getBoundingClientRect();
+      const searchBox = sidebarSearch.getBoundingClientRect();
+      return {
+        topbarPosition: getComputedStyle(topbar).position,
+        topbarRight: topbarBox.right,
+        closeRight: closeBox.right,
+        exitRight: exitBox.right,
+        bodyTop: bodyBox.top,
+        searchLeft: searchBox.left,
+        leftRailRight: leftRailBox.right,
+        searchTop: searchBox.top,
+        topbarBottom: topbarBox.bottom,
+        innerWidth: window.innerWidth,
+      };
+    });
+    assert.equal(chromeLayout.topbarPosition, 'absolute', 'fullscreen topbar overlays rather than consuming flex height');
+    assert.ok(chromeLayout.topbarRight <= chromeLayout.innerWidth + 0.5, 'fullscreen topbar stays within viewport');
+    assert.ok(chromeLayout.closeRight <= chromeLayout.innerWidth - 4, 'fullscreen close button stays inside viewport');
+    assert.ok(chromeLayout.exitRight <= chromeLayout.innerWidth - 4, 'fullscreen exit button stays inside viewport');
+    assert.ok(chromeLayout.bodyTop <= 1, 'fullscreen body begins at top edge without a 54px dead strip');
+    assert.ok(chromeLayout.searchLeft >= chromeLayout.leftRailRight + 4, 'fullscreen left rail does not overlap open sidebar');
+    assert.ok(chromeLayout.searchTop >= chromeLayout.topbarBottom + 2, 'fullscreen revealed topbar does not overlap open sidebar');
     const exit = await page.evaluate(() => {
       const root = document.querySelector('.app'), top = document.querySelector('.topbar');
       // Finish entry before measuring exit; test geometry, not just CSS names.
@@ -146,6 +180,19 @@ test('fullscreen chrome reveals without resizing readers and preserves settings,
     const before = await pdfPosition(); await screenshot('pdf-fullscreen-hidden'); await show();
     assert.deepEqual(await pdfPosition(), before); assert.equal(await input.inputValue(), '2');
     await screenshot('pdf-fullscreen-revealed');
+    const pdfChromeState = await page.evaluate(() => {
+      const pdfPane = document.querySelector('.pdf-pane');
+      pdfPane.focus({ preventScroll: true });
+      const topBar = document.querySelector('.pdf-top-bar');
+      return {
+        focused: document.activeElement === pdfPane,
+        outlineStyle: getComputedStyle(pdfPane).outlineStyle,
+        appRegion: getComputedStyle(topBar).getPropertyValue('-webkit-app-region').trim(),
+      };
+    });
+    assert.equal(pdfChromeState.focused, true);
+    assert.equal(pdfChromeState.outlineStyle, 'none', 'focused PDF pane must not draw a border outline');
+    assert.equal(pdfChromeState.appRegion, 'no-drag', 'fullscreen PDF top bar must not act as a window drag region');
     await hide(); await page.keyboard.press('F11');
     await page.waitForFunction(() => document.querySelector('.app').dataset.fullscreen === 'false');
     await row('book.epub').click(); await page.locator('.epub-viewer iframe').first().waitFor();
