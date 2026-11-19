@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-let ReaderSession;
-test.before(async () => { ({ ReaderSession } = await import('../src/readers/readerSession.ts')); });
+let ReaderSession, formatReaderSaveError;
+test.before(async () => { ({ ReaderSession, formatReaderSaveError } = await import('../src/readers/readerSession.ts')); });
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const pdf = (path, id = path) => ({ path, data: new Uint8Array([path.length]), meta: { id, page: 1, annotations: [] } });
 const epub = (path, id = path) => ({ path, data: new Uint8Array([path.length]), meta: { id, cfi: 'cfi-1', progress: 0, fontSize: 100, annotations: [] }, warnings: [] });
@@ -160,4 +160,65 @@ test('EPUB updates during file loading block a failed switch and allow a success
   assert.equal((await opening).status, 'save-failed'); assert.equal(session.currentEpub().path, 'current.epub');
   fail = false; assert.equal(await session.updateEpub(meta => ({ ...meta, cfi: 'late-cfi' })), true);
   assert.equal((await session.open('next.epub', 'epub')).status, 'opened');
+});
+
+test('flush auto-retries a transient failure once storage recovers and clears lastSaveFailure', async () => {
+  let fail = true;
+  const { session, saved } = harness({
+    savePdfMeta: async input => {
+      if (fail) throw new Error('EBUSY: resource busy or locked');
+      saved.push({ kind: 'pdf', ...input });
+    },
+  });
+  await session.open('transient.pdf', 'pdf');
+  assert.equal(await session.updatePdf(meta => ({ ...meta, page: 4, annotations: [{ id: 'm1' }] })), false);
+  assert.equal(session.lastSaveFailure()?.kind, 'pdf');
+  assert.match(session.lastSaveFailure()?.reason || '', /占用/);
+  // Capture does not enqueue another write, yet flush() retries the failed one.
+  assert.equal(await session.flush(), false);
+  fail = false;
+  assert.equal(await session.flush(), true);
+  assert.equal(session.lastSaveFailure(), null);
+  assert.equal(session.currentPdf().meta.page, 4);
+  assert.equal(session.currentPdf().meta.annotations[0].id, 'm1');
+  assert.equal(saved.at(-1).meta.page, 4);
+});
+
+test('permanent ENOENT failure exposes clean reason and discardFailedWrites unblocks open even when capture fires', async () => {
+  let captureAttempts = 0;
+  let session;
+  session = new ReaderSession({
+    openPdf: async path => pdf(path),
+    openEpub: async path => epub(path),
+    savePdfMeta: async input => {
+      if (input.path.includes('missing')) throw new Error("Error invoking remote method 'save-pdf-meta': Error: ENOENT: no such file or directory");
+    },
+    saveEpubMeta: async () => {},
+  }, () => {}, () => {
+    captureAttempts++;
+    const current = session.currentPdf();
+    if (current?.path.includes('missing')) void session.updatePdf(meta => ({ ...meta, page: 9 }));
+  });
+  await session.open('G:\\missing.pdf', 'pdf');
+  assert.equal(await session.flush(), false);
+  const failure = session.lastSaveFailure();
+  assert.equal(failure?.kind, 'pdf');
+  assert.equal(failure?.name, 'missing.pdf');
+  assert.equal(failure?.reason, '原文件不存在或所在磁盘已断开，无法写入阅读进度或标注。');
+  assert.doesNotMatch(formatReaderSaveError(new Error("Error invoking remote method 'save-pdf-meta': Error: custom failure")), /invoking remote method/);
+  assert.equal((await session.open('other.pdf', 'pdf', { discardPreviousChanges: true })).status, 'opened');
+  assert.equal(session.currentPdf().path, 'other.pdf');
+  assert.equal(session.lastSaveFailure(), null);
+  assert.equal(await session.flush(), true);
+  assert.ok(captureAttempts >= 1);
+});
+
+test('forgetPath discards stale failed writes for a removed document', async () => {
+  const { session } = harness({ savePdfMeta: async () => { throw new Error('ENOENT: deleted'); } });
+  await session.open('folder\\gone.pdf', 'pdf');
+  assert.equal(await session.updatePdf(meta => ({ ...meta, page: 3 })), false);
+  assert.ok(session.lastSaveFailure());
+  session.forgetPath('folder\\gone.pdf');
+  assert.equal(session.lastSaveFailure(), null);
+  assert.equal(await session.flush(), true);
 });

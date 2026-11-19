@@ -35,6 +35,22 @@ export function UnsavedDialog({ description, onCancel, onDiscard, onSave }: { de
   return <DialogFrame labelledBy={title} className="unsaved-dialog" onCancel={onCancel} busy={action.busy}><div className="dialog-head"><h2 id={title}><AlertTriangle size={20}/>还有未保存的修改</h2><button disabled={action.busy} aria-label="取消操作" onClick={onCancel}><X/></button></div><p>继续{description}前，当前笔记还有未保存内容。</p>{action.error && <p className="dialog-error" role="alert">{action.error}</p>}<div className="dialog-actions"><button disabled={action.busy} onClick={() => void action.run(onDiscard)}>放弃修改</button><button disabled={action.busy} onClick={onCancel}>取消</button><button disabled={action.busy} className="primary" data-dialog-default onClick={() => void action.run(onSave)}>保存并继续</button></div></DialogFrame>;
 }
 
+export function ReaderUnsavedDialog({ actionLabel, documentName, documentPath, reason, onCancel, onDiscard, onRetry }: { actionLabel: string; documentName: string; documentPath: string; reason: string; onCancel: () => void; onDiscard: () => Promise<void>; onRetry: () => Promise<void> }) {
+  const title = useId(), action = useDialogAction(`${actionLabel}:${documentPath}:${reason}`);
+  return <DialogFrame labelledBy={title} className="unsaved-dialog reader-unsaved-dialog" onCancel={onCancel} busy={action.busy}>
+    <div className="dialog-head"><h2 id={title}><AlertTriangle size={20}/>阅读进度或标注未能保存</h2><button disabled={action.busy} aria-label="取消操作" onClick={onCancel}><X/></button></div>
+    <p>继续{actionLabel}前，“{documentName}”的最近阅读进度或标注尚未写入原文件所在位置。你的 Markdown 笔记不受影响。</p>
+    {documentPath && <p className="dialog-context"><span title={documentPath}>{documentPath}</span></p>}
+    <p className="dialog-error" role="alert">{reason}</p>
+    {action.error && <p className="dialog-error" role="alert">{action.error}</p>}
+    <div className="dialog-actions">
+      <button disabled={action.busy} onClick={() => void action.run(onDiscard)}>放弃并{actionLabel}</button>
+      <button disabled={action.busy} onClick={onCancel}>取消</button>
+      <button disabled={action.busy} className="primary" data-dialog-default onClick={() => void action.run(onRetry)}>重试保存并{actionLabel}</button>
+    </div>
+  </DialogFrame>;
+}
+
 export function ConflictDialog({ conflict, mine, closing, onMine, onDisk, onSaveAs }: { conflict: SaveNoteResult & { conflict: true }; mine: string; closing: boolean; onMine: () => void | Promise<void>; onDisk: () => void | Promise<void>; onSaveAs: () => void | Promise<void> }) {
   const title = useId(), action = useDialogAction();
   return <DialogFrame labelledBy={title} busy={action.busy}><div className="dialog-head"><h2 id={title}><AlertTriangle size={20}/>文件发生外部修改</h2></div><p>{closing ? '关闭前需要先处理这次冲突。' : '检测到磁盘版本已经变化。你的内容和磁盘内容都保留在这里，请选择要继续使用的版本。'}</p><p className="dialog-context"><strong>{conflict.path.split(/[\\/]/).pop() || conflict.path}</strong><br/><span title={conflict.path}>{conflict.path}</span></p><div className="diff"><div><label>我的内容（当前编辑稿）</label><pre>{mine}</pre></div><div><label>磁盘内容（外部修改后）</label><pre>{conflict.content}</pre></div></div>{action.error && <p className="dialog-error" role="alert">{action.error}</p>}<div className="dialog-actions"><button disabled={action.busy} onClick={() => void action.run(onSaveAs)}>将我的内容另存为</button><button disabled={action.busy} onClick={() => void action.run(onDisk)}>使用磁盘内容</button><button disabled={action.busy} className="primary" onClick={() => void action.run(onMine)}>保留我的内容</button></div></DialogFrame>;

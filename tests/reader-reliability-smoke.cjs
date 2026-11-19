@@ -153,9 +153,87 @@ test('PDF actions are single-flight, undo survives page eviction and EPUB falls 
   const writtenEpubMeta = JSON.parse(await fs.readFile(path.join(auxiliary, epubId + '.epub.json'), 'utf8'));
   assert.equal(writtenEpubMeta.annotations.length, 1, 'retry must not duplicate the saved annotation');
   assert.ok(await page.evaluate(() => window.__latePdfObservers) > 0, 'late visibility callbacks exercised PDF disposal');
+  await application.evaluate(() => {
+    const { createRequire } = process.mainModule.require('node:module');
+    const load = createRequire(process.mainModule.require('electron').app.getAppPath() + '/package.json');
+    const { FileStore } = load('./electron/storage.cjs');
+    globalThis.__epubCloseOriginal = FileStore.prototype.saveEpub;
+    FileStore.prototype.saveEpub = async function () {
+      const error = new Error("ENOENT: no such file or directory, stat 'G:\\missing.epub'");
+      error.code = 'ENOENT';
+      throw error;
+    };
+  });
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
-  await application.waitForEvent('close', { timeout: 12000 }); application = undefined;
+  const retryDialog = page.locator('.reader-unsaved-dialog');
+  await retryDialog.waitFor();
+  assert.match(await retryDialog.innerText(), /原文件不存在或所在磁盘已断开/);
+  await application.evaluate(() => {
+    const { createRequire } = process.mainModule.require('node:module');
+    const load = createRequire(process.mainModule.require('electron').app.getAppPath() + '/package.json');
+    load('./electron/storage.cjs').FileStore.prototype.saveEpub = globalThis.__epubCloseOriginal;
+  });
+  await retryDialog.getByRole('button', { name: '重试保存并关闭软件', exact: true }).click();
+  await application.waitForEvent('close', { timeout: 12000 });
+  application = undefined;
   const epubMeta = JSON.parse(await fs.readFile(path.join(auxiliary, epubId + '.epub.json'), 'utf8'));
   assert.ok(epubMeta.cfi.startsWith('epubcfi('), 'successful fallback persists a valid position');
   assert.deepEqual(errors, []);
+});
+
+test('missing PDF save failure opens recovery dialog that can cancel, switch views or discard and close without losing notes', { timeout: 90000 }, async () => {
+  const recoveryWorkspace = await createSmokeWorkspace('reader-close-recovery');
+  let recoveryApp;
+  try {
+    await fs.mkdir(recoveryWorkspace.fixture, { recursive: true });
+    await fs.mkdir(recoveryWorkspace.userData, { recursive: true });
+    const noteFile = path.join(recoveryWorkspace.fixture, 'note.md');
+    const pdfFile = path.join(recoveryWorkspace.fixture, 'deleted.pdf');
+    await fs.writeFile(noteFile, '# Close Recovery\n\n');
+    const pdfDoc = await PDFDocument.create(), font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    for (let number = 1; number <= 2; number++) pdfDoc.addPage([595, 842]).drawText(`Page ${number}`, { font, size: 24, x: 72, y: 750 });
+    await fs.writeFile(pdfFile, Buffer.from(await pdfDoc.save()));
+    const executablePath = process.env.ZHAOYE_SMOKE_EXECUTABLE || path.join(appRoot, 'node_modules/electron/dist/electron.exe');
+    recoveryApp = await _electron.launch({ executablePath, args: process.env.ZHAOYE_SMOKE_EXECUTABLE ? [recoveryWorkspace.fixture] : [appRoot, recoveryWorkspace.fixture], env: { ...process.env, ZHAOYE_TEST_USER_DATA: recoveryWorkspace.userData } });
+    const page = await recoveryApp.firstWindow(); page.setDefaultTimeout(12000);
+    const errors = []; page.on('pageerror', error => errors.push(error.message));
+
+    await page.locator('.file-row').filter({ hasText: 'note.md' }).click();
+    const editor = page.locator('[data-note-group="primary"] .cm-content');
+    await editor.waitFor();
+    await editor.click(); await page.keyboard.press('Control+End'); await page.keyboard.insertText('NOTE-SAVED-ON-DISCARD-CLOSE');
+
+    await page.locator('.file-row').filter({ hasText: 'deleted.pdf' }).click();
+    await page.waitForFunction(() => document.querySelector('[data-pdf-page="1"] canvas')?.width > 0);
+    await fs.unlink(pdfFile);
+    const pageInput = page.locator('input[aria-label="\u5f53\u524d\u9875\u7801"]');
+    await pageInput.fill('2'); await pageInput.press('Enter');
+    await page.waitForFunction(() => document.querySelector('.page-control input')?.value === '2');
+
+    await recoveryApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+    const dialog = page.locator('.reader-unsaved-dialog');
+    await dialog.waitFor();
+    assert.match(await dialog.innerText(), /原文件不存在或所在磁盘已断开/);
+    await dialog.getByRole('button', { name: '取消', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
+
+    await page.locator('.layout-tabs').getByRole('button', { name: '笔记', exact: true }).click();
+    await dialog.waitFor();
+    assert.equal(await dialog.getByRole('button', { name: '放弃并切换视图', exact: true }).count(), 1);
+    await dialog.getByRole('button', { name: '取消', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
+
+    await recoveryApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+    await dialog.waitFor();
+    await dialog.getByRole('button', { name: '放弃并关闭软件', exact: true }).click();
+    await recoveryApp.waitForEvent('close', { timeout: 12000 });
+    recoveryApp = undefined;
+    assert.match(await fs.readFile(noteFile, 'utf8'), /NOTE-SAVED-ON-DISCARD-CLOSE/);
+    assert.deepEqual(errors, []);
+  } finally {
+    const child = recoveryApp?.process();
+    try { await Promise.race([recoveryApp?.close(), new Promise(resolve => setTimeout(resolve, 2500))]); } catch {}
+    if (child?.exitCode === null) spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+    await cleanupSmokeWorkspace(recoveryWorkspace);
+  }
 });

@@ -1,14 +1,14 @@
 import { PdfPane } from './readers/PdfPane';
 import { createPdfTextAction, type PdfTextActionHandler } from './readers/pdfTextAction';
 import { EpubPane } from './readers/EpubPane';
-import { ReaderSession } from './readers/readerSession';
+import { ReaderSession, type ReaderSaveFailure } from './readers/readerSession';
 import { createExcerptFlow, type ExcerptFlowFailure, type ExcerptFlowResult } from './readers/excerptFlow';
 import type { PdfExcerptContext } from './readers/pdfRegionAction';
 import { NoteWorkspace, type NoteGroupId } from './workspace/noteWorkspace';
 import { requestNoteRefresh } from './workspace/noteRefresh';
 import { useFileMoveUi } from './workspace/fileMoveUi';
 import { NoteGroupPane } from './workspace/NoteGroupPane';
-import { ConflictDialog, UnsavedDialog, TrashConfirmation } from './workspace/DocumentDialogs';
+import { ConflictDialog, UnsavedDialog, ReaderUnsavedDialog, TrashConfirmation } from './workspace/DocumentDialogs';
 import { reader, NOTE_BODY_FONTS, type Layout, type ThemePreference, type NoteBodyFont, type ActivePdf, type ActiveEpub, type FileContextMenu, type InlineEntryEdit, type FindCommand } from './readerContext';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -117,6 +117,7 @@ function App() {
   const [message, setMessage] = useState('');
   const [target, setTarget] = useState<ReaderAnchor | null>(null);
   const [closing, setClosing] = useState(false);
+  const [pendingReaderSave, setPendingReaderSave] = useState<{ actionLabel: string; failure: ReaderSaveFailure; retry: () => Promise<void>; discard: () => Promise<void> } | null>(null);
   const [scrollMemory, setScrollMemory] = useState<MarkdownScrollMemory[]>([]);
   const [findCommand, setFindCommand] = useState<FindCommand | null>(null);
   const [fileContextMenu, setFileContextMenu] = useState<FileContextMenu | null>(null);
@@ -162,7 +163,7 @@ function App() {
   const conflictDoc = [workspace.blockingDocument, activeDoc, ...[...workspace.documents.values()].filter(doc => doc.recoveryConflict)].find(doc => doc?.conflict || doc?.recoveryConflict) || null;
   const modalConflict = conflictDoc?.recoveryConflict?.note || conflictDoc?.conflict;
   useEffect(() => { if (modalConflict || workspace.pendingClose) setTrashCandidate(null); }, [modalConflict, workspace.pendingClose]);
-  const openEntryRef = useRef<(file: WorkspaceFile, options?: { replaceCurrentNote?: boolean; skipUnsavedPrompt?: boolean; group?: NoteGroupId; pinned?: boolean; recoveryId?: string }) => Promise<void>>(async () => {});
+  const openEntryRef = useRef<(file: WorkspaceFile, options?: { replaceCurrentNote?: boolean; skipUnsavedPrompt?: boolean; group?: NoteGroupId; pinned?: boolean; recoveryId?: string; discardReaderChanges?: boolean }) => Promise<void>>(async () => {});
   useEffect(() => workspace.subscribe(() => { sessionRecovery.current.capture(workspace.documents.values()); }), [workspace]);
   useEffect(() => {
     workspace.ready = sessionReady;
@@ -170,8 +171,8 @@ function App() {
     return () => window.clearInterval(timer);
   }, [workspace, sessionReady]);
   useEffect(() => reader().onRefreshNote(() => {
-    void requestNoteRefresh(workspace, { ready: sessionReady, blocked: closing || readerClosing || settingsOpen || !!document.querySelector('[role="dialog"]'), layout, activeSurface: activeSurfaceRef.current }, setMessage);
-  }), [workspace, sessionReady, layout, activeSurface, closing, readerClosing, settingsOpen]);
+    void requestNoteRefresh(workspace, { ready: sessionReady, blocked: closing || readerClosing || settingsOpen || !!pendingReaderSave || !!document.querySelector('[role="dialog"]'), layout, activeSurface: activeSurfaceRef.current }, setMessage);
+  }), [workspace, sessionReady, layout, activeSurface, closing, readerClosing, settingsOpen, pendingReaderSave]);
 
   // A successful rename/delete leaves a short-lived barrier so delayed work
   // for the old document cannot recreate it. Once a path is explicitly
@@ -381,7 +382,18 @@ function App() {
     return () => window.clearTimeout(timeout);
   }, [sessionReady, saveSessionNow]);
 
-  const finishClosing = useCallback(async () => {
+  const promptReaderSaveFailure = useCallback((actionLabel: string, retry: () => Promise<void>, discard: () => Promise<void>) => {
+    const activeReader = readerSession.currentPdf() || readerSession.currentEpub();
+    const failure: ReaderSaveFailure = readerSession.lastSaveFailure() || {
+      kind: readerSession.currentEpub() ? 'epub' : 'pdf',
+      name: activeReader?.name || '当前资料',
+      path: activeReader?.path || '',
+      reason: '阅读进度或标注尚未写入原文件所在位置。',
+    };
+    setPendingReaderSave({ actionLabel, failure, retry, discard });
+  }, [readerSession]);
+
+  const finishClosing = useCallback(async (options: { discardReaderChanges?: boolean } = {}) => {
     const release = workspace.beginCommit();
     if (!release) { setMessage('正在执行文件操作或保存，请稍候再试关闭。'); return; }
     setClosing(true);
@@ -392,35 +404,49 @@ function App() {
         keepClosingForConflict = !!(workspace.blockingDocument?.conflict || workspace.blockingDocument?.recoveryConflict);
         return;
       }
-      if (!(await readerSession.flush())) { setMessage('阅读进度或标注尚未保存成功，请重试后关闭。'); return; }
+      if (options.discardReaderChanges) {
+        readerSession.discardFailedWrites();
+      } else if (!(await readerSession.flush())) {
+        promptReaderSaveFailure('关闭软件', async () => { await finishClosing(); }, async () => { await finishClosing({ discardReaderChanges: true }); });
+        return;
+      }
+      setPendingReaderSave(null);
       if (sessionRecovery.current.initialized && !(await saveSessionNow(true))) return;
       // Keep input frozen through the actual OS close, not just until saves return.
       reader().confirmClose(); confirmed = true;
     } catch (error) { setMessage(`关闭前保存失败，内容仍保留：${String(error)}`); }
     finally { if (!confirmed) { release(); if (!keepClosingForConflict) setClosing(false); } }
-  }, [workspace, readerSession, saveSessionNow]);
-  useEffect(() => reader().onAppClosing(finishClosing), [finishClosing]);
+  }, [workspace, readerSession, saveSessionNow, promptReaderSaveFailure]);
+  useEffect(() => reader().onAppClosing(() => void finishClosing()), [finishClosing]);
 
-  async function openEntry(file: WorkspaceFile, options: { replaceCurrentNote?: boolean; skipUnsavedPrompt?: boolean; group?: NoteGroupId; pinned?: boolean; recoveryId?: string } = {}) {
+  async function openEntry(file: WorkspaceFile, options: { replaceCurrentNote?: boolean; skipUnsavedPrompt?: boolean; group?: NoteGroupId; pinned?: boolean; recoveryId?: string; discardReaderChanges?: boolean } = {}) {
     if (workspace.committing) return;
     const group = options.group || workspace.activeGroup;
     const request = ++openSequence.current;
     if (file.type === 'md') {
       try {
         const tab = await sessionRecovery.current.open(workspace, file.path, group, options.pinned ?? !options.replaceCurrentNote, options.recoveryId, async () => {
-          if (!(await readerSession.flush())) { setMessage('阅读进度或标注尚未保存成功，请重试后切换。'); return false; }
+          if (options.discardReaderChanges) readerSession.discardFailedWrites();
+          else if (!(await readerSession.flush())) {
+            promptReaderSaveFailure('切换资料', async () => { await openEntry(file, options); }, async () => { await openEntry(file, { ...options, discardReaderChanges: true }); });
+            return false;
+          }
           releaseMutationBarrier(file.path); return true;
         });
-        if (tab && request === openSequence.current) { setLayout('note'); setActiveSurface('note'); }
+        if (tab && request === openSequence.current) { setPendingReaderSave(null); setLayout('note'); setActiveSurface('note'); }
       }
       catch (error) { setMessage(`无法打开：${String(error)}`); }
       return;
     }
     try {
       if (request !== openSequence.current) return;
-      const result = await readerSession.open(file.path, file.type, { name: file.name });
+      const result = await readerSession.open(file.path, file.type, { name: file.name, discardPreviousChanges: options.discardReaderChanges });
       if (request !== openSequence.current || result.status === 'superseded') return;
-      if (result.status === 'save-failed') { setMessage('阅读进度或标注尚未保存成功，请重试后切换。'); return; }
+      if (result.status === 'save-failed') {
+        promptReaderSaveFailure('切换资料', async () => { await openEntry(file, options); }, async () => { await openEntry(file, { ...options, discardReaderChanges: true }); });
+        return;
+      }
+      setPendingReaderSave(null);
       if (result.status === 'opened' && result.warnings?.length) setMessage(result.warnings.join('；'));
       setLayout(workspace.currentDocument() ? 'split' : 'read');
       setActiveSurface('reader');
@@ -442,14 +468,16 @@ function App() {
     } catch (error) { setMessage(`关闭资料前保存失败，资料仍保留：${String(error)}`); }
     finally { readerCloseFlight.current = false; setReaderClosing(false); }
   }
-  async function changeLayout(next: Layout) {
+  async function changeLayout(next: Layout, options?: { discardReaderChanges?: boolean }) {
     if (next === layout) return;
     const request = ++openSequence.current;
-    if (next === 'note' && !(await readerSession.flush())) {
-      setMessage('阅读进度或标注尚未保存成功，请重试后切换。');
+    if (options?.discardReaderChanges) {
+      readerSession.discardFailedWrites();
+    } else if (next === 'note' && !(await readerSession.flush())) {
+      promptReaderSaveFailure('切换视图', async () => { await changeLayout(next); }, async () => { await changeLayout(next, { discardReaderChanges: true }); });
       return;
     }
-    if (request === openSequence.current) { layoutMotionRequested.current = true; setLayout(next); setActiveSurface(next === 'read' ? 'reader' : 'note'); }
+    if (request === openSequence.current) { setPendingReaderSave(null); layoutMotionRequested.current = true; setLayout(next); setActiveSurface(next === 'read' ? 'reader' : 'note'); }
   }
   async function openWorkspace() {
     const selected = await reader().chooseWorkspace();
@@ -728,7 +756,7 @@ function App() {
   }, [workspace, layout, settingsOpen, activeSurface, activeEpub]);
 
   const fileMoveUi = useFileMoveUi({ root, directory, workspace, readers: readerSession, barrier: mutationBarrier.current,
-    blocked: settingsOpen || !!modalConflict || !!workspace.pendingClose || !!inlineEntryEdit || closing || readerClosing,
+    blocked: settingsOpen || !!modalConflict || !!workspace.pendingClose || !!pendingReaderSave || !!inlineEntryEdit || closing || readerClosing,
     persistSession: () => saveSessionNow(true), remap: remapWorkspacePath, reload: () => loadDirectory(root, directory?.directory || root), message: setMessage });
   const visibleRecent = useMemo(() => query ? files.filter(file => file.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())) : files, [files, query]);
   const visibleDirectory = useMemo(() => {
@@ -873,11 +901,19 @@ function App() {
       </>}
     </ContextMenu>
     {fileMoveUi.dialogs}
-    <TrashConfirmation open={!!trashCandidate} superseded={!!modalConflict || !!workspace.pendingClose} name={trashCandidate?.name || ''} onCancel={() => setTrashCandidate(null)} onConfirm={async () => { const entry = trashCandidate; if (!entry) return false; const okay = await deleteEntry(entry); if (okay) setTrashCandidate(current => current?.path === entry.path ? null : current); return okay; }}/>
+    <TrashConfirmation open={!!trashCandidate} superseded={!!modalConflict || !!workspace.pendingClose || !!pendingReaderSave} name={trashCandidate?.name || ''} onCancel={() => setTrashCandidate(null)} onConfirm={async () => { const entry = trashCandidate; if (!entry) return false; const okay = await deleteEntry(entry); if (okay) setTrashCandidate(current => current?.path === entry.path ? null : current); return okay; }}/>
     <ToastMessage open={!!message} message={message} onDismiss={() => setMessage('')}/>
     {workspace.pendingClose && !modalConflict && <UnsavedDialog description="关闭这份未能保存的笔记" onCancel={() => { workspace.pendingClose = null; workspace.blockingDocument = null; setClosing(false); workspace.notify(); }}
       onDiscard={async () => { await workspace.finishPendingClose(true).catch(error => setMessage(String(error))); }}
       onSave={async () => { await workspace.finishPendingClose().catch(error => setMessage(String(error))); }}/>}
+    {pendingReaderSave && !modalConflict && !workspace.pendingClose && <ReaderUnsavedDialog
+      actionLabel={pendingReaderSave.actionLabel}
+      documentName={pendingReaderSave.failure.name}
+      documentPath={pendingReaderSave.failure.path}
+      reason={pendingReaderSave.failure.reason}
+      onCancel={() => setPendingReaderSave(null)}
+      onDiscard={pendingReaderSave.discard}
+      onRetry={pendingReaderSave.retry}/>}
     {modalConflict && conflictDoc && <ConflictDialog conflict={{ ...modalConflict, conflict: true }} mine={conflictDoc.recoveryConflict?.recovery.content || conflictDoc.text}
       closing={closing} onMine={() => resolveConflict('mine')} onDisk={() => resolveConflict('disk')} onSaveAs={() => resolveConflict('copy')}/>}
   </div></ReducedMotionContext.Provider>;
