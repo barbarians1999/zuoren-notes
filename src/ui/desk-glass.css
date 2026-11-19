@@ -775,14 +775,8 @@
   border: 0;
   background: transparent;
   box-shadow: none;
-  -webkit-mask-image:
-    linear-gradient(to bottom, transparent 0px, #000 var(--pdf-fade-top), #000 calc(100% - 34px), transparent 100%),
-    linear-gradient(to right, transparent 0px, #000 14px, #000 calc(100% - 26px), transparent calc(100% - 10px), #000 calc(100% - 10px), #000 100%);
-  -webkit-mask-composite: source-in;
-  mask-image:
-    linear-gradient(to bottom, transparent 0px, #000 var(--pdf-fade-top), #000 calc(100% - 34px), transparent 100%),
-    linear-gradient(to right, transparent 0px, #000 14px, #000 calc(100% - 26px), transparent calc(100% - 10px), #000 calc(100% - 10px), #000 100%);
-  mask-composite: intersect;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0px, #000 var(--pdf-fade-top), #000 calc(100% - 34px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0px, #000 var(--pdf-fade-top), #000 calc(100% - 34px), transparent 100%);
 }
 
 .app[data-theme^="constructivist"]:not([data-fullscreen="true"]) .pdf-pane[data-pdf-immersive="true"] .pdf-canvas-wrap {
@@ -886,6 +880,7 @@
   background-image: var(--liquid-glass-sheen);
   backdrop-filter: var(--liquid-glass-blur);
   -webkit-backdrop-filter: var(--liquid-glass-blur);
+  isolation: isolate;
   box-shadow: var(--glass-shadow), 0 6px 16px rgba(42, 34, 22, 0.065);
   overflow-x: auto;
   scrollbar-width: none;

@@ -994,6 +994,13 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   background: var(--canvas);
   scrollbar-color: var(--scrollbar) transparent;
   scrollbar-width: thin;
+  overscroll-behavior: contain;
+  will-change: scroll-position;
+}
+
+.pdf-page-slot,
+.pdf-page-content {
+  contain: layout style;
 }
 
 .pdf-stage {

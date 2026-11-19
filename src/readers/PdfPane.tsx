@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { OutlinePanel } from '../OutlinePanel';
 import { BookOpen, ChevronLeft, ChevronRight, Copy, Crop, FileText, List, Highlighter, Maximize2, MessageSquare, MousePointer2, Search, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react';
@@ -18,10 +18,16 @@ import { PdfPopover } from './PdfPopover';
 import { ActionButton } from '../ui/ActionButton';
 import { ResponsiveToolGroup } from '../ui/ResponsiveToolGroup';
 import { DialogFrame } from '../ui/overlays';
-import { ReducedMotionContext, motionNumber, motionText, usePanelMotion } from '../uiMotion';
+import { ReducedMotionContext, usePanelMotion } from '../uiMotion';
 import { createPdfRegionAction, type PdfExcerptContext, type PdfRegionAction } from './pdfRegionAction';
 import type { ExcerptFlowResult } from './excerptFlow';
-import { groupedPdfImages, paintPdfAppearance, type PdfRaster } from './pdfAppearance';
+import { groupedPdfImages, paintPdfAppearance } from './pdfAppearance';
+import { findVisiblePdfPage } from './pdfScroll';
+
+const EMPTY_ANNOTATIONS: PdfAnnotation[] = [];
+type PdfSearchSpec = { query: string; occurrence: number; caseSensitive: boolean };
+type SlotObserverRegister = (element: HTMLElement, onVisibility: (visible: boolean) => void) => () => void;
+type LazyPdfRaster = { source: HTMLCanvasElement | null; images: ArrayLike<number> | null; pdfPage: any; viewport: any };
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 // PDF.js 6 loads JBIG2/OpenJPEG/ICC decoders on demand.  The desktop build
 // runs from a file:// URL, so leaving wasmUrl unset makes the fallback module
@@ -61,13 +67,44 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
     const rects = [...pane.current?.querySelectorAll<HTMLElement>(selector) || []].map(item => item.getBoundingClientRect());
     return viewport ? rects.filter(rect => rect.bottom >= viewport.top && rect.top <= viewport.bottom && rect.right >= viewport.left && rect.left <= viewport.right).at(-1) || null : null;
   };
-  const showAnnotation = (id: string) => { textSelection.clear(); if (pdf) setAnnotationMenu({ id, key: pdf.data }); };
+  const clearSelectionRef = useRef(textSelection.clear); clearSelectionRef.current = textSelection.clear;
+  const showAnnotation = useCallback((id: string) => {
+    clearSelectionRef.current();
+    const data = latest.current.pdf?.data;
+    if (data) setAnnotationMenu({ id, key: data });
+  }, []);
   const scroll = useRef<HTMLDivElement>(null), lastPage = useRef(0), searchGeneration = useRef(0);
+  const scrollRaf = useRef(0);
+  const scrolledStateRef = useRef<{ scrolled: boolean; immersive: boolean } | null>(null);
+  const searchOpenRef = useRef(searchOpen); searchOpenRef.current = searchOpen;
+  const slotCallbacks = useRef(new Map<Element, (visible: boolean) => void>());
+  const slotObserver = useRef<IntersectionObserver | null>(null);
+  const pageSizeCache = useRef(new Map<number, { width: number; height: number }>());
   const zoomAnchor = useRef<{ page: number; ratio: number; scale: number; token: number } | null>(null);
   const zoomToken = useRef(0), restoringZoom = useRef(false);
   const pageTextCache = useRef(new Map<number, string>());
   const pageTextErrors = useRef(new Set<number>());
   const latest = useRef({ pdf, onMeta }); latest.current = { pdf, onMeta };
+  const captureCurrentExcerpt = useCallback(() => latest.current.pdf ? captureExcerpt(latest.current.pdf) : null, [captureExcerpt]);
+  const observeSlot = useCallback<SlotObserverRegister>((element, onVisibility) => {
+    if (!slotObserver.current) {
+      slotObserver.current = new IntersectionObserver(entries => {
+        for (const entry of entries) slotCallbacks.current.get(entry.target)?.(entry.isIntersecting);
+      }, { root: scroll.current, rootMargin: '1200px 0px' });
+    }
+    slotCallbacks.current.set(element, onVisibility);
+    slotObserver.current.observe(element);
+    return () => {
+      slotCallbacks.current.delete(element);
+      slotObserver.current?.unobserve(element);
+    };
+  }, []);
+  useEffect(() => () => {
+    if (scrollRaf.current) cancelAnimationFrame(scrollRaf.current);
+    slotObserver.current?.disconnect();
+    slotObserver.current = null;
+    slotCallbacks.current.clear();
+  }, []);
   // Undo belongs to the document, not a virtualized page that may unmount.
   const [deletedAnnotation, setDeletedAnnotation] = useState<{ annotation: PdfAnnotation; index: number; path: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -115,7 +152,8 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
     finally { if (deletionLock.current === token) { deletionLock.current = null; setDeleting(false); } }
   }
   useEffect(() => {
-    setLoadedDocument(null); setPages(0); setToc([]); setSearchMatches([]); setSearchIndex(-1); setSearching(false); setSearchStatus({ processed: 0, totalPages: 0, totalMatches: 0, errors: 0, truncated: false }); pageTextCache.current.clear(); pageTextErrors.current.clear(); lastPage.current = 0; zoomToken.current += 1; zoomAnchor.current = null; restoringZoom.current = false; searchGeneration.current += 1;
+    setLoadedDocument(null); setPages(0); setToc([]); setSearchMatches([]); setSearchIndex(-1); setSearching(false); setSearchStatus({ processed: 0, totalPages: 0, totalMatches: 0, errors: 0, truncated: false }); pageTextCache.current.clear(); pageTextErrors.current.clear(); pageSizeCache.current.clear(); lastPage.current = 0; zoomToken.current += 1; zoomAnchor.current = null; restoringZoom.current = false; searchGeneration.current += 1;
+    slotObserver.current?.disconnect(); slotObserver.current = null; slotCallbacks.current.clear();
     if (!pdf) return;
     let disposed = false;
     const bytes = pdf.data instanceof Uint8Array ? new Uint8Array(pdf.data) : new Uint8Array(pdf.data as ArrayBufferLike);
@@ -135,7 +173,7 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
     const fallback = Math.max(1, page);
     if (!host) return { page: fallback, ratio: 0 };
     const probe = host.getBoundingClientRect().top + 80;
-    const visible = [...host.querySelectorAll<HTMLElement>('[data-pdf-page]')].find(item => item.getBoundingClientRect().bottom > probe);
+    const visible = findVisiblePdfPage(host, probe);
     // Prefer the page actually under the reading probe. The page field can
     // briefly lag during navigation, and using that stale value would make
     // Ctrl+wheel anchor zoom to the previous page.
@@ -295,21 +333,58 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
     window.addEventListener('reader-flush', flush);
     return () => { clearTimeout(timer); window.removeEventListener('reader-flush', flush); };
   }, [page, pages, pdf?.path]);
-  const syncScrolledState = (scrolled: boolean, searchIsOpen: boolean) => {
+  const syncScrolledState = useCallback((scrolled: boolean, searchIsOpen: boolean) => {
     const node = pane.current;
     if (!node) return;
-    const immersive = !!pdf && scrolled && !searchIsOpen;
-    node.dataset.pdfScrolled = pdf && scrolled ? 'true' : 'false';
-    node.dataset.pdfImmersive = immersive ? 'true' : 'false';
+    const nextScrolled = !!latest.current.pdf && scrolled;
+    const nextImmersive = nextScrolled && !searchIsOpen;
+    const previous = scrolledStateRef.current;
+    if (previous && previous.scrolled === nextScrolled && previous.immersive === nextImmersive) return;
+    scrolledStateRef.current = { scrolled: nextScrolled, immersive: nextImmersive };
+    node.dataset.pdfScrolled = nextScrolled ? 'true' : 'false';
+    node.dataset.pdfImmersive = nextImmersive ? 'true' : 'false';
     const appNode = node.closest<HTMLElement>('.app');
     if (appNode) {
-      if (immersive) appNode.dataset.pdfImmersive = 'true';
+      if (nextImmersive) appNode.dataset.pdfImmersive = 'true';
       else delete appNode.dataset.pdfImmersive;
     }
-  };
+  }, []);
+  const onPdfScroll = useCallback(() => {
+    const host = scroll.current; if (!host) return;
+    syncScrolledState(host.scrollTop > 42, searchOpenRef.current);
+    if (restoringZoom.current || scrollRaf.current) return;
+    scrollRaf.current = requestAnimationFrame(() => {
+      scrollRaf.current = 0;
+      const currentHost = scroll.current;
+      if (!currentHost || restoringZoom.current) return;
+      const top = currentHost.getBoundingClientRect().top;
+      const visible = findVisiblePdfPage(currentHost, top + 80);
+      const number = Number(visible?.dataset.pdfPage);
+      if (number && number !== lastPage.current) { lastPage.current = number; setPage(number); }
+    });
+  }, [syncScrolledState]);
+  const annotationsByPage = useMemo(() => {
+    const map = new Map<number, PdfAnnotation[]>();
+    for (const annotation of pdf?.meta.annotations || EMPTY_ANNOTATIONS) {
+      const list = map.get(annotation.anchor.page);
+      if (list) list.push(annotation);
+      else map.set(annotation.anchor.page, [annotation]);
+    }
+    return map;
+  }, [pdf?.meta.annotations]);
+  const textSelectionByPage = useMemo(() => {
+    const map = new Map<number, PdfSelectedPage>();
+    for (const part of textSelection.draft?.pages || []) map.set(part.page, part);
+    return map;
+  }, [textSelection.draft]);
+  const currentSearchSpec = useMemo<PdfSearchSpec | null>(
+    () => currentSearch ? { query: searchText.trim(), occurrence: currentSearch.occurrence, caseSensitive: searchCase } : null,
+    [currentSearch?.page, currentSearch?.occurrence, searchText, searchCase],
+  );
   useEffect(() => {
     const node = pane.current;
     if (!node) return;
+    scrolledStateRef.current = null;
     if (!pdf) {
       delete node.dataset.pdfScrolled;
       delete node.dataset.pdfImmersive;
@@ -318,8 +393,8 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
     }
     const host = scroll.current;
     syncScrolledState(!!(host && host.scrollTop > 42), searchOpen);
-    return () => { delete node.closest<HTMLElement>('.app')?.dataset.pdfImmersive; };
-  }, [pdf?.path, searchOpen]);
+    return () => { scrolledStateRef.current = null; delete node.closest<HTMLElement>('.app')?.dataset.pdfImmersive; };
+  }, [pdf?.path, searchOpen, syncScrolledState]);
   useEffect(() => {
     const host = scroll.current;
     if (!host) return;
@@ -407,15 +482,35 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
 
     <div className="pdf-reader-body">
       <div className="pdf-viewport-stage">
-        <div className="pdf-canvas-wrap continuous-pdf" ref={scroll} onScroll={() => {
-          const host = scroll.current; if (!host) return;
-          syncScrolledState(host.scrollTop > 42, searchOpen);
-          if (restoringZoom.current) return;
-          const top = host.getBoundingClientRect().top;
-          const visible = [...host.querySelectorAll<HTMLElement>('[data-pdf-page]')].find(element => element.getBoundingClientRect().bottom > top + 80);
-          const number = Number(visible?.dataset.pdfPage); if (number && number !== lastPage.current) { lastPage.current = number; setPage(number); }
-        }}>
-          {!pdf ? <div className="empty-state"><BookOpen size={28}/><p>打开 PDF 或 EPUB 开始阅读</p></div> : !document ? <div className="empty-state">正在载入 PDF…</div> : Array.from({ length: pages }, (_, index) => <PdfPageSlot key={pdf.path + index} document={document} number={index+1} scale={scale} size={size} root={scroll} pinned={textSelection.pins.includes(index + 1) || ocrPages.includes(index + 1)}><PdfPage dark={dark} document={document} pdf={pdf} page={index + 1} scale={scale} onMeta={onMeta} onShowAnnotation={showAnnotation} deleting={deleting} captureExcerpt={captureExcerpt} target={target} onMessage={onMessage} tool={tool} onOcrChange={setOcrPageActive} textSelection={textSelection.draft?.pages.find(part => part.page === index + 1) || null} search={currentSearch?.page === index + 1 ? { query: searchText.trim(), occurrence: currentSearch.occurrence, caseSensitive: searchCase } : null}/></PdfPageSlot>)}
+        <div className="pdf-canvas-wrap continuous-pdf" ref={scroll} onScroll={onPdfScroll}>
+          {!pdf ? <div className="empty-state"><BookOpen size={28}/><p>打开 PDF 或 EPUB 开始阅读</p></div> : !document ? <div className="empty-state">正在载入 PDF…</div> : Array.from({ length: pages }, (_, index) => {
+            const pageNumber = index + 1;
+            return <PdfPageSlot
+              key={pdf.path + index}
+              document={document}
+              number={pageNumber}
+              scale={scale}
+              size={size}
+              observeSlot={observeSlot}
+              pageSizeCache={pageSizeCache}
+              pinned={textSelection.pins.includes(pageNumber) || ocrPages.includes(pageNumber)}
+              dark={dark}
+              pdfPath={pdf.path}
+              pdfData={pdf.data}
+              pdfId={pdf.meta.id}
+              pageAnnotations={annotationsByPage.get(pageNumber) || EMPTY_ANNOTATIONS}
+              onMeta={onMeta}
+              onShowAnnotation={showAnnotation}
+              deleting={deleting}
+              captureExcerpt={captureCurrentExcerpt}
+              targetActive={!!target && target.pdfId === pdf.meta.id && target.page === pageNumber}
+              onMessage={onMessage}
+              tool={tool}
+              onOcrChange={setOcrPageActive}
+              textSelection={textSelectionByPage.get(pageNumber) || null}
+              search={currentSearch?.page === pageNumber ? currentSearchSpec : null}
+            />;
+          })}
         </div>
         {dockToolbar}
       </div>
@@ -450,38 +545,89 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
   </section>;
 }
 
-function PdfPageSlot({ document, number, scale, size, root, pinned, children }: { document: any; number: number; scale: number; size: { width: number; height: number }; root: React.RefObject<HTMLDivElement | null>; pinned: boolean; children: React.ReactNode }) {
-  const host = useRef<HTMLDivElement>(null), [visible, setVisible] = useState(false), [actual, setActual] = useState(size);
+const PdfPageSlot = memo(function PdfPageSlot({ document, number, scale, size, observeSlot, pageSizeCache, pinned, dark, pdfPath, pdfData, pdfId, pageAnnotations, onMeta, onShowAnnotation, deleting, captureExcerpt, targetActive, onMessage, tool, onOcrChange, textSelection, search }: {
+  document: any; number: number; scale: number; size: { width: number; height: number };
+  observeSlot: SlotObserverRegister; pageSizeCache: React.RefObject<Map<number, { width: number; height: number }>>;
+  pinned: boolean; dark: boolean; pdfPath: string; pdfData: ActivePdf['data']; pdfId: string;
+  pageAnnotations: PdfAnnotation[]; onMeta: (change: (current: PdfMeta) => PdfMeta) => Promise<boolean>;
+  onShowAnnotation: (id: string) => void; deleting: boolean; captureExcerpt: () => PdfExcerptContext | null;
+  targetActive: boolean; onMessage: (message: string) => void; tool: PdfTool;
+  onOcrChange: (page: number, active: boolean) => void; textSelection: PdfSelectedPage | null; search: PdfSearchSpec | null;
+}) {
+  const host = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+  const [actual, setActual] = useState(() => pageSizeCache.current.get(number) || size);
   useEffect(() => {
     let disposed = false;
-    const observer = new IntersectionObserver(entries => {
-      if (disposed || !entries[0]) return;
-      setVisible(entries[0].isIntersecting);
-      if (!entries[0].isIntersecting) return;
+    const element = host.current;
+    if (!element) return;
+    return observeSlot(element, isIntersecting => {
+      if (disposed) return;
+      setVisible(isIntersecting);
+      if (!isIntersecting) return;
+      const cached = pageSizeCache.current.get(number);
+      if (cached) { setActual(prev => prev.width === cached.width && prev.height === cached.height ? prev : cached); return; }
       void (async () => {
         try {
           const page = await document.getPage(number);
           if (disposed) return;
           const viewport = page.getViewport({ scale: 1 });
-          setActual({ width: viewport.width, height: viewport.height });
+          const next = { width: viewport.width, height: viewport.height };
+          pageSizeCache.current.set(number, next);
+          setActual(prev => prev.width === next.width && prev.height === next.height ? prev : next);
         } catch { /* Rendering reports read failures; sizing retains its placeholder after cancellation. */ }
       })();
-    }, { root: root.current, rootMargin: '900px' });
-    if (host.current) observer.observe(host.current);
-    return () => { disposed = true; observer.disconnect(); };
-  }, [document, number]);
-  return <div className="pdf-page-slot" ref={host} data-pdf-page={number} style={{ width: actual.width * scale, minHeight: actual.height * scale }}><span className="pdf-page-label">{number}</span>{visible || pinned ? children : <div style={{ height: actual.height * scale }}/>}</div>;
-}
+    });
+  }, [document, number, observeSlot, pageSizeCache]);
+  return <div className="pdf-page-slot" ref={host} data-pdf-page={number} style={{ width: actual.width * scale, minHeight: actual.height * scale }}>
+    <span className="pdf-page-label">{number}</span>
+    {visible || pinned ? <PdfPage dark={dark} document={document} pdfPath={pdfPath} pdfData={pdfData} pdfId={pdfId} page={number} scale={scale} pageAnnotations={pageAnnotations} onMeta={onMeta} onShowAnnotation={onShowAnnotation} deleting={deleting} captureExcerpt={captureExcerpt} targetActive={targetActive} onMessage={onMessage} tool={tool} onOcrChange={onOcrChange} textSelection={textSelection} search={search}/> : <div className="pdf-page-placeholder" style={{ height: actual.height * scale }}/>}
+  </div>;
+});
 
-function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, captureExcerpt, target, onMessage, document: sharedDocument, tool, onOcrChange, textSelection, search }: { dark: boolean; document: any; tool: PdfTool; pdf: ActivePdf | null; page: number; scale: number; onMeta: (change: (current: PdfMeta) => PdfMeta) => Promise<boolean>; onShowAnnotation: (id: string) => void; deleting: boolean; captureExcerpt: (source: ActivePdf) => PdfExcerptContext | null; target: PdfAnchor | null; onMessage: (message: string) => void; onOcrChange: (page: number, active: boolean) => void; textSelection: PdfSelectedPage | null; search: { query: string; occurrence: number; caseSensitive: boolean } | null }) {
+const PdfPage = memo(function PdfPage({ dark, pdfPath, pdfData, pdfId, page, scale, pageAnnotations, onMeta, onShowAnnotation, deleting, captureExcerpt, targetActive, onMessage, document: sharedDocument, tool, onOcrChange, textSelection, search }: {
+  dark: boolean; document: any; tool: PdfTool; pdfPath: string; pdfData: ActivePdf['data']; pdfId: string;
+  page: number; scale: number; pageAnnotations: PdfAnnotation[];
+  onMeta: (change: (current: PdfMeta) => PdfMeta) => Promise<boolean>; onShowAnnotation: (id: string) => void;
+  deleting: boolean; captureExcerpt: () => PdfExcerptContext | null; targetActive: boolean;
+  onMessage: (message: string) => void; onOcrChange: (page: number, active: boolean) => void;
+  textSelection: PdfSelectedPage | null; search: PdfSearchSpec | null;
+}) {
   const reducedMotion = useContext(ReducedMotionContext);
   const reducedMotionRef = useRef(reducedMotion); reducedMotionRef.current = reducedMotion;
   const canvas = useRef<HTMLCanvasElement>(null);
-  const raster = useRef<PdfRaster | null>(null);
+  const raster = useRef<LazyPdfRaster | null>(null);
   const pagePainted = useRef(false);
   const night = useRef(dark); night.current = dark;
+  const [pageSize, setPageSize] = useState<{ width: number; height: number } | null>(null);
   useLayoutEffect(() => {
-    if (canvas.current && raster.current) paintPdfAppearance(canvas.current, raster.current, dark);
+    const currentCanvas = canvas.current, entry = raster.current;
+    if (!currentCanvas || !entry) return;
+    if (!dark) {
+      if (entry.source) paintPdfAppearance(currentCanvas, { source: entry.source, images: entry.images || [] }, false);
+      return;
+    }
+    if (!entry.source) {
+      const copy = window.document.createElement('canvas');
+      copy.width = currentCanvas.width; copy.height = currentCanvas.height;
+      copy.getContext('2d')?.drawImage(currentCanvas, 0, 0);
+      entry.source = copy;
+    }
+    if (entry.images) {
+      paintPdfAppearance(currentCanvas, { source: entry.source, images: entry.images }, true);
+      return;
+    }
+    paintPdfAppearance(currentCanvas, { source: entry.source, images: entry.pdfPage?.imageCoordinates || [] }, true);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const operators = await entry.pdfPage.getOperatorList();
+        if (cancelled || raster.current !== entry || !canvas.current || !entry.source) return;
+        entry.images = [...entry.pdfPage.imageCoordinates || [], ...groupedPdfImages(operators, entry.viewport, pdfjsLib.OPS)];
+        if (night.current) paintPdfAppearance(canvas.current, { source: entry.source, images: entry.images }, true);
+      } catch { /* Base dark appearance already painted with recorded images. */ }
+    })();
+    return () => { cancelled = true; };
   }, [dark]);
   useLayoutEffect(() => {
     if (reducedMotion) canvas.current?.getAnimations().forEach(animation => animation.cancel());
@@ -503,8 +649,8 @@ function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, c
   const [ocr, setOcr] = useState<(OcrDialog & { action: PdfRegionAction; result?: ExcerptFlowResult }) | null>(null);
   const ocrRef = useRef<(OcrDialog & { action: PdfRegionAction; result?: ExcerptFlowResult }) | null>(null);
   ocrRef.current = ocr;
-  const latestPdfData = useRef(pdf?.data);
-  latestPdfData.current = pdf?.data;
+  const latestPdfData = useRef(pdfData);
+  latestPdfData.current = pdfData;
   const mountedRef = useRef(true);
   const ocrTitleId = React.useId();
   const regionOperation = useRef<{ action: PdfRegionAction; doOcr: boolean } | null>(null);
@@ -512,7 +658,7 @@ function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, c
   const ocrTextAction = useRef<(() => Promise<ExcerptFlowResult>) | null>(null);
   const savingRef = useRef(false);
   const [savingAnnotation, setSavingAnnotation] = useState(false);
-  useEffect(() => { setSelection(null); setComment(''); dragStart.current = null; regionOperation.current = null; setRegionResult(null); }, [tool, pdf?.data]);
+  useEffect(() => { setSelection(null); setComment(''); dragStart.current = null; regionOperation.current = null; setRegionResult(null); }, [tool, pdfData]);
   useEffect(() => { onOcrChange(page, !!ocr); }, [onOcrChange, page, ocr]);
   useEffect(() => {
     const active = ocrRef.current;
@@ -521,7 +667,7 @@ function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, c
     ocrRef.current = null;
     ocrTextAction.current = null;
     setOcr(null);
-  }, [pdf?.data]);
+  }, [pdfData]);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -545,45 +691,56 @@ function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, c
         setRotation((((pdfPage.rotate % 360) + 360) % 360) as 0 | 90 | 180 | 270);
         const viewport = pdfPage.getViewport({ scale });
         if (cancelled || !canvas.current) return;
-        const outputScale = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
+        const outputScale = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
         const currentCanvas = canvas.current!; currentCanvas.width = Math.ceil(viewport.width * outputScale); currentCanvas.height = Math.ceil(viewport.height * outputScale);
         currentCanvas.style.width = `${viewport.width}px`; currentCanvas.style.height = `${viewport.height}px`;
-        // Render offscreen so night mode never flashes a white page. Theme
-        // changes repaint only the display canvas, not text/selection layers.
-        const source = window.document.createElement('canvas');
-        source.width = currentCanvas.width; source.height = currentCanvas.height;
+        setPageSize(prev => prev && prev.width === viewport.width && prev.height === viewport.height ? prev : { width: viewport.width, height: viewport.height });
         const transform = outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0];
-        renderTask = pdfPage.render({ canvas: source, canvasContext: source.getContext('2d')!, viewport, transform, recordImages: true });
-        await renderTask.promise;
-        if (cancelled || canvas.current !== currentCanvas || !textLayer.current) return;
-        const operators = await pdfPage.getOperatorList();
-        if (cancelled || canvas.current !== currentCanvas || !textLayer.current) return;
-        raster.current = { source, images: [...pdfPage.imageCoordinates || [], ...groupedPdfImages(operators, viewport, pdfjsLib.OPS)] };
-        paintPdfAppearance(currentCanvas, raster.current, night.current);
-        const layer = textLayer.current!; layer.replaceChildren(); layer.style.width = `${viewport.width}px`; layer.style.height = `${viewport.height}px`;
+        if (night.current) {
+          // Render offscreen in dark mode so it never flashes a white page.
+          const source = window.document.createElement('canvas');
+          source.width = currentCanvas.width; source.height = currentCanvas.height;
+          renderTask = pdfPage.render({ canvas: source, canvasContext: source.getContext('2d')!, viewport, transform, recordImages: true });
+          await renderTask.promise;
+          if (cancelled || canvas.current !== currentCanvas || !textLayer.current) return;
+          const operators = await pdfPage.getOperatorList();
+          if (cancelled || canvas.current !== currentCanvas || !textLayer.current) return;
+          const images = [...pdfPage.imageCoordinates || [], ...groupedPdfImages(operators, viewport, pdfjsLib.OPS)];
+          raster.current = { source, images, pdfPage, viewport };
+          paintPdfAppearance(currentCanvas, { source, images }, true);
+        } else {
+          // Light mode renders directly to the display canvas and defers
+          // operator-list image extraction until dark mode is actually toggled.
+          renderTask = pdfPage.render({ canvas: currentCanvas, canvasContext: currentCanvas.getContext('2d')!, viewport, transform, recordImages: true });
+          await renderTask.promise;
+          if (cancelled || canvas.current !== currentCanvas || !textLayer.current) return;
+          raster.current = { source: null, images: null, pdfPage, viewport };
+        }
+        setLoading(false);
+        if (!pagePainted.current) {
+          pagePainted.current = true;
+          if (!reducedMotionRef.current) {
+            currentCanvas.animate([{ opacity: 0.86 }, { opacity: 1 }], { duration: 120, easing: 'cubic-bezier(.2,.75,.3,1)' });
+          }
+        }
+        // Yield one frame so the compositor paints the scrolled page before
+        // building the text layer DOM.
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        const layer = textLayer.current;
+        if (cancelled || !layer) return;
+        layer.replaceChildren(); layer.style.width = `${viewport.width}px`; layer.style.height = `${viewport.height}px`;
         layer.style.setProperty('--scale-factor', String(viewport.scale));
         layer.style.setProperty('--total-scale-factor', String(viewport.scale));
         const text = await pdfPage.getTextContent();
         if (cancelled || textLayer.current !== layer) return;
         textTask = new pdfjsLib.TextLayer({ textContentSource: text, container: layer, viewport });
         await textTask.render();
-        if (!cancelled) {
-          setTextRevision(value => value + 1);
-          if (!pagePainted.current) {
-            pagePainted.current = true;
-            if (!reducedMotionRef.current) {
-              const style = getComputedStyle(holder.current || currentCanvas), opacity = Number.parseFloat(style.opacity) || 1;
-              currentCanvas.animate([{ opacity: opacity * .84 }, { opacity }], {
-                duration: motionNumber(style, '--motion-page', 120), easing: motionText(style, '--motion-ease-enter', 'cubic-bezier(.2,.75,.3,1)'),
-              });
-            }
-          }
-        }
+        if (!cancelled) setTextRevision(value => value + 1);
       } catch (error: any) { if (!cancelled && error?.name !== 'RenderingCancelledException') onMessage(`页面显示失败：${error?.message || error}`); }
       finally { if (!cancelled) setLoading(false); }
     })();
     return () => { cancelled = true; renderTask?.cancel?.(); textTask?.cancel(); raster.current = null; };
-  }, [pdf?.path, page, scale, sharedDocument]);
+  }, [pdfPath, page, scale, sharedDocument]);
 
   useEffect(() => {
     const layer = textLayer.current;
@@ -613,7 +770,24 @@ function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, c
     });
   }), []);
 
-  const pageAnnotations = pdf?.meta.annotations.filter(annotation => annotation.anchor.page === page) || [];
+  const pageWidth = pageSize?.width || 595 * scale;
+  const pageHeight = pageSize?.height || 842 * scale;
+  const savedHighlightRects = useMemo(
+    () => visiblePdfHighlightRects(
+      pageAnnotations.filter(item => item.type === 'highlight').flatMap(item => item.anchor.rects.map(rect => ({ ...rect, angle: item.anchor.rotation }))),
+      textSelection?.rects || [],
+      pageWidth,
+      pageHeight,
+    ),
+    [pageAnnotations, textSelection, pageWidth, pageHeight],
+  );
+  const cleanedAnnotations = useMemo(
+    () => pageAnnotations.map(annotation => ({
+      annotation,
+      rects: cleanPdfRects(annotation.anchor.rects.map(rect => ({ ...rect, angle: annotation.anchor.rotation })), pageWidth, pageHeight),
+    })),
+    [pageAnnotations, pageWidth, pageHeight],
+  );
   function point(event: React.PointerEvent) {
     const bounds = holder.current!.getBoundingClientRect();
     return { x: Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width)), y: Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height)) };
@@ -635,8 +809,8 @@ function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, c
     if (!blob) throw new Error('无法生成摘录图片'); return new Uint8Array(await blob.arrayBuffer());
   }
   async function storeAnnotation(type: PdfAnnotation['type'], options: Partial<PdfAnnotation> = {}) {
-    if (!pdf || !selection?.length) return null;
-    const annotation: PdfAnnotation = { id: crypto.randomUUID(), type, anchor: { pdfId: pdf.meta.id, page, rects: selection, rotation }, color: '#e4c95b', createdAt: new Date().toISOString(), ...options };
+    if (!pdfId || !selection?.length) return null;
+    const annotation: PdfAnnotation = { id: crypto.randomUUID(), type, anchor: { pdfId, page, rects: selection, rotation }, color: '#e4c95b', createdAt: new Date().toISOString(), ...options };
     if (!(await onMeta(meta => ({ ...meta, page, annotations: [...meta.annotations, annotation] })))) return null;
     return annotation;
   }
@@ -653,13 +827,13 @@ function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, c
     finally { savingRef.current = false; setSavingAnnotation(false); }
   }
   async function saveRegion(doOcr = false) {
-    if (!pdf || !selection?.[0] || savingRef.current) return;
+    if (!pdfId || !selection?.[0] || savingRef.current) return;
     savingRef.current = true; setSavingAnnotation(true);
     try {
       if (!regionOperation.current) {
-        const context = captureExcerpt(pdf); if (!context) return;
+        const context = captureExcerpt(); if (!context) return;
         const rect = { ...selection[0] };
-        const annotation: PdfAnnotation = { id: crypto.randomUUID(), type: 'region', anchor: { pdfId: pdf.meta.id, page, rects: [{ ...rect }], rotation }, color: '#e4c95b', createdAt: new Date().toISOString() };
+        const annotation: PdfAnnotation = { id: crypto.randomUUID(), type: 'region', anchor: { pdfId, page, rects: [{ ...rect }], rotation }, color: '#e4c95b', createdAt: new Date().toISOString() };
         regionOperation.current = { doOcr, action: createPdfRegionAction({ context, annotation,
           crop: () => cropPng(rect),
           attachment: (sourcePath, data) => reader().saveAttachment({ sourcePath, data, extension: 'png' }),
@@ -673,7 +847,7 @@ function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, c
       setRegionResult(outcome);
       if (!outcome.done) { if (outcome.error) onMessage(outcome.error); return; }
       if (operation.doOcr) {
-        const expectedData = pdf.data;
+        const expectedData = pdfData;
         const { jobId } = await reader().startOcr({ image: await operation.action.bytes(), languages: ['chi_sim', 'chi_tra', 'eng'] });
         if (!mountedRef.current || latestPdfData.current !== expectedData) {
           void reader().cancelOcr(jobId).catch(() => {});
@@ -689,7 +863,7 @@ function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, c
     finally { savingRef.current = false; setSavingAnnotation(false); }
   }
   async function acceptOcr() {
-    if (!ocr || !pdf || savingRef.current) return;
+    if (!ocr || !pdfId || savingRef.current) return;
     savingRef.current = true; setSavingAnnotation(true);
     try {
       const current = ocr;
@@ -718,12 +892,12 @@ function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, c
   }
 
   return <section className="pdf-page-content">
-    <div className="pdf-page-inner">{!pdf ? <div className="empty-state"><span className="empty-icon"><BookOpen size={28}/></span><p>打开 PDF 或 EPUB 开始阅读</p><small>文件会留在原来的磁盘位置</small></div> : <div className="pdf-stage"><div className="canvas-holder" ref={holder} data-rotation={rotation} style={{ width: canvas.current?.style.width, height: canvas.current?.style.height }} onPointerDown={event => { if (savingRef.current) return; if (tool === 'region') { dragStart.current = point(event); setSelection(null); } else if (tool === 'note') { const at = point(event); setSelection([{ x: at.x, y: at.y, w: .025, h: .025 }]); } }} onPointerUp={finishRegion}>
+    <div className="pdf-page-inner"><div className="pdf-stage"><div className="canvas-holder" ref={holder} data-rotation={rotation} style={pageSize ? { width: `${pageSize.width}px`, height: `${pageSize.height}px` } : undefined} onPointerDown={event => { if (savingRef.current) return; if (tool === 'region') { dragStart.current = point(event); setSelection(null); } else if (tool === 'note') { const at = point(event); setSelection([{ x: at.x, y: at.y, w: .025, h: .025 }]); } }} onPointerUp={finishRegion}>
       <canvas ref={canvas}/><div ref={textLayer} className="textLayer" data-text-revision={textRevision}/><div className="pdf-search-layer" aria-hidden="true">{searchRects.map((rect, index) => <span className="pdf-search-hit" key={index} style={rect}/>)}</div>
       <div className={'draw-layer ' + (tool === 'region' || tool === 'note' ? 'interactive' : '')}>
-        {visiblePdfHighlightRects(pageAnnotations.filter(item => item.type === 'highlight').flatMap(item => item.anchor.rects.map(rect => ({ ...rect, angle: item.anchor.rotation }))), textSelection?.rects || [], parseFloat(canvas.current?.style.width || '') || 595 * scale, parseFloat(canvas.current?.style.height || '') || 842 * scale).map((rect, index) => <span aria-hidden="true" className="pdf-saved-highlight" key={`saved-${index}`} style={{ left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.w * 100}%`, height: `${rect.h * 100}%` }}/>) }
-        {pageAnnotations.flatMap(annotation => cleanPdfRects(annotation.anchor.rects.map(rect => ({ ...rect, angle: annotation.anchor.rotation })), parseFloat(canvas.current?.style.width || '') || 595 * scale, parseFloat(canvas.current?.style.height || '') || 842 * scale).map((rect, index) => {
-          const className = `annotation ${annotation.type} ${target && target.pdfId === annotation.anchor.pdfId && target.page === annotation.anchor.page ? 'flash' : ''}`;
+        {savedHighlightRects.map((rect, index) => <span aria-hidden="true" className="pdf-saved-highlight" key={`saved-${index}`} style={{ left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.w * 100}%`, height: `${rect.h * 100}%` }}/>) }
+        {cleanedAnnotations.flatMap(({ annotation, rects }) => rects.map((rect, index) => {
+          const className = `annotation ${annotation.type} ${targetActive ? 'flash' : ''}`;
           const style = { left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.w * 100}%`, height: `${rect.h * 100}%` };
           return index === 0 ? <button disabled={deleting} type="button" aria-label="查看 PDF 标记" data-annotation-id={annotation.id} title={annotation.text || annotation.comment || annotation.anchor.quote || '标记'} className={className} style={style} key={`${annotation.id}-${index}`} onClick={() => onShowAnnotation(annotation.id)}><span className="sr-only">查看标记</span></button> : <span aria-hidden="true" data-annotation-id={annotation.id} className={className} style={style} key={`${annotation.id}-${index}`}/>;
         }))}
@@ -733,7 +907,7 @@ function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, c
     </div>
     {selectionActionsMotion.present && selectionForMotion && <div ref={selectionActionsMotion.ref as React.RefObject<HTMLDivElement | null>} className="selection-actions" aria-hidden={!selection}>{tool === 'region' ? renderRegionActions() : <><input autoFocus disabled={savingAnnotation} value={comment} onChange={event => setComment(event.target.value)} placeholder="写下批注"/><button className="primary" disabled={savingAnnotation || !comment.trim()} onClick={() => void saveHighlight()}>保存批注</button></>}<button disabled={savingAnnotation} onClick={() => { setSelection(null); regionOperation.current = null; setRegionResult(null); }}>取消</button></div>}
     {!!pageAnnotations.length && <aside className="annotation-list"><b>本页标记</b>{pageAnnotations.map(annotation => <div key={annotation.id}><span>{annotation.type === 'highlight' ? '高亮' : annotation.type === 'region' ? '框选' : '批注'} · {annotation.anchor.quote || annotation.text || annotation.ocrText || '第 ' + page + ' 页'}</span><button disabled={deleting} onClick={() => onShowAnnotation(annotation.id)}>查看</button></div>)}</aside>}
-    </div>}
+    </div>
     </div>
     {ocr && <DialogFrame className="ocr-dialog" labelledBy={ocrTitleId} busy={savingAnnotation} onCancel={() => void closeOcr()}
       returnFocus={() => holder.current?.closest<HTMLElement>('.pdf-pane') || null}>
@@ -749,4 +923,4 @@ function PdfPage({ dark, pdf, page, scale, onMeta, onShowAnnotation, deleting, c
       </>}
     </DialogFrame>}
   </section>;
-}
+});

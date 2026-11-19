@@ -199,3 +199,16 @@ test('endpoint caret probing steps by whole code points across UTF-16 surrogate 
     global.Node = previous.Node; global.NodeFilter = previous.NodeFilter; global.getComputedStyle = previous.getComputedStyle;
   }
 });
+
+test('binary search locates the first visible PDF page in O(log N) layout probes', async () => {
+  const { findVisiblePdfPageIndex } = await import('../src/readers/pdfScroll.ts');
+  const bottoms = Array.from({ length: 500 }, (_, i) => (i + 1) * 900 - 100);
+  let probes = 0;
+  const readBottom = index => { probes += 1; return bottoms[index]; };
+  assert.equal(findVisiblePdfPageIndex(0, readBottom, 80), -1);
+  assert.equal(findVisiblePdfPageIndex(bottoms.length, readBottom, 80), 0);
+  probes = 0;
+  assert.equal(findVisiblePdfPageIndex(bottoms.length, readBottom, 225000), 250);
+  assert.ok(probes <= 12, `expected logarithmic layout probes, got ${probes}`);
+  assert.equal(findVisiblePdfPageIndex(bottoms.length, readBottom, 999999), -1);
+});
