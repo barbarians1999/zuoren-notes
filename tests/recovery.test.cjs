@@ -76,6 +76,39 @@ test('changed source becomes a separate conflict and matching saved content is c
   assert.equal(await store.readRecovery(notePath, recoveryId), null);
 });
 
+test('discardChanges waits for an in-flight recovery write before deleting it', async () => {
+  require('./typescript-loader.cjs');
+  const { NoteDocument } = await import('../src/workspace/noteDocument.ts');
+  const { notePath, store } = await fixture();
+  const note = await store.readNote(notePath);
+  let releaseWrite;
+  let writeStarted;
+  const writeGate = new Promise(resolve => { releaseWrite = resolve; });
+  const startedGate = new Promise(resolve => { writeStarted = resolve; });
+  const api = {
+    writeRecovery: async payload => {
+      writeStarted();
+      await writeGate;
+      return store.writeRecovery(payload);
+    },
+    checkRecovery: payload => store.checkRecovery(payload.sourcePath, payload.recoveryId),
+    deleteRecovery: payload => store.deleteRecoveryIfHash(payload.sourcePath, payload.recoveryId, payload.draftHash),
+  };
+  const doc = new NoteDocument(note, recoveryId, () => api, { has: () => false }, () => {}, () => {}, () => {});
+  doc.ready = true;
+  doc.replaceText('discard-canary');
+  const flushing = doc.flushRecovery();
+  await startedGate;
+  const discarding = doc.discardChanges();
+  releaseWrite();
+  await Promise.all([flushing, discarding]);
+  assert.equal(await store.readRecovery(notePath, recoveryId), null);
+  assert.equal(doc.text, note.content);
+  assert.equal(doc.saveDue, Infinity);
+  assert.equal(doc.recoveryDue, Infinity);
+  doc.dispose();
+});
+
 test('session schema is versioned, exact, and rejects unknown or malformed state', () => {
   const session = {
     version: 1, root: 'C:\\work', currentDirectory: 'C:\\work\\notes', layout: 'split', sidebar: true, splitAt: 52,

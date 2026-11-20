@@ -54,6 +54,9 @@ export class NoteDocument {
   private imageBytes = 0;
   private saveRetryAttempt = 0;
   private saveFailureNotified = false;
+  private recoveryFlight: Promise<void> | null = null;
+  private recoveryGeneration = 0;
+  private discarding = false;
   constructor(note: NoteRead, recoveryId: string, private api: () => ReaderApi,
     private barrier: { has(path: string): boolean }, private notify: () => void,
     private edited: (doc: NoteDocument) => void, private message: (text: string) => void,
@@ -66,7 +69,7 @@ export class NoteDocument {
   get text() { return this.textRef.current; }
   get conflict() { return this.conflictRef.current; }
   get retainedRecoveryIds() { return this.recoveryReferences.map(item => item.recoveryId); }
-  blocked = () => !this.ready || this.disposed || !!this.recoveryConflict || !!this.conflict || this.barrier.has(this.note.path);
+  blocked = () => !this.ready || this.disposed || this.discarding || !!this.recoveryConflict || !!this.conflict || this.barrier.has(this.note.path);
   // A final workspace commit freezes input, not the persistence queue.
   editingBlocked = () => !this.ready || this.disposed || this.barrier.has(this.note.path) || !this.allowEdits();
   private trace(operation: string, detail: Record<string, string | number> = {}) {
@@ -257,11 +260,16 @@ export class NoteDocument {
   };
   snapshot = () => ({ note: this.note, text: this.text, revision: this.revision });
   flushRecovery = async () => {
+    if (this.recoveryFlight) return this.recoveryFlight;
     if (this.blocked() || sameNoteContent(this.text, this.note.content)) return;
-    const revision = this.revision;
-    await this.api().writeRecovery({ sourcePath: this.note.path, paneHint: this.paneHint,
-      recoveryId: this.recoveryId, baseHash: this.note.hash, content: this.text, encoding: { bom: this.note.bom, eol: this.note.eol } });
-    this.trace('recovery', { revision });
+    const generation = this.recoveryGeneration, revision = this.revision;
+    const task = (async () => {
+      await this.api().writeRecovery({ sourcePath: this.note.path, paneHint: this.paneHint,
+        recoveryId: this.recoveryId, baseHash: this.note.hash, content: this.text, encoding: { bom: this.note.bom, eol: this.note.eol } });
+      if (!this.disposed && !this.discarding && generation === this.recoveryGeneration) this.trace('recovery', { revision });
+    })();
+    this.recoveryFlight = task;
+    try { await task; } finally { if (this.recoveryFlight === task) this.recoveryFlight = null; }
   };
   private clearSaveRetry() { this.saveRetryAttempt = 0; this.saveFailureNotified = false; this.saveDue = Infinity; }
   private scheduleSaveRetry() {
@@ -351,12 +359,24 @@ export class NoteDocument {
     }
   }
   async discardChanges() {
-    const conflict = this.recoveryConflict;
-    if (conflict) await this.clearRecovery(conflict.recovery.content, this.note.path, conflict.recoveryId);
-    else await this.clearRecovery(this.text);
-    this.replaceText(this.note.content);
-    this.conflictRef.current = null; this.recoveryConflict = null;
-    this.clearSaveRetry(); this.label = '已保存'; this.notify();
+    this.discarding = true;
+    this.recoveryGeneration++;
+    this.recoveryDue = Infinity;
+    this.clearSaveRetry();
+    this.persistence.invalidate();
+    try {
+      if (this.recoveryFlight) await this.recoveryFlight.catch(() => {});
+      if (this.persistence.pending) await this.persistence.pending.catch(() => {});
+      const conflict = this.recoveryConflict;
+      if (conflict) await this.clearRecovery(conflict.recovery.content, this.note.path, conflict.recoveryId);
+      else await this.clearRecovery(this.text);
+      this.replaceText(this.note.content);
+      this.recoveryDue = Infinity;
+      this.conflictRef.current = null; this.recoveryConflict = null;
+      this.clearSaveRetry(); this.label = '已保存'; this.notify();
+    } finally {
+      this.discarding = false;
+    }
   }
   async completeSaveAs(note: NoteRead, submitted: string, submittedRevision: number, recovering: boolean) {
     const oldPath = this.note.path, oldId = this.recoveryConflict?.recoveryId || this.recoveryId;
@@ -380,16 +400,28 @@ export class NoteDocument {
     return this.save();
   }
   async useDisk() {
-    const disk = this.recoveryConflict?.note || this.conflict || this.note;
-    if (this.recoveryConflict) await this.clearRecovery(this.recoveryConflict.recovery.content, this.note.path, this.recoveryConflict.recoveryId);
-    else await this.clearRecovery(this.text);
-    this.recoveryConflict = null; this.conflictRef.current = null;
-    this.noteRef.current = disk; this.replaceText(disk.content); this.label = '已保存'; this.notify();
+    this.discarding = true;
+    this.recoveryGeneration++;
+    this.recoveryDue = Infinity;
+    this.clearSaveRetry();
+    this.persistence.invalidate();
+    try {
+      if (this.recoveryFlight) await this.recoveryFlight.catch(() => {});
+      if (this.persistence.pending) await this.persistence.pending.catch(() => {});
+      const disk = this.recoveryConflict?.note || this.conflict || this.note;
+      if (this.recoveryConflict) await this.clearRecovery(this.recoveryConflict.recovery.content, this.note.path, this.recoveryConflict.recoveryId);
+      else await this.clearRecovery(this.text);
+      this.recoveryConflict = null; this.conflictRef.current = null;
+      this.noteRef.current = disk; this.replaceText(disk.content);
+      this.recoveryDue = Infinity; this.clearSaveRetry(); this.label = '已保存'; this.notify();
+    } finally {
+      this.discarding = false;
+    }
   }
   relocate(note: NoteRead) {
     this.persistence.invalidate(); this.documentId.current = ++sequence; this.noteRef.current = note; this.notify();
   }
-  dispose() { this.disposed = true; this.clearSaveRetry(); this.persistence.disposed = true; this.persistence.invalidate(); }
+  dispose() { this.disposed = true; this.recoveryDue = Infinity; this.clearSaveRetry(); this.persistence.disposed = true; this.persistence.invalidate(); }
 }
 
 function imageExtension(name: string) {
