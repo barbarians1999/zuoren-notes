@@ -24,7 +24,7 @@ test('startup maximizes even with a saved small restore size and window controls
       return { actual: window.getMinimumSize()[0], expected: Math.max(300, Math.min(380, Math.floor(workWidth / 4))), workWidth };
     });
     assert.equal(minimumWidth.actual, minimumWidth.expected, 'minimum width allows quarter-screen or narrower resizing');
-    assert.ok(minimumWidth.actual <= Math.floor(minimumWidth.workWidth / 4), 'minimum width does not exceed a quarter of the work area');
+    assert.ok(minimumWidth.actual <= Math.max(300, Math.floor(minimumWidth.workWidth / 4)), 'minimum width does not exceed a quarter of the work area or the 300px minimum floor');
     const assertContinuousBorder = async (name, hover = false) => {
       await page.mouse.move(300, 250);
       if (hover) await page.getByRole('button', { name: '关闭窗口', exact: true }).hover();
