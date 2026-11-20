@@ -65,7 +65,7 @@ async function getSmokeTempRoot(environment = process.env) {
     const target = selectSmokeTempRoot({ gRoot, gFreeBytes });
     return selectedRoot = await prepareTempRoot(target, minGFree);
   }
-  const fallbackRoot = os.tmpdir();
+  const fallbackRoot = (() => { try { return fsSync.realpathSync(os.tmpdir()); } catch { return os.tmpdir(); } })();
   const target = selectSmokeTempRoot({ platform: process.platform, fallbackRoot, fallbackFreeBytes: await availableBytes(fallbackRoot) });
   return selectedRoot = await prepareTempRoot(target, minFallbackFree);
 }

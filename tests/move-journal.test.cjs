@@ -12,7 +12,7 @@ const { createSymlinkFixture } = require('./symlinkFixtures.cjs');
 const uuid = () => crypto.randomUUID();
 const sha = value => crypto.createHash('sha256').update(value).digest('hex');
 async function fixture(t) {
-  const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'zuoren-move-journal-'));
+  const temp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'zuoren-move-journal-')));
   t.after(() => fs.rm(temp, { recursive: true, force: true }));
   const root = path.join(temp, 'root'), source = path.join(root, 'note.md'), targetDirectory = path.join(root, 'target');
   await fs.mkdir(path.join(root, '.reader', 'recovery'), { recursive: true });

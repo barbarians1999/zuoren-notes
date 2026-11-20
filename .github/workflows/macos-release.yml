@@ -47,6 +47,7 @@ jobs:
       - name: Build and unit tests
         run: |
           set -o pipefail
+          export TMPDIR="$(node -e 'console.log(require("fs").realpathSync(require("os").tmpdir()))')"
           pnpm build 2>&1 | tee macos-build.log
           node --test --test-reporter=tap tests/*.test.cjs 2>&1 | tee macos-unit.log
       - name: Package native DMG
@@ -56,6 +57,7 @@ jobs:
       - name: Verify packaged app and run native smoke
         run: |
           set -o pipefail
+          export TMPDIR="$(node -e 'console.log(require("fs").realpathSync(require("os").tmpdir()))')"
           APP="releases/macos/$MAC_ARCH/mac"
           if [ "$MAC_ARCH" = arm64 ]; then APP="$APP-arm64"; fi
           APP="$APP/左人笔记.app"

@@ -99,7 +99,7 @@ test('recheck of a confirmed pre-commit failure releases both paths', async () =
 });
 test('actual Workspace + SessionRecovery + App.openEntry cannot reopen past an unknown-move edit/save pin', async t => {
   const { FileMoveCoordinator } = await load(), { NoteWorkspace } = await import('../src/workspace/noteWorkspace.ts'), { SessionRecovery } = await import('../src/sessionRecovery.ts');
-  const root = await fs.mkdtemp(path.join(os.tmpdir(),'zuoren-move-reopen-')); t.after(() => fs.rm(root,{recursive:true,force:true}));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'zuoren-move-reopen-'))); t.after(() => fs.rm(root,{recursive:true,force:true}));
   const file = path.join(root,'fixture.md'), directory=path.join(root,'child'); await fs.mkdir(directory); await fs.writeFile(file,'# original\n');
   const store=new FileStore(); await store.grantRoot(root); const barrier=new MutationBarrier(), saves=[];
   const api={readNote:f=>store.readNote(f),checkRecovery:async()=>({status:'none'}),writeRecovery:async()=>{},deleteRecovery:async()=>true,saveNote:async input=>{saves.push(input);return store.saveNote(input);},pendingFileMove:async()=>null,finalizeFileMove:async()=>true,fileMoveCapability:async()=>({supported:true}),moveFile:async()=>{throw Error('lost');},fileMoveStatus:async()=>({status:'unknown'})};

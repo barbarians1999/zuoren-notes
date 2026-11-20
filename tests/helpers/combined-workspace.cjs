@@ -11,7 +11,7 @@ async function combinedWorkspace(t, options = {}) {
   const { markdownSyntax } = await import('../../src/editor/markdownLanguage.ts');
   const { NoteWorkspace } = await import('../../src/workspace/noteWorkspace.ts');
   const outline = await import('../../src/editor/outlineScrollMotion.ts');
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'zuoren-combined-'));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'zuoren-combined-')));
   const file = path.join(root, 'fixture.md'), secondFile = path.join(root, 'second.md');
   const body = Array.from({ length: 90 }, (_, index) => `## 标题 ${index}\n普通中文 paragraph 😀`).join('\n');
   await fs.writeFile(file, body); await fs.writeFile(secondFile, '# 第二篇\n');
