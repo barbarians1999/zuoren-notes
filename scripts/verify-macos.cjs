@@ -25,8 +25,9 @@ async function main() {
   const unit=await fs.readFile(path.join(root,'macos-unit.log'),'utf8');
   const smoke=await fs.readFile(path.join(root,'macos-smoke.log'),'utf8');
   const nativeUnitTests = passed(unit);
-  if (passed(smoke) !== 2) throw new Error('Native tests did not finish with verified success');
-  const report={version,architecture:arch,platform:'darwin',sourceCommit:process.env.GITHUB_SHA,nativeUnitTests,nativePackageSmoke:'passed',dmg:{name,bytes:(await fs.stat(dmg)).size,sha256:await hash(dmg)},appAsarSha256:await hash(path.join(app,'Contents/Resources/app.asar')),iconSourceSha256:await hash(path.join(root,'electron/assets/app-constructivist.png')),signing:'ad-hoc only; not Developer ID signed or notarized',workflowRun:process.env.GITHUB_RUN_ID,binary:binary.trim()};
+  const nativeSmokeTests = passed(smoke);
+  if (nativeSmokeTests < 2 || !/\r?\n1\.\.2(?:\r?\n|$)/.test(smoke) || !/\r?\nok 1 - /.test(smoke) || !/\r?\nok 2 - /.test(smoke)) throw new Error('Native tests did not finish with verified success');
+  const report={version,architecture:arch,platform:'darwin',sourceCommit:process.env.GITHUB_SHA,nativeUnitTests,nativeSmokeTests,nativePackageSmoke:'passed',dmg:{name,bytes:(await fs.stat(dmg)).size,sha256:await hash(dmg)},appAsarSha256:await hash(path.join(app,'Contents/Resources/app.asar')),iconSourceSha256:await hash(path.join(root,'electron/assets/app-constructivist.png')),signing:'ad-hoc only; not Developer ID signed or notarized',workflowRun:process.env.GITHUB_RUN_ID,binary:binary.trim()};
   await fs.writeFile(path.join(output,`ZuorenNotes-${version}-macOS-${arch}-VALIDATION.json`),JSON.stringify(report,null,2)+'\n');
   console.log(JSON.stringify(report,null,2));
 }
