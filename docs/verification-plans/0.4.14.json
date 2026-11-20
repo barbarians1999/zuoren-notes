@@ -1,0 +1,23 @@
+{
+  "reason": "Directed Windows verification for the About layout, note clipboard commands, caret placement and undo, PDF and EPUB annotation editing and removal, and persisted excerpts. UI checks run against the source build and the packaged application. Full regression, installed upgrade, live OCR recognition and macOS packages are outside this plan.",
+  "source": [
+    "tests/about-smoke.cjs",
+    "tests/clipboard-smoke.cjs",
+    "tests/epub-search-smoke.cjs",
+    "tests/epub-workspace-smoke.cjs",
+    "tests/note-tabs-smoke.cjs",
+    "tests/pdf-selection-smoke.cjs",
+    "tests/reader-handoff-smoke.cjs",
+    "tests/reader-reliability-smoke.cjs"
+  ],
+  "packaged": [
+    "tests/about-smoke.cjs",
+    "tests/clipboard-smoke.cjs",
+    "tests/epub-search-smoke.cjs",
+    "tests/epub-workspace-smoke.cjs",
+    "tests/note-tabs-smoke.cjs",
+    "tests/pdf-selection-smoke.cjs",
+    "tests/reader-handoff-smoke.cjs",
+    "tests/reader-reliability-smoke.cjs"
+  ]
+}

@@ -25,6 +25,7 @@ import { groupedPdfImages, paintPdfAppearance } from './pdfAppearance';
 import { findVisiblePdfPage } from './pdfScroll';
 import { PdfBitmapCache, pdfBitmapCacheKey } from './pdfBitmapCache';
 import { PdfRenderQueue } from './pdfRenderQueue';
+import { AnnotationCommentEditor } from './AnnotationCommentEditor';
 
 const EMPTY_ANNOTATIONS: PdfAnnotation[] = [];
 type PdfSearchSpec = { query: string; occurrence: number; caseSensitive: boolean };
@@ -62,7 +63,7 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
   const reducedMotion = useContext(ReducedMotionContext);
   const pane = useRef<HTMLElement>(null), searchInput = useRef<HTMLInputElement>(null), searchTrigger = useRef<HTMLButtonElement>(null), pageInput = useRef<HTMLInputElement>(null);
   const searchMotion = usePanelMotion(searchOpen, reducedMotion, '4px', () => searchTrigger.current || pane.current, 'y', { enter: '--motion-feedback', exit: '--motion-exit' });
-  const [annotationMenu, setAnnotationMenu] = useState<{ id: string; key: object } | null>(null);
+  const [annotationMenu, setAnnotationMenu] = useState<{ id: string; key: object; editing?: boolean } | null>(null);
   const textSelection = usePdfSelection({ pdf, root: pane, tool, onTextAction, onMessage, onStart: () => setAnnotationMenu(null),
     onClickPoint: (x, y, element) => {
       const holder = element.closest('.canvas-holder'), number = Number(holder?.closest<HTMLElement>('[data-pdf-page]')?.dataset.pdfPage);
@@ -146,7 +147,7 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
   // Undo belongs to the document, not a virtualized page that may unmount.
   const [deletedAnnotation, setDeletedAnnotation] = useState<{ annotation: PdfAnnotation; index: number; path: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const deletionLock = useRef<object | null>(null);
+  const annotationLock = useRef<object | null>(null);
   const [ocrPages, setOcrPages] = useState<number[]>([]);
   const setOcrPageActive = useCallback((pageNumber: number, active: boolean) => {
     setOcrPages(current => active ? (current.includes(pageNumber) ? current : [...current, pageNumber]) : current.filter(item => item !== pageNumber));
@@ -159,25 +160,37 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
     return () => window.clearTimeout(timer);
   }, [deletedAnnotation, deleting]);
   const sameDocument = (path: string, id: string) => latest.current.pdf?.path === path && latest.current.pdf?.meta.id === id;
+  async function saveHighlightComment(comment: string) {
+    const current = latest.current, menu = annotationMenu;
+    if (!menu || menuAnnotation?.type !== 'highlight' || current.pdf?.data !== menu.key || annotationLock.current) return;
+    const token = {};
+    annotationLock.current = token; setDeleting(true);
+    try {
+      const saved = await current.onMeta(meta => ({ ...meta, annotations: meta.annotations.map(item =>
+        item.id === menu.id ? { ...item, comment: comment || undefined } : item) }));
+      if (saved) setAnnotationMenu(value => value === menu ? { ...menu, editing: false } : value);
+    } catch (error) { onMessage(`PDF 批注保存失败：${String(error)}`); }
+    finally { if (annotationLock.current === token) { annotationLock.current = null; setDeleting(false); } }
+  }
   async function removeAnnotation(id: string) {
     const current = latest.current;
-    if (!current.pdf || deletionLock.current) return;
+    if (!current.pdf || annotationLock.current) return;
     const index = current.pdf.meta.annotations.findIndex(annotation => annotation.id === id);
     const annotation = current.pdf.meta.annotations[index];
     if (!annotation) return;
     const path = current.pdf.path, token = {};
-    deletionLock.current = token; setDeleting(true);
+    annotationLock.current = token; setDeleting(true);
     try {
       if (!(await current.onMeta(meta => ({ ...meta, annotations: meta.annotations.filter(item => item.id !== id) })))) return;
       if (sameDocument(path, annotation.anchor.pdfId)) setAnnotationMenu(null);
       if (sameDocument(path, annotation.anchor.pdfId)) setDeletedAnnotation({ annotation, index, path });
     } catch (error) { onMessage(`删除 PDF 标记失败：${String(error)}`); }
-    finally { if (deletionLock.current === token) { deletionLock.current = null; setDeleting(false); } }
+    finally { if (annotationLock.current === token) { annotationLock.current = null; setDeleting(false); } }
   }
   async function undoDelete() {
     const deleted = deletedAnnotation, current = latest.current;
-    if (!deleted || deletionLock.current || !sameDocument(deleted.path, deleted.annotation.anchor.pdfId)) return;
-    const token = {}; deletionLock.current = token; setDeleting(true);
+    if (!deleted || annotationLock.current || !sameDocument(deleted.path, deleted.annotation.anchor.pdfId)) return;
+    const token = {}; annotationLock.current = token; setDeleting(true);
     try {
       const saved = await current.onMeta(meta => {
         if (meta.annotations.some(item => item.id === deleted.annotation.id)) return meta;
@@ -187,7 +200,7 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
       });
       if (saved && sameDocument(deleted.path, deleted.annotation.anchor.pdfId)) setDeletedAnnotation(value => value === deleted ? null : value);
     } catch (error) { onMessage(`撤销 PDF 删除失败：${String(error)}`); }
-    finally { if (deletionLock.current === token) { deletionLock.current = null; setDeleting(false); } }
+    finally { if (annotationLock.current === token) { annotationLock.current = null; setDeleting(false); } }
   }
   useEffect(() => {
     setLoadedDocument(null); setPages(0); setToc([]); setSearchMatches([]); setSearchIndex(-1); setSearching(false); setSearchStatus({ processed: 0, totalPages: 0, totalMatches: 0, errors: 0, truncated: false }); pageTextCache.current.clear(); pageTextErrors.current.clear(); pageSizeCache.current.clear(); bitmapCache.current.clear(); renderQueue.current.clear(); if (scrollIdleTimer.current !== null) { window.clearTimeout(scrollIdleTimer.current); scrollIdleTimer.current = null; } flushScrollWaiters(); lastPage.current = 0; zoomToken.current += 1; zoomAnchor.current = null; restoringZoom.current = false; searchGeneration.current += 1;
@@ -582,14 +595,17 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
       </>}
     </PdfPopover>
     <PdfPopover open={!!menuAnnotation} root={pane} anchor={() => visibleRect(`[data-annotation-id="${CSS.escape(menuAnnotation?.id || '')}"]`)} className="selection-actions pdf-annotation-menu">
-      {menuAnnotation && <>
+      {menuAnnotation && (annotationMenu?.editing ? <AnnotationCommentEditor key={menuAnnotation.id}
+        comment={menuAnnotation.comment || ''} busy={deleting} onSave={value => void saveHighlightComment(value)}
+        onCancel={() => setAnnotationMenu({ ...annotationMenu, editing: false })}/> : <>
         <span>{menuAnnotation.type === 'highlight' ? '已保存高亮' : menuAnnotation.type === 'note' ? '批注' : '图片摘录'}</span>
-        {menuAnnotation.text && <span>{menuAnnotation.text}</span>}
-        <button disabled={deleting} aria-label="删除 PDF 标记" onClick={() => void removeAnnotation(menuAnnotation.id)}><Trash2 size={14}/>删除</button>
-        <button aria-label="关闭 PDF 标记菜单" onClick={() => setAnnotationMenu(null)}><X size={14}/></button>
-      </>}
+        {(menuAnnotation.comment || menuAnnotation.text) && <span>{menuAnnotation.comment || menuAnnotation.text}</span>}
+        {menuAnnotation.type === 'highlight' && annotationMenu && <button disabled={deleting} onClick={() => setAnnotationMenu({ ...annotationMenu, editing: true })}><MessageSquare size={14}/>{menuAnnotation.comment ? '编辑批注' : '添加批注'}</button>}
+        <button disabled={deleting} aria-label={menuAnnotation.type === 'highlight' ? '取消高亮' : '删除 PDF 标记'} onClick={() => void removeAnnotation(menuAnnotation.id)}><Trash2 size={14}/>{menuAnnotation.type === 'highlight' ? '取消高亮' : '删除'}</button>
+        <button disabled={deleting} aria-label="关闭 PDF 标记菜单" onClick={() => setAnnotationMenu(null)}><X size={14}/></button>
+      </>)}
     </PdfPopover>
-    {deletedAnnotation && sameDocument(deletedAnnotation.path, deletedAnnotation.annotation.anchor.pdfId) && <div className="inline-undo" role="status">已删除一条 PDF 标记<button disabled={deleting} onClick={() => void undoDelete()}>撤销</button><button disabled={deleting} aria-label="关闭撤销提示" onClick={() => setDeletedAnnotation(null)}>×</button></div>}
+    {deletedAnnotation && sameDocument(deletedAnnotation.path, deletedAnnotation.annotation.anchor.pdfId) && <div className="inline-undo" role="status">{deletedAnnotation.annotation.type === 'highlight' ? '已取消高亮' : '已删除一条 PDF 标记'}<button disabled={deleting} onClick={() => void undoDelete()}>撤销</button><button disabled={deleting} aria-label="关闭撤销提示" onClick={() => setDeletedAnnotation(null)}>×</button></div>}
   </section>;
 }
 
@@ -1042,8 +1058,18 @@ const PdfPage = memo(function PdfPage({ dark, pdfPath, pdfData, pdfId, page, sca
     return <><button disabled={savingAnnotation} onClick={() => void saveRegion(false)}>保存图片摘录</button><button className="primary" disabled={savingAnnotation} onClick={() => void saveRegion(true)}>识别文字并摘录</button></>;
   }
 
+  function beginPageAnnotation(event: React.PointerEvent) {
+    if (event.button !== 0 || savingRef.current || (tool !== 'region' && tool !== 'note')) return;
+    const at = point(event);
+    if (tool === 'region') { dragStart.current = at; setSelection(null); return; }
+    const highlighted = [...cleanedAnnotations].reverse().find(({ annotation, rects }) => annotation.type === 'highlight' &&
+      rects.some(rect => at.x >= rect.x && at.x <= rect.x + rect.w && at.y >= rect.y && at.y <= rect.y + rect.h));
+    if (highlighted) { setSelection(null); onShowAnnotation(highlighted.annotation.id); return; }
+    setSelection([{ x: at.x, y: at.y, w: .025, h: .025 }]);
+  }
+
   return <section className="pdf-page-content">
-    <div className="pdf-page-inner"><div className="pdf-stage"><div className="canvas-holder" ref={holder} data-rotation={rotation} style={pageSize ? { width: `${pageSize.width}px`, height: `${pageSize.height}px` } : undefined} onPointerDown={event => { if (savingRef.current) return; if (tool === 'region') { dragStart.current = point(event); setSelection(null); } else if (tool === 'note') { const at = point(event); setSelection([{ x: at.x, y: at.y, w: .025, h: .025 }]); } }} onPointerUp={finishRegion}>
+    <div className="pdf-page-inner"><div className="pdf-stage"><div className="canvas-holder" ref={holder} data-rotation={rotation} style={pageSize ? { width: `${pageSize.width}px`, height: `${pageSize.height}px` } : undefined} onPointerDown={beginPageAnnotation} onPointerUp={finishRegion}>
       <canvas ref={canvas}/><div ref={textLayer} className="textLayer" data-text-revision={textRevision}/><div className="pdf-search-layer" aria-hidden="true">{searchRects.map((rect, index) => <span className="pdf-search-hit" key={index} style={rect}/>)}</div>
       <div className={'draw-layer ' + (tool === 'region' || tool === 'note' ? 'interactive' : '')}>
         {savedHighlightRects.map((rect, index) => <span aria-hidden="true" className="pdf-saved-highlight" key={`saved-${index}`} style={{ left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.w * 100}%`, height: `${rect.h * 100}%` }}/>) }

@@ -15,7 +15,7 @@ after(async () => {
   if (child?.exitCode === null) spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
   if (smokeWorkspace) await cleanupSmokeWorkspace(smokeWorkspace);
 });
-test('clipboard source, HTML tasks/tables, styling, safe images and undo round-trip', { timeout: 90000 }, async () => {
+test('clipboard source, HTML tasks/tables, styling, safe images and undo round-trip', { timeout: 90000 }, async t => {
   smokeWorkspace = await createSmokeWorkspace('clipboard-smoke');
   const root = smokeWorkspace.fixture;
   await fs.mkdir(root, { recursive: true });
@@ -67,6 +67,43 @@ test('clipboard source, HTML tasks/tables, styling, safe images and undo round-t
   });
   assert.equal(cut, '~~preferred~~'); assert.equal((await editor.innerText()).trim(), '');
   await page.keyboard.press('Control+z'); assert.match(await editor.innerText(), /preferred/);
+  const canRestoreClipboard = await application.evaluate(async ({ clipboard, ClipboardItem }) => {
+    try {
+      const originals = await clipboard.read();
+      if (!originals.length || originals.some(item => !item.types.length)) return false;
+      globalThis.__editorClipboardSnapshot = await Promise.all(originals.map(async item =>
+        new ClipboardItem(Object.fromEntries(await Promise.all(item.types.map(async type => [type, await item.getType(type)]))))));
+      return true;
+    } catch { return false; }
+  });
+  await t.test('selection toolbar copies and cuts, and the editor context menu pastes', async t => {
+    if (!canRestoreClipboard) { t.skip('The system clipboard could not be snapshotted safely'); return; }
+    try {
+      await editor.press('Control+a');
+      const selectionActions = page.getByRole('toolbar', { name: '选中文本格式' });
+      await selectionActions.getByRole('button', { name: '复制', exact: true }).click();
+      const copiedByToolbar = await application.evaluate(async ({ clipboard }) => {
+        for (let attempt = 0; attempt < 40; attempt++) {
+          if (await clipboard.readText() === '~~preferred~~') return true;
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        return false;
+      });
+      assert.ok(copiedByToolbar, 'toolbar copy writes the selected Markdown to the system clipboard');
+      await selectionActions.getByRole('button', { name: '剪切', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('.cm-content')?.textContent === '');
+      await editor.click({ button: 'right', position: { x: 55, y: 48 } });
+      const editMenu = page.getByRole('menu', { name: '编辑快捷菜单' });
+      assert.equal(await editMenu.getByRole('menuitem', { name: '复制', exact: true }).isDisabled(), true);
+      await editMenu.getByRole('menuitem', { name: '粘贴', exact: true }).click();
+      await waitForFile(note, value => value === '~~preferred~~');
+    } finally {
+      await application.evaluate(async ({ clipboard }) => {
+        if (await clipboard.readText() === '~~preferred~~') await clipboard.write(globalThis.__editorClipboardSnapshot);
+        delete globalThis.__editorClipboardSnapshot;
+      });
+    }
+  });
   const source = '# Images\n\n![local](pixel.png)\n\n~~~md\n![literal](pixel.png)\n~~~\n';
   await paste({ 'text/markdown': source });
   await page.getByRole('button', { name: '切换到预览' }).click();

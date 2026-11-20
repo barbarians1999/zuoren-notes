@@ -46,6 +46,7 @@ const api = {
   search: input => invoke('search', input),
   getSettings: () => invoke('get-settings'),
   getWindowState: () => invoke('get-window-state'),
+  editClipboard: action => invoke('edit-clipboard', action),
   windowControl: action => invoke('window-control', action),
   updateSettings: input => invoke('update-settings', input),
   saveSession: session => invoke('save-session', session),

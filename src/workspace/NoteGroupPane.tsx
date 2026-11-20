@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { ArrowLeftRight, Columns2, Plus, RefreshCw, X } from 'lucide-react';
+import { EditorView } from '@codemirror/view';
 import type { FindCommand } from '../readerContext';
 import type { MarkdownScrollMemory, ReaderAnchor } from '../types';
 import { NotePane } from '../editor/NotePane';
@@ -26,7 +27,10 @@ export function NoteGroupPane({ workspace, group, findCommand, onJump, insertReg
       const target = host.current?.querySelector<HTMLElement>(tab.mode === 'preview' ? '.markdown-preview' : '.cm-content');
       if (!target) return false;
       if (!workspace.consumeFocus(tab.id)) return true;
-      target.focus({ preventScroll: true });
+      // Apply the restored CodeMirror selection to the DOM when focusing a tab.
+      const editor = tab.mode === 'edit' ? EditorView.findFromDOM(target) : null;
+      if (editor) editor.focus();
+      else target.focus({ preventScroll: true });
       return true;
     };
     if (!focusTarget()) frame = requestAnimationFrame(() => { focusTarget(); });

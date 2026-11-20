@@ -279,6 +279,7 @@ export interface ReaderApi {
   search(input: { root: string; query: string }): Promise<SearchResult[]>;
   getSettings(): Promise<Settings>;
   getWindowState(): Promise<{ maximized: boolean; fullscreen: boolean }>;
+  editClipboard(action: 'cut' | 'copy' | 'paste'): Promise<void>;
   windowControl(action: 'minimize' | 'maximize' | 'fullscreen' | 'close'): Promise<{ maximized: boolean; fullscreen: boolean }>;
   updateSettings(settings: Partial<Settings>): Promise<Settings>;
   saveSession(session: ReaderSession): Promise<Settings>;

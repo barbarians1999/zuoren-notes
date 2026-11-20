@@ -10,11 +10,17 @@ import ePub, { EpubCFI, type Book, type Location, type NavItem, type Rendition }
 import { annotationExcerpt, updateAnnotationComment } from '../epubAnnotationActions.cjs';
 import { THEMES, type ThemeName } from '../appearanceTheme.cjs';
 import { EpubSearchPanel } from './EpubSearchPanel';
+import { AnnotationCommentEditor } from './AnnotationCommentEditor';
 import type { EpubSearchResult } from './epubSearch';
 import type { ExcerptFlowResult } from './excerptFlow';
 import { NOTE_FONT_FACES_CSS } from '../noteFonts';
 import { ReducedMotionContext, motionNumber, motionText, usePanelMotion } from '../uiMotion';
 import headingFontUrl from '../assets/SourceHanSerifSC-VF.woff2?url';
+
+function showEpubHighlight(rendition: Rendition, range: string) {
+  rendition.annotations.highlight(range, {}, undefined, 'zhaoye-epub-highlight', { fill: '#e4c95b', 'fill-opacity': '0.42', 'mix-blend-mode': 'multiply' });
+}
+
 function flattenToc(items: NavItem[], depth = 0): FlatNavItem[] {
   return items.flatMap(item => [{ href: item.href, label: item.label.trim(), depth }, ...flattenToc(item.subitems || [], depth + 1)]);
 }
@@ -189,9 +195,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
   const selectionMotion = usePanelMotion(!!selection, reducedMotion, '4px', () => host.current?.querySelector('iframe') || null, 'y', { enter: '--motion-feedback', exit: '--motion-exit' });
   const [comment, setComment] = useState('');
   const [annotationsOpen, setAnnotationsOpen] = useState(() => (epub.meta.annotations?.length || 0) > 0);
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [editingAnnotation, setEditingAnnotation] = useState<string | null>(null);
-  const [editingComment, setEditingComment] = useState('');
   const [savingAnnotation, setSavingAnnotation] = useState(false);
   const [flashId, setFlashId] = useState<string | null>(null);
   const [deletedAnnotation, setDeletedAnnotation] = useState<{ annotation: EpubAnnotation; index: number } | null>(null);
@@ -233,6 +237,15 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
     const source = epub.data.slice().buffer as ArrayBuffer;
     const book = ePub(source, { replacements: 'blobUrl' });
     const rendition = book.renderTo(element, { width: '100%', height: '100%', flow: 'paginated', spread: 'auto', minSpreadWidth: EPUB_MIN_SPREAD_WIDTH, allowScriptedContent: false });
+    rendition.on('markClicked', (range: string) => {
+      const annotation = metaRef.current.annotations.find(item => item.cfiRange === range);
+      if (!annotation || disposed) return;
+      setAnnotationsOpen(true);
+      setFlashId(annotation.id);
+      requestAnimationFrame(() => {
+        if (!disposed) element.closest('.epub-pane')?.querySelector(`[data-epub-annotation="${CSS.escape(annotation.id)}"]`)?.scrollIntoView({ block: 'nearest' });
+      });
+    });
     const navigatePage = (direction: 'next' | 'prev') => {
       if (disposed || navigationLocked || reflow.current || interactions.current.closing) return;
       positionAnchor.current = null;
@@ -404,8 +417,8 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
           const location = rendition.currentLocation() as unknown as Location | undefined;
           if (location?.start?.cfi) relocated(location);
           if (usedFallback) onMessage('原阅读位置已失效，已返回电子书起始章节。');
-          for (const annotation of epub.meta.annotations || []) {
-            try { rendition.annotations.highlight(annotation.cfiRange, { annotationId: annotation.id }, undefined, 'zhaoye-epub-highlight', { fill: '#e4c95b', 'fill-opacity': '0.42', 'mix-blend-mode': 'multiply' }); } catch { /* one stale CFI must not block the book */ }
+          for (const range of new Set(metaRef.current.annotations.map(annotation => annotation.cfiRange))) {
+            try { showEpubHighlight(rendition, range); } catch { /* one stale CFI must not block the book */ }
           }
           setLoading(false);
         }
@@ -508,6 +521,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
     savingRef.current = true; setSavingAnnotation(true);
     try {
       const generation = generationRef.current, actionGeneration = selectionActionGeneration.current;
+      const previousAnnotations = metaRef.current.annotations;
       let outcome: ExcerptFlowResult, annotation = selectionAnnotation.current;
       if (selectionFlow?.retry) outcome = await selectionFlow.retry();
       else {
@@ -523,34 +537,43 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
         outcome = await onSelectionAction(annotation, excerpt);
       }
       if (generationRef.current !== generation) return;
-      if (outcome.saved && !selectionFlow?.saved && annotation) renditionRef.current?.annotations.highlight(annotation.cfiRange, { annotationId: annotation.id }, undefined, 'zhaoye-epub-highlight', { fill: '#e4c95b', 'fill-opacity': '0.42', 'mix-blend-mode': 'multiply' });
+      const rendition = renditionRef.current;
+      if (outcome.saved && !selectionFlow?.saved && annotation && rendition && !previousAnnotations.some(item => item.cfiRange === annotation.cfiRange)) {
+        showEpubHighlight(rendition, annotation.cfiRange);
+      }
       if (selectionActionGeneration.current !== actionGeneration) return;
-      if (outcome.done) { setSelection(null); setComment(''); setSelectionFlow(null); selectionAnnotation.current = null; setDeleteConfirm(null); onMessage(outcome.inserted ? '摘录已插入当前笔记' : '高亮已保存'); }
+      if (outcome.done) { setSelection(null); setComment(''); setSelectionFlow(null); selectionAnnotation.current = null; onMessage(outcome.inserted ? '摘录已插入当前笔记' : '高亮已保存'); }
       else { setSelectionFlow(outcome); if (outcome.error) onMessage(outcome.error); }
     } catch (error) { onMessage(`EPUB 标注保存失败：${error instanceof Error ? error.message : String(error)}`); }
     finally { savingRef.current = false; setSavingAnnotation(false); }
   }
 
-  async function confirmDelete(annotation: EpubAnnotation) {
+  async function removeHighlight(annotation: EpubAnnotation) {
     if (savingRef.current) return;
     savingRef.current = true; setSavingAnnotation(true);
     const previousMeta = metaRef.current;
     try {
       if (!(await onMeta(current => ({ ...current, annotations: current.annotations.filter(item => item.id !== annotation.id) })))) return;
-      renditionRef.current?.annotations.remove(annotation.cfiRange, 'highlight');
-      setDeleteConfirm(null); if (flashId === annotation.id) setFlashId(null);
+      if (!previousMeta.annotations.some(item => item.id !== annotation.id && item.cfiRange === annotation.cfiRange)) {
+        renditionRef.current?.annotations.remove(annotation.cfiRange, 'highlight');
+      }
+      if (flashId === annotation.id) setFlashId(null);
       setDeletedAnnotation({ annotation, index: previousMeta.annotations.findIndex(item => item.id === annotation.id) });
-    } finally { savingRef.current = false; setSavingAnnotation(false); }
+      setAnnotationFlows(current => {
+        if (!current[annotation.id]) return current;
+        const next = { ...current }; delete next[annotation.id]; return next;
+      });
+    } catch (error) { onMessage(`取消 EPUB 高亮失败：${String(error)}`); }
+    finally { savingRef.current = false; setSavingAnnotation(false); }
   }
 
-  async function saveAnnotationComment(annotation: EpubAnnotation) {
+  async function saveAnnotationComment(annotation: EpubAnnotation, commentText: string) {
     if (savingRef.current) return;
     savingRef.current = true; setSavingAnnotation(true);
-    const commentText = editingComment.trim();
     const updatedAt = new Date().toISOString();
     try {
       if (!(await onMeta(current => ({ ...current, annotations: updateAnnotationComment(current.annotations, annotation.id, commentText, updatedAt) })))) return;
-      setEditingAnnotation(null); setEditingComment('');
+      setEditingAnnotation(null);
     } catch (error) { onMessage(`EPUB 批注保存失败：${error instanceof Error ? error.message : String(error)}`); }
     finally { savingRef.current = false; setSavingAnnotation(false); }
   }
@@ -585,6 +608,8 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
   async function undoDelete() {
     if (!deletedAnnotation || savingRef.current) return;
     savingRef.current = true; setSavingAnnotation(true);
+    const range = deletedAnnotation.annotation.cfiRange;
+    const alreadyHighlighted = metaRef.current.annotations.some(item => item.cfiRange === range);
     try {
       if (!(await onMeta(current => {
         if (current.annotations.some(item => item.id === deletedAnnotation.annotation.id)) return current;
@@ -592,7 +617,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
         annotations.splice(Math.max(0, Math.min(deletedAnnotation.index, annotations.length)), 0, deletedAnnotation.annotation);
         return { ...current, annotations };
       }))) return;
-      renditionRef.current?.annotations.highlight(deletedAnnotation.annotation.cfiRange, { annotationId: deletedAnnotation.annotation.id }, undefined, 'zhaoye-epub-highlight', { fill: '#e4c95b', 'fill-opacity': '0.42', 'mix-blend-mode': 'multiply' });
+      if (!alreadyHighlighted && renditionRef.current) showEpubHighlight(renditionRef.current, range);
       setDeletedAnnotation(null);
     } finally { savingRef.current = false; setSavingAnnotation(false); }
   }
@@ -668,19 +693,23 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
       returnFocus={() => headerTarget?.querySelector('[data-outline-toggle]') || null}
       items={toc.map((item, index) => ({ id: String(index), label: item.label, depth: item.depth, active: item.href === currentHref }))}
       onSelect={item => { const entry = toc[Number(item.id)]; if (entry) display(entry.href); }}/></div>
-    <aside className="epub-annotation-panel"><button className="epub-annotation-toggle" aria-expanded={annotationsOpen} onClick={() => setAnnotationsOpen(value => !value)}>标注（{epub.meta.annotations.length}）{annotationsOpen ? '　收起' : '　展开'}</button>
-      {annotationsOpen && <div className="epub-annotation-list">{epub.meta.annotations.map(annotation => <div className={'epub-annotation-item ' + (flashId === annotation.id ? 'current' : '')} key={annotation.id}>
-        {editingAnnotation === annotation.id ? <div className="epub-annotation-edit"><textarea autoFocus aria-label="编辑批注" maxLength={10000} value={editingComment} onChange={event => setEditingComment(event.target.value)} placeholder="可选批注"/><div className="epub-annotation-actions"><button className="primary" disabled={savingAnnotation} onClick={() => void saveAnnotationComment(annotation)}>保存</button><button disabled={savingAnnotation} onClick={() => { setEditingAnnotation(null); setEditingComment(''); }}>取消</button></div></div> : <>
+    <aside className="epub-annotation-panel">
+      <div className="epub-annotation-heading">
+        <button className="epub-annotation-toggle" aria-expanded={annotationsOpen} onClick={() => setAnnotationsOpen(value => !value)}>标注（{epub.meta.annotations.length}）{annotationsOpen ? '　收起' : '　展开'}</button>
+        {deletedAnnotation && <div className="inline-undo" role="status">已取消高亮<button onClick={() => void undoDelete()} disabled={savingAnnotation}>撤销</button><button aria-label="关闭撤销提示" onClick={() => setDeletedAnnotation(null)}>×</button></div>}
+      </div>
+      {annotationsOpen && <div className="epub-annotation-list">{epub.meta.annotations.map(annotation => <div className={'epub-annotation-item ' + (flashId === annotation.id ? 'current' : '')} data-epub-annotation={annotation.id} key={annotation.id}>
+        {editingAnnotation === annotation.id ? <AnnotationCommentEditor comment={annotation.comment || ''} busy={savingAnnotation}
+          onSave={value => void saveAnnotationComment(annotation, value)} onCancel={() => setEditingAnnotation(null)}/> : <>
           <button className="epub-annotation-quote" title="跳转到这条标注" onClick={() => void jumpAnnotation(annotation)}><span>{annotation.quote}</span>{annotation.comment && <small>{annotation.comment}</small>}</button>
           <div className="epub-annotation-actions">
             {excerptTarget && <button aria-label={annotationFlows[annotation.id]?.retry ? '重试摘录' : excerptTarget} disabled={savingAnnotation} title={annotationFlows[annotation.id]?.retry ? '重试摘录' : excerptTarget} onClick={() => void excerptAnnotation(annotation)}>{annotationFlows[annotation.id]?.retry ? '重试摘录' : '摘录'}</button>}
-            <button disabled={savingAnnotation} aria-label="编辑批注" title="编辑批注" onClick={() => { setDeleteConfirm(null); setEditingAnnotation(annotation.id); setEditingComment(annotation.comment || ''); }}>编辑</button>
-            {deleteConfirm === annotation.id ? <div className="epub-delete-confirm"><button disabled={savingAnnotation} onClick={() => void confirmDelete(annotation)}>确认删除</button><button disabled={savingAnnotation} onClick={() => setDeleteConfirm(null)}>取消</button></div> : <button className="epub-delete-button" aria-label="删除标注" title="删除标注" disabled={savingAnnotation} onClick={() => setDeleteConfirm(annotation.id)}>删除</button>}
+            <button disabled={savingAnnotation} onClick={() => setEditingAnnotation(annotation.id)}>{annotation.comment ? '编辑批注' : '添加批注'}</button>
+            <button disabled={savingAnnotation} onClick={() => void removeHighlight(annotation)}>取消高亮</button>
           </div>
         </>}
         {annotationFlows[annotation.id]?.error && <small className="epub-flow-status" role="status">{annotationFlows[annotation.id].error}</small>}
       </div>)}{!epub.meta.annotations.length && <small className="epub-annotation-empty">还没有标注</small>}</div>}
     </aside>
-    {deletedAnnotation && <div className="inline-undo" role="status">已删除一条标注<button onClick={() => void undoDelete()} disabled={savingAnnotation}>撤销</button><button aria-label="关闭撤销提示" onClick={() => setDeletedAnnotation(null)}>×</button></div>}
   </section>;
 }

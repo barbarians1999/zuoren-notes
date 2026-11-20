@@ -26,8 +26,13 @@ test('settings about shows the running version and opens the GitHub repository e
     const settings = page.getByRole('dialog', { name: '阅读设置' });
     await settings.getByText('关于', { exact: true }).click();
     await settings.getByText(info.name, { exact: true }).waitFor();
-    await settings.getByText(`版本 ${info.version}`, { exact: true }).waitFor();
-    await settings.getByRole('link', { name: 'GitHub 仓库' }).click();
+    const version = settings.getByText(`版本 ${info.version}`, { exact: true });
+    const githubLink = settings.getByRole('link', { name: 'GitHub 仓库' });
+    await version.waitFor();
+    const [versionBox, githubBox] = await Promise.all([version.boundingBox(), githubLink.boundingBox()]);
+    assert.ok(versionBox && githubBox && githubBox.x >= versionBox.x + versionBox.width &&
+      Math.abs(githubBox.y - versionBox.y) < 2, 'The GitHub link is on the same row, to the right of the version');
+    await githubLink.click();
     await page.waitForFunction(() => document.querySelector('.settings-about[open]'));
     let opened = [];
     for (let attempt = 0; attempt < 40 && !opened.length; attempt++) {

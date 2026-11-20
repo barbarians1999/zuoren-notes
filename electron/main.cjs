@@ -249,6 +249,12 @@ function installHandlers() {
     catch (error) { return { ...emptySettings(), settingsReadFailed: true, warning: `无法读取或保留设置文件，设置写入已停止：${error instanceof Error ? error.message : String(error)}` }; }
   });
   handle('get-window-state', event => windowState(BrowserWindow.fromWebContents(event.sender)));
+  handle('edit-clipboard', (event, action) => {
+    if (action === 'cut') event.sender.cut();
+    else if (action === 'copy') event.sender.copy();
+    else if (action === 'paste') event.sender.paste();
+    else throw new Error('无效的剪贴板操作');
+  });
   handle('window-control', (event, action) => {
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!window) return { maximized: false, fullscreen: false };

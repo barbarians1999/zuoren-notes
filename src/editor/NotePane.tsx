@@ -17,6 +17,7 @@ import { countMarkdownUnits, countTextUnits } from '../wordCount';
 import { resolveScrollTop } from '../sessionState.cjs';
 import { MarkdownWorkspaceHeader } from '../markdownWorkspace';
 import { createPortal } from 'react-dom';
+import { ContextMenu } from '../ui/overlays';
 import { taskToggleChange } from './markdownTasks';
 import { cancelSourceOutlineMotion, OutlineScrollMotion, outlineTargetTop, scrollSourceOutline } from './outlineScrollMotion';
 export function NotePane({ paneId, onActivate, findCommand, note, text, mode, setMode, onSave, onJump, revision, label, caption, scrollMemory, onScrollMemory, excerptRegister, hidden, sharedDocument, tab, unifiedHeader, headerTarget, headerControls }: { paneId: FindCommand['pane']; onActivate: (pane: FindCommand['pane']) => void; findCommand: FindCommand | null; note: NoteRead | null; text: string; mode: NoteMode; setMode: (mode: NoteMode) => void; onSave: () => void; onJump: (anchor: ReaderAnchor, fromNotePath?: string) => void; revision: number; label?: string; caption?: React.ReactNode; scrollMemory: MarkdownScrollMemory[]; onScrollMemory: (entry: MarkdownScrollMemory) => void; excerptRegister?: React.MutableRefObject<(block: string) => boolean>; hidden?: boolean; sharedDocument: NoteDocument | null; tab: NoteViewState | null; unifiedHeader?: boolean; headerTarget?: HTMLElement | null; headerControls?: React.ReactNode }) {
@@ -32,6 +33,27 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
   const [replacing, setReplacing] = useState(false);
   const [sourceView, setSourceView] = useState<CodeMirrorView | null>(null);
   const [imageMessage, setImageMessage] = useState('');
+  const [clipboardMenu, setClipboardMenu] = useState<{ x: number; y: number; selected: boolean } | null>(null);
+  useEffect(() => setClipboardMenu(null), [hidden, mode, tab?.id]);
+  const runClipboard = (action: 'cut' | 'copy' | 'paste') => {
+    setClipboardMenu(null);
+    if (!sourceView || hidden || mode !== 'edit' || (action !== 'copy' && sharedDocument?.editingBlocked())) return;
+    sourceView.focus();
+    void reader().editClipboard(action).catch(error => setImageMessage(error instanceof Error ? error.message : String(error)));
+  };
+  const openClipboardMenu = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!sourceView || !(event.target instanceof Node) || !sourceView.dom.contains(event.target)) return;
+    event.preventDefault();
+    const { clientX: x, clientY: y } = event;
+    if (event.button === 2) {
+      const pos = sourceView.posAtCoords({ x, y });
+      if (pos !== null && !sourceView.state.selection.ranges.some(range => !range.empty && pos >= range.from && pos <= range.to)) {
+        sourceView.dispatch({ selection: { anchor: pos } });
+      }
+    }
+    const caret = event.button === 2 ? null : sourceView.coordsAtPos(sourceView.state.selection.main.head);
+    setClipboardMenu({ x: caret?.left ?? x, y: caret?.bottom ?? y, selected: sourceView.state.selection.ranges.some(range => !range.empty) });
+  };
   useEffect(() => setImageMessage(''), [note?.path]);
   const pendingImage = sharedDocument?.pendingImagePastes[0];
   const liveNotePath = useRef(note?.path); liveNotePath.current = note?.path;
@@ -52,20 +74,25 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
   }, [note?.path]);
   useEffect(() => {
     if (!excerptRegister) return;
-    const append = (block: string) => {
+    const insertExcerpt = (block: string) => {
       if (!sourceView || !note || !sharedDocument || sharedDocument.editingBlocked() || liveNotePath.current !== note.path || sourceView.dom.parentElement?.getAttribute('data-note-path') !== note.path) return false;
       const revision = sharedDocument.revision;
-      const doc = sourceView.state.doc.toString();
-      const from = doc.trimEnd().length;
+      const { doc, selection } = sourceView.state;
+      const from = selection.main.head;
+      const before = doc.sliceString(Math.max(0, from - 2), from);
+      const prefix = from === 0 || before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
+      // A blank line keeps following prose out of the final blockquote.
+      const suffix = from < doc.length && doc.sliceString(from, from + 1) !== '\n' ? '\n\n' : '\n';
+      const insert = prefix + block + suffix;
       sourceView.dispatch({
-        changes: { from, to: doc.length, insert: block },
-        selection: { anchor: from + block.length },
+        changes: { from, insert },
+        selection: { anchor: from + insert.length },
         annotations: [Transaction.userEvent.of('input.excerpt'), isolateHistory.of('full')],
       });
       return sharedDocument.revision !== revision;
     };
-    excerptRegister.current = append;
-    return () => { if (excerptRegister.current === append) excerptRegister.current = () => false; };
+    excerptRegister.current = insertExcerpt;
+    return () => { if (excerptRegister.current === insertExcerpt) excerptRegister.current = () => false; };
   }, [excerptRegister, note?.path, sourceView, tab?.id, sharedDocument]);
   const [previewMap, setPreviewMap] = useState<DomTextMap>({ text: '', nodes: [] });
   const [selectedUnits, setSelectedUnits] = useState(0);
@@ -101,7 +128,7 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
   const findMotion = usePanelMotion(findOpen, reducedMotion, '4px', () =>
     headerTarget?.querySelector<HTMLElement>('[aria-label="查找"]') || host.current?.querySelector<HTMLElement>('.note-toolbar [aria-label="查找"]') || sourceView?.contentDOM || null,
   'y', { enter: '--motion-feedback', exit: '--motion-exit' });
-  const selectionMotion = usePanelMotion(!!selectionToolbar, reducedMotion, '4px', () =>
+  const selectionMotion = usePanelMotion(!!selectionToolbar && !clipboardMenu, reducedMotion, '4px', () =>
     mode === 'edit' ? sourceView?.contentDOM || null : headerTarget?.querySelector<HTMLElement>('[aria-label="切换到源码编辑"]') || null,
   'y', { enter: '--motion-feedback', exit: '--motion-exit' });
   useLayoutEffect(() => {
@@ -277,7 +304,7 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
       setSelectedUnits(0);
       return;
     }
-    const toolbarWidth = Math.min(470, Math.max(240, window.innerWidth - 20));
+    const toolbarWidth = Math.min(700, window.innerWidth - 20);
     const centered = sourceSelection.left + sourceSelection.width / 2 - toolbarWidth / 2;
     const maxLeft = Math.max(10, window.innerWidth - toolbarWidth - 10);
     setSelectedUnits(countTextUnits(sourceView.state.sliceDoc(sourceSelection.from, sourceSelection.to)));
@@ -471,7 +498,7 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
       {pendingImage?.error && <>{pendingImage.retryAllowed && <button onClick={() => sharedDocument?.retryImagePaste(pendingImage.id)}>重试</button>}<button onClick={() => sharedDocument?.cancelImagePaste(pendingImage.id)}>取消此项</button></>}
       {imageMessage && <button aria-label="关闭编辑提示" onClick={() => setImageMessage('')}>×</button>}
     </div>}
-    <div className="note-body" ref={host}>
+    <div className="note-body" ref={host} onContextMenu={mode === 'edit' ? openClipboardMenu : undefined}>
       {!note ? <div className="empty-state"><FileText size={28}/><p>打开或新建 Markdown 笔记</p><small>编辑后自动保存</small></div> : <div className="note-content"><div className="note-editor-surface" style={{ display: mode === 'preview' ? 'none' : 'flex' }}><MarkdownSourceEditor notePath={note.path} onView={setSourceView} onSelectionChange={handleSourceSelection} onMessage={setImageMessage} sharedDocument={sharedDocument!} tab={tab!}/></div>{mode === 'preview' && <MarkdownPreview notePath={note.path} text={text} headings={currentHeadings} onJump={stableJump} onToggleTask={toggleTask} onOpenLink={openMarkdownLink}/>}</div>}
       <OutlinePanel open={outline} label="Markdown 大纲" emptyText="使用标题组织笔记后，目录会出现在这里。"
         onClose={() => setOutline(false)}
@@ -487,7 +514,16 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
             outlineScroll.current.start(() => preview.dataset.previewCurrent === 'true' && preview.dataset.headingNonce === nonce ? outlineTargetTop(preview, heading) : null);
           } }}/>
     </div>
-    {selectionMotion.present && lastSelectionToolbar.current && <div ref={selectionMotion.ref as React.RefObject<HTMLDivElement | null>} className="selection-toolbar" role="toolbar" aria-label="选中文本格式" style={{ left: lastSelectionToolbar.current.left, top: lastSelectionToolbar.current.top }} aria-hidden={!selectionToolbar} onPointerDown={event => event.preventDefault()}>
+    <ContextMenu open={!!clipboardMenu && !hidden && mode === 'edit'} x={clipboardMenu?.x ?? 0} y={clipboardMenu?.y ?? 0}
+      label="编辑快捷菜单" onClose={() => setClipboardMenu(null)} returnFocus={sourceView?.contentDOM}>
+      <button role="menuitem" disabled={!clipboardMenu?.selected} onClick={() => runClipboard('copy')}>复制</button>
+      <button role="menuitem" disabled={!clipboardMenu?.selected || sharedDocument?.editingBlocked()} onClick={() => runClipboard('cut')}>剪切</button>
+      <button role="menuitem" disabled={sharedDocument?.editingBlocked()} onClick={() => runClipboard('paste')}>粘贴</button>
+    </ContextMenu>
+    {selectionMotion.present && lastSelectionToolbar.current && <div ref={selectionMotion.ref as React.RefObject<HTMLDivElement | null>} className="selection-toolbar" role="toolbar" aria-label="选中文本格式" style={{ left: lastSelectionToolbar.current.left, top: lastSelectionToolbar.current.top }} aria-hidden={!selectionToolbar || !!clipboardMenu} onPointerDown={event => event.preventDefault()}>
+      <button title="复制（Ctrl+C）" onClick={() => runClipboard('copy')}>复制</button>
+      <button title="剪切（Ctrl+X）" disabled={sharedDocument?.editingBlocked()} onClick={() => runClipboard('cut')}>剪切</button>
+      <span className="format-divider" aria-hidden="true" />
       <button title="加粗（Ctrl+B）" onClick={() => runInlineFormat('bold')}>B</button>
       <button title="斜体（Ctrl+I）" onClick={() => runInlineFormat('italic')}><i>I</i></button>
       <button title="行内代码" onClick={() => runInlineFormat('code')}>`</button>

@@ -43,9 +43,11 @@ test('PDF actions are single-flight, undo survives page eviction and EPUB falls 
   await fs.writeFile(path.join(workspace.fixture, 'bad-position.epub'), epub);
   await fs.writeFile(path.join(auxiliary, epubId + '.epub.json'), JSON.stringify({ version: 2, id: epubId, cfi: 'missing.xhtml', progress: 0.5, fontSize: 100, annotations: [] }));
   const retryNoteA = path.join(workspace.fixture, 'retry-a.md'), retryNoteB = path.join(workspace.fixture, 'retry-b.md');
-  await fs.writeFile(retryNoteA, '# Retry target A\n\n'); await fs.writeFile(retryNoteB, '# Retry target B\n\n');
+  const lead = 'Retry target A.';
+  await fs.writeFile(retryNoteA, `${lead}\n\nKeep this paragraph.\n`); await fs.writeFile(retryNoteB, '# Retry target B\n\n');
   const executablePath = process.env.ZHAOYE_SMOKE_EXECUTABLE || path.join(appRoot, 'node_modules/electron/dist/electron.exe');
-  application = await _electron.launch({ executablePath, args: process.env.ZHAOYE_SMOKE_EXECUTABLE ? [workspace.fixture] : [appRoot, workspace.fixture], env: { ...process.env, ZHAOYE_TEST_USER_DATA: workspace.userData } });
+  const launchOptions = { executablePath, args: process.env.ZHAOYE_SMOKE_EXECUTABLE ? [workspace.fixture] : [appRoot, workspace.fixture], env: { ...process.env, ZHAOYE_TEST_USER_DATA: workspace.userData } };
+  application = await _electron.launch(launchOptions);
   const page = await application.firstWindow(); page.setDefaultTimeout(12000);
   const errors = []; page.on('pageerror', error => { console.error('[reader-reliability] ' + error.stack); errors.push(error.message); });
   // Simulate a visibility notification already queued when its page is
@@ -123,10 +125,16 @@ test('PDF actions are single-flight, undo survives page eviction and EPUB falls 
   const retryTabB = page.getByRole('tab', { name: 'retry-b.md', exact: true });
   await retryTabA.click();
   await page.locator('.file-row').filter({ hasText: 'bad-position.epub' }).click();
+  const noteEditor = page.locator('[data-note-path$="retry-a.md"] .cm-content:visible');
+  const caret = () => noteEditor.evaluate(element => element.cmTile.root.view.state.selection.main.head);
+  await noteEditor.locator('.cm-line').first().click();
+  await noteEditor.press('Control+Home'); await noteEditor.press('End');
+  assert.equal(await caret(), lead.length, 'the editor caret is at the end of the first paragraph');
   const epubFrame = page.frameLocator('.epub-viewer iframe').last();
   await epubFrame.getByText('Intact book content.', { exact: true }).selectText();
   const actions = page.getByRole('group', { name: '处理选中文本' });
   await actions.waitFor();
+  assert.equal(await caret(), lead.length, 'selecting EPUB text leaves the note caret at the first paragraph');
   await application.evaluate(() => {
     const io = process.getBuiltinModule('node:fs/promises'), original = io.rename;
     globalThis.__epubSaveStarted = new Promise(resolve => { globalThis.__notifyEpubSaveStarted = resolve; });
@@ -141,14 +149,18 @@ test('PDF actions are single-flight, undo survives page eviction and EPUB falls 
   });
   await actions.getByRole('button', { name: '批注并摘录到当前笔记', exact: true }).click();
   await application.evaluate(async () => globalThis.__epubSaveStarted);
+  assert.equal(await caret(), lead.length, 'starting the excerpt leaves the note caret in place');
   await retryTabB.click();
   await application.evaluate(() => globalThis.__releaseEpubSave());
   await actions.getByText('EPUB 标注已保存，但目标笔记已切换', { exact: false }).waitFor();
   await page.locator('.layout-tabs').getByRole('button', { name: '阅读', exact: true }).click();
   await page.locator('.layout-tabs').getByRole('button', { name: '对照', exact: true }).click();
   await retryTabA.click();
+  assert.equal(await caret(), lead.length, 'returning to the original note restores its caret');
   await actions.getByRole('button', { name: '重试摘录', exact: true }).click();
-  await waitForFile(retryNoteA, text => text.includes('回到原文'));
+  const savedExcerpt = await waitForFile(retryNoteA, text => text.includes('回到原文'));
+  assert.ok(savedExcerpt.startsWith(`${lead}\n\n> `), 'EPUB retry inserts at the note tab’s retained caret');
+  assert.ok(savedExcerpt.endsWith('\n\nKeep this paragraph.\n'));
   assert.doesNotMatch(await fs.readFile(retryNoteB, 'utf8'), /回到原文/, 'the retry must not follow the newly active note');
   const writtenEpubMeta = JSON.parse(await fs.readFile(path.join(auxiliary, epubId + '.epub.json'), 'utf8'));
   assert.equal(writtenEpubMeta.annotations.length, 1, 'retry must not duplicate the saved annotation');
@@ -179,6 +191,39 @@ test('PDF actions are single-flight, undo survives page eviction and EPUB falls 
   const epubMeta = JSON.parse(await fs.readFile(path.join(auxiliary, epubId + '.epub.json'), 'utf8'));
   assert.ok(epubMeta.cfi.startsWith('epubcfi('), 'successful fallback persists a valid position');
   assert.deepEqual(errors, []);
+
+  application = await _electron.launch(launchOptions);
+  const reopened = await application.firstWindow();
+  reopened.setDefaultTimeout(12000);
+  await reopened.locator('.app[data-session-ready="true"]').waitFor();
+  await reopened.locator('.file-row').filter({ hasText: 'retry-a.md' }).click();
+  await reopened.locator('[data-note-path$="retry-a.md"] .cm-content:visible').waitFor();
+  await reopened.getByRole('button', { name: '切换到预览', exact: true }).click();
+  const preview = reopened.locator('.markdown-preview:visible');
+  await preview.locator('blockquote').getByText('回到原文', { exact: true }).waitFor();
+  await preview.locator(':scope > p').filter({ hasText: /^Keep this paragraph\.$/ }).waitFor();
+  await reopened.locator('.file-row').filter({ hasText: 'bad-position.epub' }).click();
+  const highlight = reopened.locator('.epub-viewer .zhaoye-epub-highlight rect').first();
+  await highlight.waitFor();
+  await reopened.getByRole('button', { name: /标注（1）.*收起/ }).click();
+  await reopened.locator('.epub-annotation-list').waitFor({ state: 'hidden' });
+  const bounds = await highlight.boundingBox();
+  assert.ok(bounds && bounds.width > 0);
+  await reopened.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  const annotationItem = reopened.locator('.epub-annotation-item.current');
+  await annotationItem.getByRole('button', { name: '添加批注', exact: true }).click();
+  await annotationItem.getByRole('textbox', { name: '批注内容' }).fill('EPUB 高亮批注');
+  await annotationItem.getByRole('button', { name: '保存批注', exact: true }).click();
+  await annotationItem.getByText('EPUB 高亮批注', { exact: true }).waitFor();
+  await annotationItem.getByRole('button', { name: '取消高亮', exact: true }).click();
+  await highlight.waitFor({ state: 'detached' });
+  await waitForFile(path.join(auxiliary, epubId + '.epub.json'), text => JSON.parse(text).annotations.length === 0);
+  await reopened.locator('.inline-undo').getByRole('button', { name: '撤销', exact: true }).click();
+  await highlight.waitFor();
+  const restored = JSON.parse(await fs.readFile(path.join(auxiliary, epubId + '.epub.json'), 'utf8')).annotations;
+  assert.equal(restored.length, 1);
+  assert.equal(restored[0].id, writtenEpubMeta.annotations[0].id);
+  assert.equal(restored[0].comment, 'EPUB 高亮批注');
 });
 
 test('missing PDF save failure opens recovery dialog that can cancel, switch views or discard and close without losing notes', { timeout: 90000 }, async () => {

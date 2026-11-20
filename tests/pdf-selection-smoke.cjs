@@ -30,7 +30,7 @@ test('PDF native dragging, page geometry, safe text actions, copy and menu delet
   await fs.writeFile(file, bytes);
   const other = await PDFDocument.create(); other.addPage([440, 280]).drawText('Other document', { font: await other.embedFont(StandardFonts.Helvetica), size: 16, x: 30, y: 235 });
   await fs.writeFile(path.join(workspace.fixture, 'other.pdf'), await other.save());
-  const note = path.join(workspace.fixture, 'target.md'), original = '# Target\n\nOriginal text.\n';
+  const note = path.join(workspace.fixture, 'target.md'), original = '# Target\n\n摘录📚后续原文。\n';
   await fs.writeFile(note, original); await fs.writeFile(path.join(workspace.fixture, 'other.md'), '# Other\n');
   const auxiliary = path.join(workspace.fixture, '.reader'); await fs.mkdir(auxiliary);
   const old = { id: 'd1b98fd8-d1b2-4f71-bbc6-3ea89d353b27', type: 'highlight', anchor: { pdfId: id, page: 3, rotation: 0,
@@ -243,12 +243,25 @@ test('PDF native dragging, page geometry, safe text actions, copy and menu delet
     for (let i = 1; i < 3; i++) assert.ok(mark.anchor.rects[i].y >= mark.anchor.rects[i - 1].y + mark.anchor.rects[i - 1].h);
     await drag(); assert.equal(await page.locator('.pdf-text-selection').count(), 3); assert.equal((await readMeta(count)).annotations.length, count); await cancel();
     const at = await point(1, 0, 5, false); await page.mouse.click(at.x, at.y);
-    await page.locator('.pdf-annotation-menu').waitFor(); assert.equal(await page.locator('.inline-undo').count(), 0);
-    await page.getByRole('button', { name: '删除 PDF 标记', exact: true }).click(); await readMeta(--count);
+    const markMenu = page.locator('.pdf-annotation-menu');
+    await markMenu.waitFor(); assert.equal(await page.locator('.inline-undo').count(), 0);
+    await markMenu.getByRole('button', { name: '添加批注', exact: true }).click();
+    await markMenu.getByRole('textbox', { name: '批注内容' }).fill('同一段高亮上的批注');
+    await markMenu.getByRole('button', { name: '保存批注', exact: true }).click();
+    await markMenu.getByRole('button', { name: '编辑批注', exact: true }).waitFor();
+    await markMenu.getByText('同一段高亮上的批注', { exact: true }).waitFor();
+    let updated = (await readMeta(count)).annotations.find(item => item.id === mark.id);
+    assert.deepEqual(updated, { ...mark, comment: '同一段高亮上的批注' });
+    await markMenu.getByRole('button', { name: '取消高亮', exact: true }).click(); await readMeta(--count);
     await page.locator('.inline-undo').getByRole('button', { name: '撤销', exact: true }).click(); await readMeta(++count);
+    updated = (await readMeta(count)).annotations.find(item => item.id === mark.id);
+    assert.equal(updated.comment, '同一段高亮上的批注');
   });
   await t.test('cross-page selection creates one batch and one undoable excerpt with separate links', async () => {
     await open('target.md'); await layout('对照').click(); await jump(1);
+    const editor = page.locator('.cm-content:visible');
+    await editor.press('Control+End'); await editor.press('ArrowLeft'); await editor.press('Home');
+    for (let index = 0; index < 3; index++) await editor.press('ArrowRight');
     await page.getByRole('button', { name: '文字高亮', exact: true }).click();
     await drag([1, 1, 0, false], [2, 1, 999, true]);
     const quote = await copy(); assert.match(quote, /third line 1\n\nAlpha/);
@@ -259,13 +272,21 @@ test('PDF native dragging, page geometry, safe text actions, copy and menu delet
     assert.equal(newMarks[0].anchor.quote, 'Bravo selection second line 1\nCharlie selection third line 1');
     assert.equal(newMarks[1].anchor.quote, 'Alpha selection first line 2\nBravo selection second line 2');
     assert.equal((await application.evaluate(() => globalThis.__pdfAudit.writes)).slice(before).filter(item => item.annotations.length === count).length, 1, 'cross-page annotations use one write');
-    try { await waitForFile(note, text => (text.match(/回到原文/g) || []).length === 2); }
+    let saved;
+    try { saved = await waitForFile(note, text => (text.match(/回到原文/g) || []).length === 2); }
     catch (error) {
       console.error('cross-page persistence diagnostic', { saved: await fs.readFile(note, 'utf8'),
         renderer: await page.evaluate(() => ({ label: document.querySelector('.markdown-save-state')?.textContent, text: document.querySelector('.cm-content')?.textContent, message: document.querySelector('.toast')?.textContent })) });
       throw error;
     }
-    const editor = page.locator('.cm-content'); await editor.click(); await page.keyboard.press('Control+z');
+    assert.ok(saved.startsWith('# Target\n\n摘录📚\n\n> Bravo selection'), 'the excerpt starts at the UTF-16 caret after the emoji');
+    assert.ok(saved.endsWith('\n\n后续原文。\n'), 'the text after the caret remains outside the excerpt');
+    await page.getByRole('button', { name: '切换到预览', exact: true }).click();
+    const preview = page.locator('.markdown-preview:visible');
+    await preview.locator('blockquote').getByText('回到原文', { exact: true }).first().waitFor();
+    await preview.locator(':scope > p').filter({ hasText: /^后续原文。$/ }).waitFor();
+    await page.getByRole('button', { name: '切换到源码编辑', exact: true }).click();
+    await editor.press('Control+z');
     await waitForFile(note, text => text === original); assert.equal(await fs.readFile(note, 'utf8'), original);
     // Copy inside the note must not use the PDF snapshot.
     await editor.click(); await page.keyboard.press('Control+Home'); await page.keyboard.down('Shift'); await page.keyboard.press('End'); await page.keyboard.up('Shift'); await page.keyboard.press('Control+c');

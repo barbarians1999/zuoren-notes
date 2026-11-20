@@ -20,7 +20,6 @@
 .cm-md-table th, .markdown-preview th { background: var(--surface-muted); font-weight: 700; }
 .cm-md-table td, .cm-md-table th { cursor: text; }
 .cm-md-table:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.selection-toolbar { flex-wrap: wrap; max-width: min(560px, calc(100vw - 20px)); }
 
 :root {
   font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
@@ -445,6 +444,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .settings-about summary:focus-visible, .settings-about a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .about-content { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 6px 7px 4px; color: var(--text-muted); font-size: 12px; }
 .about-content b { color: var(--text); }
+.about-version { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
 .about-content a { color: var(--accent); text-underline-offset: 3px; }
 
 .theme-options {
@@ -943,24 +943,26 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .epub-selection-actions button, .epub-annotation-toggle, .epub-annotation-item button { min-height: 29px; padding: 4px 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--surface); font-size: 11px; white-space: nowrap; }
 .epub-selection-actions button.primary { border-color: var(--accent); color: var(--on-accent); background: var(--accent); }
 .epub-selection-actions button:disabled, .epub-annotation-item button:disabled { opacity: .55; }
-.epub-annotation-panel { flex: none; max-height: 190px; overflow: hidden; border-top: 1px solid var(--line); background: var(--surface); }
-.epub-annotation-toggle { width: 100%; min-height: 32px; border: 0; border-radius: 0; text-align: left; font-weight: 650; }
-.epub-annotation-list { max-height: 156px; overflow: auto; padding: 4px 10px 8px; }
-.epub-annotation-item { display: flex; align-items: center; gap: 8px; padding: 5px 2px; border-bottom: 1px solid var(--line); }
+.epub-annotation-panel { display: flex; flex: none; flex-direction: column; max-height: 190px; border-top: 1px solid var(--line); background: var(--surface); }
+.epub-annotation-heading { display: flex; flex: none; flex-wrap: wrap; align-items: center; }
+.epub-annotation-toggle { flex: 1; min-height: 32px; border: 0; border-radius: 0; text-align: left; font-weight: 650; }
+.epub-annotation-list { min-height: 0; overflow: auto; padding: 4px 10px 8px; }
+.epub-annotation-item { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 5px 2px; border-bottom: 1px solid var(--line); }
 .epub-annotation-item.current { background: rgba(228, 201, 91, .2); outline: 1px solid rgba(173, 138, 25, .35); }
-.epub-annotation-quote { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; border: 0 !important; text-align: left; white-space: normal !important; }
+.epub-annotation-quote { flex: 1 1 100px; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; border: 0 !important; text-align: left; white-space: normal !important; }
 .epub-annotation-quote span { max-width: 100%; overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
 .epub-annotation-quote small { max-width: 100%; overflow: hidden; color: var(--text-muted); text-overflow: ellipsis; white-space: nowrap; }
-.epub-annotation-actions { display: flex; flex: none; align-items: center; gap: 4px; }
-.epub-annotation-edit { flex: 1; min-width: 0; }
-.epub-annotation-edit textarea { width: 100%; min-height: 48px; resize: vertical; border: 1px solid var(--line); border-radius: 5px; padding: 5px 7px; color: var(--text); background: var(--surface); font: inherit; font-size: 12px; }
-.epub-annotation-edit .epub-annotation-actions { justify-content: flex-end; margin-top: 4px; }
+.epub-annotation-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.annotation-comment-editor { display: grid; gap: 6px; width: 270px; max-width: 100%; min-width: 0; }
+.epub-annotation-item .annotation-comment-editor { width: 100%; }
+.annotation-comment-editor textarea { width: 100%; min-height: 54px; resize: vertical; border: 1px solid var(--line); border-radius: 5px; padding: 5px 7px; color: var(--text); background: var(--surface); font: inherit; font-size: 12px; }
+.annotation-comment-editor > div { display: flex; justify-content: flex-end; gap: 4px; }
+.annotation-comment-editor button.primary { border-color: var(--accent); color: var(--on-accent); background: var(--accent); }
 .epub-annotation-empty { display: block; padding: 8px 3px; color: var(--text-faint); }
-.epub-delete-confirm { display: flex; gap: 4px; }
-.epub-delete-button, .epub-delete-confirm button { color: var(--text-muted) !important; }
 .file-context-menu { position: fixed; z-index: 30; min-width: 180px; padding: 5px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: 0 10px 30px #0003; }
 .file-context-menu button { display: block; width: 100%; padding: 7px 10px; border: 0; border-radius: 5px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
 .file-context-menu button:hover { background: var(--accent-soft); }
+.file-context-menu[aria-label="编辑快捷菜单"] button:disabled, .selection-toolbar button:disabled { opacity: .5; cursor: default; }
 .inline-entry-row { position: relative; display: flex; align-items: center; gap: 7px; }
 .inline-entry-input { min-width: 0; flex: 1; border: 1px solid var(--accent); border-radius: 4px; padding: 4px 6px; background: var(--surface); color: var(--text); }
 .inline-entry-error { position: absolute; left: 32px; top: 100%; z-index: 3; color: var(--danger, #b33); background: var(--surface); }
@@ -1178,7 +1180,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   align-items: center;
   flex-wrap: wrap;
   gap: 2px;
-  max-width: calc(100vw - 20px);
+  max-width: min(700px, calc(100vw - 20px));
   padding: 3px;
   border: 1px solid var(--line-strong);
   border-radius: 7px;
@@ -1562,6 +1564,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 }
 .inline-undo button { padding: 3px 7px; border-radius: 4px; color: var(--accent); background: var(--surface-muted); font-size: 11px; }
 .inline-undo button:last-child { padding-inline: 4px; color: var(--text-faint); background: transparent; }
+.epub-annotation-heading .inline-undo { position: static; margin: 2px 8px; padding: 2px 4px 2px 7px; box-shadow: none; }
 
 .sr-only {
   position: absolute;
@@ -1892,7 +1895,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   .selection-toolbar, .selection-toolbar button,
   .selection-actions, .selection-actions button, .selection-actions input,
   .epub-selection-actions, .epub-selection-actions button, .epub-selection-actions input,
-  .epub-annotation-item button, .epub-annotation-edit textarea,
+  .epub-annotation-item button, .annotation-comment-editor textarea,
   .epub-search-panel, .epub-search-panel button, .epub-search-panel input
 ) { border-radius: var(--control-radius); }
 .app[data-theme^="constructivist"] .layout-tabs { border-radius: var(--radius); }

@@ -608,7 +608,7 @@ function App() {
           const link = `#reader-anchor-${encodeReaderAnchor(anchor)}`;
           return `> ${part.quote.replace(/\n/g, '\n> ')}\n\n> 来源：《${pdf.name}》 · 第 ${part.page} 页 · [回到原文](${link})`;
         }).join('\n\n');
-        if (!target.insert(`\n\n${block}\n`)) return false;
+        if (!target.insert(block)) return false;
         workspace.pin(target.tab!); workspace.activate(target.group); setLayout('split');
         return true;
       },
@@ -634,7 +634,7 @@ function App() {
       const link = `#reader-anchor-${encodeReaderAnchor({ ...anchor, source })}`;
       const quotation = quote ? `> ${quote.replace(/\n+/g, '\n> ')}\n\n` : '';
       const commentLine = comment.trim() ? `> 批注：${comment.trim().replace(/\n+/g, ' ')}\n\n` : '';
-      const block = `\n\n${quotation}${commentLine}> 来源：《${formatEpubAnchor(anchor, book.name)}》 · [回到原文](${link})\n`;
+      const block = `${quotation}${commentLine}> 来源：《${formatEpubAnchor(anchor, book.name)}》 · [回到原文](${link})`;
       if (!target.insert(block)) return false;
       workspace.pin(target.tab!); workspace.activate(target.group); setLayout('split');
       return true;
@@ -678,7 +678,7 @@ function App() {
         const link = `#reader-anchor-${encodeReaderAnchor({ ...anchor, source })}`;
         const image = asset ? `![PDF 第 ${anchor.page} 页摘录](${asset})\n\n` : '';
         const quotation = quote ? `> ${quote.replace(/\n+/g, '\n> ')}\n\n` : '';
-        if (!target.insert(`\n\n${image}${quotation}> 来源：《${pdf.name}》 · 第 ${anchor.page} 页 · [回到原文](${link})\n`)) return false;
+        if (!target.insert(`${image}${quotation}> 来源：《${pdf.name}》 · 第 ${anchor.page} 页 · [回到原文](${link})`)) return false;
         workspace.pin(target.tab); workspace.activate(target.group); setLayout('split');
         return true;
       },
@@ -822,7 +822,13 @@ function App() {
           </div>
           <details className="settings-section settings-about">
             <summary>关于</summary>
-            <div className="about-content"><b>{appInfo?.name || '左人笔记'}</b><span>版本 {appInfo?.version || '读取中…'}</span><a href="https://github.com/barbarians1999/zuoren-notes" target="_blank" rel="noopener noreferrer">GitHub 仓库</a></div>
+            <div className="about-content">
+              <b>{appInfo?.name || '左人笔记'}</b>
+              <div className="about-version">
+                <span>版本 {appInfo?.version || '读取中…'}</span>
+                <a href="https://github.com/barbarians1999/zuoren-notes" target="_blank" rel="noopener noreferrer">GitHub 仓库</a>
+              </div>
+            </div>
           </details>
         </div>}
       </div>
