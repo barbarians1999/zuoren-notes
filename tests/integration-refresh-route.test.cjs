@@ -30,7 +30,7 @@ async function wiring(workspace, options = {}) {
   const setter = /const setActiveSurface = useCallback\(([\s\S]*?), \[\]\);/.exec(main); assert.ok(setter, 'synchronous activation setter');
   const compiled = stripTypeScriptTypes('const setSurface = ' + setter[1], { mode: 'transform' });
   const setSurface = new Function('activeSurfaceRef', 'setActiveSurfaceState', compiled + ';return setSurface;')(activeSurfaceRef, value => scheduledState.push(value));
-  const activatePdf = new Function('setActiveSurface', 'return (' + expression(main, '<PdfPane onActivate={') + ');')(setSurface);
+  const activatePdf = new Function('setActiveSurface', 'return (' + expression(main, '<LazyPdfPane onActivate={') + ');')(setSurface);
   let focused = 0;
   class ElementStub { closest() { return null; } }
   const pointerPdf = new Function('onActivate', 'pane', 'Element', 'return (' + expression(pdf, 'onPointerDownCapture={') + ');')(
