@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { PDFDocument, StandardFonts } = require('pdf-lib');
+const { PDFDocument, PDFName, PDFString, StandardFonts } = require('pdf-lib');
 const { _electron, readerReady, settle } = require('./electronHarness.cjs');
 const { createSmokeWorkspace, cleanupSmokeWorkspace } = require('./smokeWorkspace.cjs');
 const appRoot = path.resolve(__dirname, '..');
@@ -24,6 +24,20 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
   for (let n = 1; n <= 4; n++) pdf.addPage([595, 842]).drawText(`Toolbar audit page ${n}`, { font, size: 22, x: 72, y: 750 });
   const originalPdf = Buffer.from(await pdf.save());
   await fs.writeFile(path.join(workspace.fixture, filename), originalPdf);
+  const bookmarkPdf = await PDFDocument.load(originalPdf);
+  const outlineRoot = bookmarkPdf.context.obj({ Type: 'Outlines', Count: 3 });
+  const outlineRef = bookmarkPdf.context.register(outlineRoot);
+  const destinations = [['Chapter start', 0, 842], ['Same page section', 0, 450], ['Next chapter', 1, 842]];
+  const bookmarkRows = destinations.map(([title, index, top]) => bookmarkPdf.context.obj({ Title: PDFString.of(title), Parent: outlineRef, Dest: [bookmarkPdf.getPage(index).ref, PDFName.of('FitH'), top] }));
+  const refs = bookmarkRows.map(row => bookmarkPdf.context.register(row));
+  for (const [index, row] of bookmarkRows.entries()) {
+    if (index > 0) row.set(PDFName.of('Prev'), refs[index - 1]);
+    if (index + 1 < refs.length) row.set(PDFName.of('Next'), refs[index + 1]);
+  }
+  outlineRoot.set(PDFName.of('First'), refs[0]); outlineRoot.set(PDFName.of('Last'), refs.at(-1));
+  bookmarkPdf.catalog.set(PDFName.of('Outlines'), outlineRef);
+  const bookmarkName = 'with-bookmarks.pdf';
+  await fs.writeFile(path.join(workspace.fixture, bookmarkName), await bookmarkPdf.save());
   await fs.writeFile(path.join(workspace.fixture, 'note.md'), '# Note\n\nKeep this note intact.\n');
   await fs.writeFile(path.join(workspace.fixture, 'note-two.md'), '# Second note\n\nKeep the second note intact.\n');
   const executablePath = process.env.ZHAOYE_SMOKE_EXECUTABLE || path.join(appRoot, 'node_modules/electron/dist/electron.exe');
@@ -76,6 +90,7 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
     await settle(panel); await page.screenshot({ path: path.join(output, 'pdf-outline-right.png') });
     await panel.getByRole('button', { name: '第 2 页', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('[aria-label="当前页码"]')?.value === '2');
+    await panel.getByRole('button', { name: '第 2 页', exact: true }).and(panel.locator('[aria-current="location"]')).waitFor();
     assert.equal(await bar.getByRole('textbox', { name: '当前页码', exact: true }).inputValue(), '2', 'books without embedded outlines keep page navigation');
     await panel.getByRole('button', { name: '第 2 页', exact: true }).focus();
     await topBar.getByRole('button', { name: '收起 PDF 大纲', exact: true }).click();
@@ -274,6 +289,19 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
     }), false);
     await page.waitForTimeout(100);
     assert.equal(await topBar.locator('button[aria-label="进入全屏阅读"]').isVisible(), true);
+  });
+  await t.test('embedded PDF bookmarks track jumps and scrolling, including two destinations on one page', async () => {
+    await page.locator('.file-row').filter({ hasText: bookmarkName }).click(); await layout('阅读').click();
+    await readerReady(page, 'pdf', 1);
+    await topBar.getByRole('button', { name: '展开 PDF 大纲', exact: true }).click();
+    const outline = page.getByRole('complementary', { name: 'PDF 大纲', exact: true });
+    const current = name => outline.getByRole('button', { name, exact: true }).and(outline.locator('[aria-current="location"]'));
+    await current('Chapter start').waitFor();
+    await outline.getByRole('button', { name: 'Same page section', exact: true }).click();
+    await current('Same page section').waitFor();
+    assert.equal(await bar.getByRole('textbox', { name: '当前页码', exact: true }).inputValue(), '1');
+    await page.locator('.pdf-canvas-wrap').evaluate(el => { el.scrollTop = el.querySelector('[data-pdf-page="2"]').offsetTop + 100; });
+    await current('Next chapter').waitFor();
   });
   assert.equal(await fs.readFile(path.join(workspace.fixture, 'note.md'), 'utf8'), '# Note\n\nKeep this note intact.\n');
   assert.deepEqual(await fs.readFile(path.join(workspace.fixture, filename)), originalPdf);

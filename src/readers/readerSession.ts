@@ -61,7 +61,8 @@ export class ReaderSession {
         const current = this.snapshot.pdf;
         const meta = current?.path === loaded.path && current.meta.id === loaded.meta.id ? current.meta : loaded.meta;
         const name = options.name || loaded.path.split(/[\\/]/).pop() || loaded.path;
-        this.publish({ pdf: { path: loaded.path, name, data: loaded.data, meta }, epub: null,
+        const data = loaded.data instanceof Uint8Array ? loaded.data : new Uint8Array(0);
+        this.publish({ pdf: { path: loaded.path, name, data, size: loaded.size, rangeMode: !!loaded.rangeMode, meta }, epub: null,
           page: Math.max(1, options.page || meta.page || 1), scale: options.scale || 1 });
         return { status: 'opened' };
       }, options.discardPreviousChanges);

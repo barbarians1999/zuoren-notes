@@ -106,6 +106,10 @@ export function outlineTargetTop(host: HTMLElement, target: Element, margin = 12
 type SourceRequest = { head: number; doc: Text; selection: EditorSelection; focusEditor: boolean };
 type SourceMotion = { motion: OutlineScrollMotion; pending: SourceRequest | null; request: SourceRequest | null; cancelled: SourceRequest | null };
 const sources = new WeakMap<EditorView, SourceMotion>();
+export function sourceOutlineScrolling(view: EditorView) {
+  const state = sources.get(view);
+  return !!(state?.pending || state?.motion.active);
+}
 const sourceComposing = (view: EditorView) => view.composing || view.compositionStarted;
 export function cancelSourceOutlineMotion(view: EditorView) {
   const state = sources.get(view); if (!state) return;

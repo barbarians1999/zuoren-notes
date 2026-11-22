@@ -25,9 +25,29 @@ import { groupedPdfImages, paintPdfAppearance } from './pdfAppearance';
 import { findVisiblePdfPage } from './pdfScroll';
 import { PdfBitmapCache, pdfBitmapCacheKey } from './pdfBitmapCache';
 import { PdfRenderQueue } from './pdfRenderQueue';
+import { createPdfRangeTransport } from './pdfRangeTransport';
 import { AnnotationCommentEditor } from './AnnotationCommentEditor';
 
 const EMPTY_ANNOTATIONS: PdfAnnotation[] = [];
+type PdfBookmark = { page: number; left: number | null; top: number | null };
+
+async function resolveBookmark(document: pdfjsLib.PDFDocumentProxy, destination: string | unknown[] | null): Promise<PdfBookmark | null> {
+  const dest = typeof destination === 'string' ? await document.getDestination(destination) : destination;
+  if (!dest?.[0] && dest?.[0] !== 0) return null;
+  const index = typeof dest[0] === 'number' ? dest[0] : await document.getPageIndex(dest[0] as Parameters<typeof document.getPageIndex>[0]);
+  if (!Number.isInteger(index) || index < 0 || index >= document.numPages) return null;
+  const name = (dest[1] as { name?: string } | undefined)?.name;
+  const left = name === 'XYZ' || name === 'FitV' || name === 'FitBV' || name === 'FitR' ? dest[2] : null;
+  const top = name === 'XYZ' ? dest[3] : name === 'FitH' || name === 'FitBH' ? dest[2] : name === 'FitR' ? dest[5] : null;
+  return { page: index + 1, left: typeof left === 'number' && Number.isFinite(left) ? left : null, top: typeof top === 'number' && Number.isFinite(top) ? top : null };
+}
+
+function bookmarkRatio(bookmark: PdfBookmark, page: pdfjsLib.PDFPageProxy) {
+  if (bookmark.left === null && bookmark.top === null) return 0;
+  const viewport = page.getViewport({ scale: 1 });
+  const [, y] = viewport.convertToViewportPoint(bookmark.left ?? page.view[0], bookmark.top ?? page.view[3]);
+  return Math.min(1, Math.max(0, y / viewport.height));
+}
 type PdfSearchSpec = { query: string; occurrence: number; caseSensitive: boolean };
 type SlotObserverRegister = (element: HTMLElement, onVisibility: (visible: boolean) => void) => () => void;
 type WaitForScrollIdle = (bypass: boolean) => { promise: Promise<void>; cancel: () => void };
@@ -46,6 +66,11 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 // resolve as a bare (and invalid) module specifier.  Keep the decoder bundle
 // beside the app's renderer assets and give PDF.js an explicit directory URL.
 const pdfWasmUrl = new URL('pdfjs/wasm/', document.baseURI).toString();
+let sharedPdfWorker: pdfjsLib.PDFWorker | null = null;
+export function warmPdfWorker(): pdfjsLib.PDFWorker {
+  if (!sharedPdfWorker || sharedPdfWorker.destroyed) sharedPdfWorker = new pdfjsLib.PDFWorker();
+  return sharedPdfWorker;
+}
 type PdfTool = 'select' | 'highlight' | 'region' | 'note';
 export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen, onToggleFullscreen, onMeta, captureExcerpt, onTextAction, canExcerpt, target, onMessage, onActivate, headerTarget = null }: { dark: boolean; pdf: ActivePdf | null; page: number; setPage: (page: number) => void; scale: number; setScale: (scale: number) => void; fullscreen: boolean; onToggleFullscreen: () => void; onMeta: (change: (current: PdfMeta) => PdfMeta) => Promise<boolean>; captureExcerpt: (source: ActivePdf) => PdfExcerptContext | null; onTextAction: PdfTextActionHandler; canExcerpt: boolean; target: PdfAnchor | null; onMessage: (message: string) => void; onActivate: () => void; headerTarget?: HTMLElement | null }) {
   const [loadedDocument, setLoadedDocument] = useState<{ path: string; id: string; document: any } | null>(null);
@@ -55,6 +80,11 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
   const [pages, setPages] = useState(0), [tool, setTool] = useState<PdfTool>('select');
   const [pageDraft, setPageDraft] = useState(String(page));
   const [toc, setToc] = useState<{ title: string; depth: number; dest: any }[]>([]), [showToc, setShowToc] = useState(false);
+  const [bookmarks, setBookmarks] = useState<{ toc: typeof toc; entries: (PdfBookmark | null)[] } | null>(null);
+  const [bookmarkPage, setBookmarkPage] = useState<{ document: pdfjsLib.PDFDocumentProxy; page: pdfjsLib.PDFPageProxy } | null>(null);
+  const [activeBookmark, setActiveBookmark] = useState<number | null>(null);
+  const chosenBookmark = useRef<number | null>(null);
+  const bookmarkRequest = useRef(0);
   const [searchOpen, setSearchOpen] = useState(false), [searchText, setSearchText] = useState('');
   const [searchCase, setSearchCase] = useState(false), [searching, setSearching] = useState(false);
   const [searchMatches, setSearchMatches] = useState<PdfSearchMatch[]>([]), [searchIndex, setSearchIndex] = useState(-1);
@@ -202,23 +232,110 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
     } catch (error) { onMessage(`撤销 PDF 删除失败：${String(error)}`); }
     finally { if (annotationLock.current === token) { annotationLock.current = null; setDeleting(false); } }
   }
+  const pageRef = useRef(page); pageRef.current = page;
+  const targetPageRef = useRef(target?.page || 0); targetPageRef.current = target?.page || 0;
+  const activeDocumentRef = useRef<any>(null); activeDocumentRef.current = document;
+  const outlineLoadedDocRef = useRef<any>(null);
   useEffect(() => {
     setLoadedDocument(null); setPages(0); setToc([]); setSearchMatches([]); setSearchIndex(-1); setSearching(false); setSearchStatus({ processed: 0, totalPages: 0, totalMatches: 0, errors: 0, truncated: false }); pageTextCache.current.clear(); pageTextErrors.current.clear(); pageSizeCache.current.clear(); bitmapCache.current.clear(); renderQueue.current.clear(); if (scrollIdleTimer.current !== null) { window.clearTimeout(scrollIdleTimer.current); scrollIdleTimer.current = null; } flushScrollWaiters(); lastPage.current = 0; zoomToken.current += 1; zoomAnchor.current = null; restoringZoom.current = false; searchGeneration.current += 1;
+    outlineLoadedDocRef.current = null;
     slotObserver.current?.disconnect(); slotObserver.current = null; slotCallbacks.current.clear();
     if (!pdf) return;
     let disposed = false;
-    const bytes = pdf.data instanceof Uint8Array ? new Uint8Array(pdf.data) : new Uint8Array(pdf.data as ArrayBufferLike);
-    const task = pdfjsLib.getDocument({ data: bytes, wasmUrl: pdfWasmUrl, useWasm: true });
+    let failed = false;
+    let task: pdfjsLib.PDFDocumentLoadingTask | null = null;
+    const range = pdf.rangeMode && typeof pdf.size === 'number' && pdf.size > 0
+      ? createPdfRangeTransport(pdfjsLib, {
+          length: pdf.size,
+          readRange: (begin, end) => reader().readPdfRange({ path: pdf.path, begin, end }),
+          onError: error => {
+            if (disposed || failed) return;
+            failed = true;
+            onMessage('PDF 无法显示：' + (error instanceof Error ? error.message : String(error)));
+            void task?.destroy().catch(() => undefined);
+          },
+        })
+      : undefined;
+    const bytes = range ? null : (pdf.data instanceof Uint8Array ? new Uint8Array(pdf.data) : new Uint8Array(pdf.data as ArrayBufferLike));
+    task = range
+      ? pdfjsLib.getDocument({
+          range,
+          rangeChunkSize: 262144,
+          disableRange: false,
+          disableStream: true,
+          disableAutoFetch: true,
+          worker: warmPdfWorker(),
+          wasmUrl: pdfWasmUrl,
+          useWasm: true,
+        })
+      : pdfjsLib.getDocument({ data: bytes!, worker: warmPdfWorker(), wasmUrl: pdfWasmUrl, useWasm: true });
     void task.promise.then(async doc => {
       if (disposed) return;
-      const first = await doc.getPage(1); const viewport = first.getViewport({ scale: 1 });
+      const initialPage = Math.max(1, Math.min(doc.numPages, targetPageRef.current || pageRef.current || 1));
+      const initial = await doc.getPage(initialPage); const viewport = initial.getViewport({ scale: 1 });
       if (disposed) return;
-      setSize({ width: viewport.width, height: viewport.height }); setLoadedDocument({ path: pdf.path, id: pdf.meta.id, document: doc }); setPages(doc.numPages);
-      const flatten = (items: any[], depth = 0): { title: string; depth: number; dest: any }[] => items.flatMap(item => [{ title: item.title, depth, dest: item.dest }, ...flatten(item.items || [], depth + 1)]);
-      const outline = await doc.getOutline(); if (!disposed) setToc(flatten(outline || []));
-    }).catch(error => { if (!disposed) onMessage('PDF 无法显示：' + error.message); });
-    return () => { disposed = true; void task.destroy().catch(() => undefined); };
+      const initialSize = { width: viewport.width, height: viewport.height };
+      pageSizeCache.current.set(initialPage, initialSize);
+      setSize(initialSize); setLoadedDocument({ path: pdf.path, id: pdf.meta.id, document: doc }); setPages(doc.numPages);
+    }).catch(error => {
+      if (!disposed && !failed) {
+        failed = true;
+        onMessage('PDF 无法显示：' + error.message);
+      }
+    });
+    return () => { disposed = true; void task?.destroy().catch(() => undefined); };
   }, [pdf?.path, pdf?.meta.id]);
+  useEffect(() => {
+    if (!document || outlineLoadedDocRef.current === document) return;
+    const flatten = (items: any[], depth = 0): { title: string; depth: number; dest: any }[] => items.flatMap(item => [{ title: item.title, depth, dest: item.dest }, ...flatten(item.items || [], depth + 1)]);
+    const loadOutline = () => {
+      if (outlineLoadedDocRef.current === document || activeDocumentRef.current !== document) return;
+      outlineLoadedDocRef.current = document;
+      void document.getOutline().then((outline: any) => {
+        if (activeDocumentRef.current === document) setToc(flatten(outline || []));
+      }).catch(() => {});
+    };
+    if (showToc) {
+      loadOutline();
+      return;
+    }
+    const timer = window.setTimeout(loadOutline, 120);
+    return () => window.clearTimeout(timer);
+  }, [document, showToc]);
+  useEffect(() => {
+    if (!document || !showToc || !toc.length || bookmarks?.toc === toc) return;
+    let current = true;
+    void Promise.all(toc.map(item => resolveBookmark(document, item.dest).catch(() => null))).then(entries => {
+      if (current) setBookmarks({ toc, entries });
+    });
+    return () => { current = false; };
+  }, [bookmarks, document, showToc, toc]);
+  useEffect(() => {
+    if (!document || !showToc || bookmarks?.toc !== toc || !bookmarks.entries.some(item => item?.page === page && (item.left !== null || item.top !== null))) return;
+    let current = true;
+    void document.getPage(page).then((value: pdfjsLib.PDFPageProxy) => { if (current) setBookmarkPage({ document, page: value }); }).catch(() => {});
+    return () => { current = false; };
+  }, [bookmarks, document, page, showToc, toc]);
+  const bookmarkRatios = useMemo(() => {
+    if (!bookmarkPage || bookmarkPage.document !== document || !bookmarks) return null;
+    const currentPage = bookmarkPage.page;
+    return { page: currentPage.pageNumber, positions: bookmarks.entries.map(item => item?.page === currentPage.pageNumber ? bookmarkRatio(item, currentPage) : 0) };
+  }, [bookmarkPage, bookmarks, document]);
+  const matchBookmark = useRef<(page: number, ratio: number) => void>(() => {});
+  matchBookmark.current = (number, ratio) => {
+    if (!showToc || bookmarks?.toc !== toc) return;
+    let best = -1, bestPage = 0, bestRatio = -1;
+    for (let index = 0; index < bookmarks.entries.length; index++) {
+      const bookmark = bookmarks.entries[index];
+      if (!bookmark || bookmark.page > number) continue;
+      const offset = bookmarkRatios?.page === number ? bookmarkRatios.positions[index] : 0;
+      if (bookmark.page === number && offset > ratio + .005) continue;
+      if (bookmark.page > bestPage || (bookmark.page === bestPage && (offset > bestRatio || (offset === bestRatio && (bookmark.page < number || chosenBookmark.current === index))))) {
+        best = index; bestPage = bookmark.page; bestRatio = offset;
+      }
+    }
+    setActiveBookmark(best < 0 ? null : best);
+  };
   const pageAtProbe = () => {
     const host = scroll.current;
     const fallback = Math.max(1, page);
@@ -234,6 +351,13 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
     const ratio = bounds && bounds.height > 0 ? Math.min(1, Math.max(0, (probe - bounds.top) / bounds.height)) : 0;
     return { page: pageNumber, ratio };
   };
+  useLayoutEffect(() => {
+    if (bookmarks?.toc !== toc) { chosenBookmark.current = null; setActiveBookmark(null); }
+    if (showToc) {
+      const position = pageAtProbe();
+      matchBookmark.current(position.page, position.ratio);
+    }
+  }, [bookmarks, bookmarkRatios, page, scale, showToc, toc]);
   const requestScale = (requested: number) => {
     const pending = zoomAnchor.current;
     const next = Math.round(Math.min(3, Math.max(.5, requested)) * 100) / 100;
@@ -256,19 +380,31 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
     host.addEventListener('wheel', onWheel, { passive: false });
     return () => host.removeEventListener('wheel', onWheel);
   }, [scale]);
-  const jump = (number: number, cancelZoom = true) => {
+  const jump = (number: number, cancelZoom = true, bookmarkOffset?: number) => {
     if (cancelZoom) { zoomToken.current += 1; zoomAnchor.current = null; restoringZoom.current = false; }
     const next = Math.max(1, Math.min(pages, number));
     const host = scroll.current;
     if (host) {
-      if (next === 1) host.scrollTop = 0;
-      else host.querySelector<HTMLElement>('[data-pdf-page="' + next + '"]')?.scrollIntoView({ block: 'start' });
-      syncScrolledState(next > 1 && host.scrollTop > 42, searchOpen);
+      const slot = host.querySelector<HTMLElement>(`[data-pdf-page="${next}"]`);
+      if (slot && bookmarkOffset !== undefined && bookmarkOffset > 0) {
+        const targetTop = () => {
+          const box = slot.getBoundingClientRect();
+          return host.scrollTop + box.top - host.getBoundingClientRect().top + box.height * bookmarkOffset - 70;
+        };
+        // Immersive mode changes the top inset of the document. Set it before
+        // measuring the bookmark's final position in the viewport.
+        syncScrolledState(targetTop() > 42, searchOpen);
+        host.scrollTop = targetTop();
+      } else {
+        if (next === 1) host.scrollTop = 0;
+        else slot?.scrollIntoView({ block: 'start' });
+        syncScrolledState(next > 1 && host.scrollTop > 42, searchOpen);
+      }
     }
     lastPage.current = next; setPage(next);
   };
-  useEffect(() => { if (pages && lastPage.current !== page && !restoringZoom.current) jump(page); }, [page, pages]);
-  useEffect(() => { if (target && pages) jump(target.page); }, [target, pages]);
+  useLayoutEffect(() => { if (pages && lastPage.current !== page && !restoringZoom.current) jump(page); }, [page, pages]);
+  useLayoutEffect(() => { if (target && pages) jump(target.page); }, [target, pages]);
   useLayoutEffect(() => {
     const anchor = zoomAnchor.current;
     if (!anchor || Math.abs(anchor.scale - scale) > .001) return;
@@ -417,6 +553,8 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
       const top = currentHost.getBoundingClientRect().top;
       const visible = findVisiblePdfPage(currentHost, top + 80);
       const number = Number(visible?.dataset.pdfPage);
+      const bounds = visible?.getBoundingClientRect();
+      if (number && bounds?.height) matchBookmark.current(number, Math.max(0, (top + 80 - bounds.top) / bounds.height));
       if (number && number !== lastPage.current) { lastPage.current = number; setPage(number); }
     });
   }, [flushScrollWaiters, syncScrolledState]);
@@ -468,15 +606,21 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
       delete host.dataset.hScroll;
     };
   }, [pdf?.path, pages, scale]);
-  async function goToDestination(dest: any) {
+  async function goToDestination(index: number) {
     const source = document, identity = pdf?.data;
     if (!source || !identity) return;
+    const request = ++bookmarkRequest.current;
+    const current = () => latest.current.pdf?.data === identity && request === bookmarkRequest.current;
     try {
-      const resolved = typeof dest === 'string' ? await source.getDestination(dest) : dest;
-      if (!resolved) return;
-      const index = typeof resolved[0] === 'number' ? resolved[0] : await source.getPageIndex(resolved[0]);
-      if (latest.current.pdf?.data === identity) jump(index + 1);
-    } catch (error) { if (latest.current.pdf?.data === identity) onMessage('目录位置无法读取：' + String(error)); }
+      const bookmark = bookmarks?.toc === toc ? bookmarks.entries[index] : await resolveBookmark(source, toc[index].dest);
+      if (!bookmark || !current()) return;
+      const pageView = bookmark.left !== null || bookmark.top !== null ? await source.getPage(bookmark.page) : null;
+      if (!current()) return;
+      chosenBookmark.current = index;
+      if (pageView) setBookmarkPage({ document: source, page: pageView });
+      jump(bookmark.page, true, pageView ? bookmarkRatio(bookmark, pageView) : undefined);
+      setActiveBookmark(index);
+    } catch (error) { if (current()) onMessage('目录位置无法读取：' + String(error)); }
   }
   const submitPageDraft = () => {
     const parsed = Number(pageDraft.trim());
@@ -579,9 +723,9 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
         introduction={pages > 0 && !toc.length ? '这份 PDF 没有内置目录，可按页跳转。' : undefined}
         onClose={() => setShowToc(false)}
         returnFocus={() => headerTarget?.querySelector<HTMLElement>('[data-pdf-outline-toggle]') || pane.current?.querySelector<HTMLElement>('[data-pdf-outline-toggle]') || null}
-        items={toc.length ? toc.map((item, index) => ({ id: String(index), label: item.title, depth: item.depth })) :
+        items={toc.length ? toc.map((item, index) => ({ id: String(index), label: item.title, depth: item.depth, active: index === activeBookmark })) :
           Array.from({ length: pages }, (_, index) => ({ id: String(index), label: `第 ${index + 1} 页`, depth: 0, active: page === index + 1 }))}
-        onSelect={item => { if (toc.length) void goToDestination(toc[Number(item.id)].dest); else jump(Number(item.id) + 1); }}/>
+        onSelect={item => { if (toc.length) void goToDestination(Number(item.id)); else jump(Number(item.id) + 1); }}/>
     </div>
     <PdfPopover open={!!textSelection.draft} root={pane} anchor={() => visibleRect('.pdf-text-selection')} className="selection-actions pdf-text-actions">
       {textSelection.draft && <>

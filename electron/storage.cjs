@@ -1,4 +1,5 @@
 const fs = require('node:fs/promises');
+const fsSync = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { normalizeEpubMeta, validAnnotation } = require('./epub-meta.cjs');
@@ -6,6 +7,15 @@ const { normalizePdfMeta } = require('./pdf-meta.cjs');
 const { fileMoveVersion } = require('./file-moves.cjs');
 
 const digest = data => crypto.createHash('sha256').update(data).digest('hex');
+function digestFile(file) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fsSync.createReadStream(file, { highWaterMark: 1024 * 1024 });
+    stream.on('data', chunk => hash.update(chunk));
+    stream.on('error', reject);
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
+}
 const inside = (root, file) => { const rel = path.relative(root, file); return rel === '' || (!rel.startsWith('..' + path.sep) && rel !== '..' && !path.isAbsolute(rel)); };
 const recoveryIdPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const reservedWindowsNames = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
@@ -89,15 +99,66 @@ async function realPathOrParent(file) {
 
 class FileStore {
   validMoveRecovery(value, id) { return validRecovery(value, id, value?.sourcePath); }
-  constructor() { this.entryQueue = Promise.resolve(); this.roots = new Set(); this.rootIdentities = new Map(); this.files = new Set(); this.lastBackup = new Map(); this.queues = new Map(); this.identities = new Map(); }
+  constructor() { this.entryQueue = Promise.resolve(); this.roots = new Set(); this.rootIdentities = new Map(); this.files = new Set(); this.lastBackup = new Map(); this.queues = new Map(); this.identities = new Map(); this.identityCachePath = null; this.identityCacheTimer = null; this.identityCacheWrite = Promise.resolve(); }
+  statFingerprint(stat) {
+    return [stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(':');
+  }
+  async loadIdentityCache(cachePath) {
+    this.identityCachePath = cachePath || null;
+    if (!this.identityCachePath) return;
+    try {
+      const raw = JSON.parse(await fs.readFile(this.identityCachePath, 'utf8'));
+      if (!raw || raw.version !== 1 || !raw.entries || typeof raw.entries !== 'object' || Array.isArray(raw.entries)) return;
+      for (const [key, entry] of Object.entries(raw.entries)) {
+        if (!entry || typeof entry !== 'object' || typeof entry.fingerprint !== 'string' || !entry.fingerprint) continue;
+        if (typeof entry.id !== 'string' || !/^[a-f0-9]{64}$/i.test(entry.id)) continue;
+        this.identities.set(key, {
+          fingerprint: entry.fingerprint,
+          id: entry.id.toLowerCase(),
+          usedAt: Number.isFinite(entry.usedAt) ? entry.usedAt : 0,
+        });
+      }
+    } catch { /* missing or unreadable cache is harmless */ }
+  }
+  scheduleIdentityCacheSave() {
+    if (!this.identityCachePath || this.identityCacheTimer) return;
+    this.identityCacheTimer = setTimeout(() => {
+      this.identityCacheTimer = null;
+      void this.flushIdentityCache().catch(() => {});
+    }, 400);
+    if (typeof this.identityCacheTimer.unref === 'function') this.identityCacheTimer.unref();
+  }
+  async flushIdentityCache() {
+    if (this.identityCacheTimer) {
+      clearTimeout(this.identityCacheTimer);
+      this.identityCacheTimer = null;
+    }
+    if (!this.identityCachePath) return;
+    const entries = {};
+    const sorted = [...this.identities.entries()]
+      .sort((a, b) => (b[1].usedAt || 0) - (a[1].usedAt || 0))
+      .slice(0, 500);
+    for (const [key, entry] of sorted) entries[key] = { fingerprint: entry.fingerprint, id: entry.id, usedAt: entry.usedAt || 0 };
+    const target = this.identityCachePath;
+    const payload = JSON.stringify({ version: 1, entries });
+    const next = this.identityCacheWrite.catch(() => undefined).then(async () => {
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await atomicWrite(target, payload);
+    });
+    this.identityCacheWrite = next;
+    await next;
+  }
   async contentIdentity(file) {
-    const fingerprint = stat => [stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(':');
-    const before = fingerprint(await fs.stat(file));
+    const before = this.statFingerprint(await fs.stat(file));
     const key = this.queueKey(file), cached = this.identities.get(key);
-    if (cached?.fingerprint === before) return cached.id;
-    const id = digest(await fs.readFile(file));
-    if (fingerprint(await fs.stat(file)) !== before) throw new Error('文件正在被其他程序修改，请稍后重试');
-    this.identities.set(key, { fingerprint: before, id });
+    if (cached?.fingerprint === before) {
+      cached.usedAt = Date.now();
+      return cached.id;
+    }
+    const id = await digestFile(file);
+    if (this.statFingerprint(await fs.stat(file)) !== before) throw new Error('文件正在被其他程序修改，请稍后重试');
+    this.identities.set(key, { fingerprint: before, id, usedAt: Date.now() });
+    this.scheduleIdentityCacheSave();
     return id;
   }
   async grantRoot(dir) {
@@ -495,11 +556,7 @@ class FileStore {
       return true;
     });
   }
-  async pdf(file) {
-    file = await this.checked(file);
-    if (!/\.pdf$/i.test(file)) throw new Error('请选择 PDF 文件');
-    const data = await fs.readFile(file);
-    const id = digest(data);
+  async readPdfSidecar(file, id) {
     let meta = { version: 1, id, page: 1, annotations: [] };
     try {
       const dir = path.join(path.dirname(file), '.reader');
@@ -511,8 +568,67 @@ class FileStore {
         await this.checked(p, { asset: true });
       }
     } catch (e) { if (e.code !== 'ENOENT') throw new Error('PDF 标记文件无法读取，已保留原文件：' + e.message); }
+    return meta;
+  }
+  async pdf(file) {
+    file = await this.checked(file);
+    if (!/\.pdf$/i.test(file)) throw new Error('请选择 PDF 文件');
+    const before = this.statFingerprint(await fs.stat(file));
+    const data = await fs.readFile(file);
+    const id = digest(data);
+    if (this.statFingerprint(await fs.stat(file)) === before) {
+      this.identities.set(this.queueKey(file), { fingerprint: before, id, usedAt: Date.now() });
+      this.scheduleIdentityCacheSave();
+    }
+    const meta = await this.readPdfSidecar(file, id);
     await this.checked(file);
     return { data: new Uint8Array(data), meta, path: file };
+  }
+  async openPdfDescriptor(file, { inlineThresholdBytes = 1024 * 1024 } = {}) {
+    file = await this.checked(file);
+    if (!/\.pdf$/i.test(file)) throw new Error('请选择 PDF 文件');
+    const stat = await fs.stat(file);
+    const size = stat.size;
+    if (size <= inlineThresholdBytes) {
+      const before = this.statFingerprint(stat);
+      const data = await fs.readFile(file);
+      const id = digest(data);
+      if (this.statFingerprint(await fs.stat(file)) === before) {
+        this.identities.set(this.queueKey(file), { fingerprint: before, id, usedAt: Date.now() });
+        this.scheduleIdentityCacheSave();
+      }
+      const meta = await this.readPdfSidecar(file, id);
+      await this.checked(file);
+      return { data: new Uint8Array(data), size, rangeMode: false, meta, path: file };
+    }
+    const id = await this.contentIdentity(file);
+    const meta = await this.readPdfSidecar(file, id);
+    await this.checked(file);
+    return { size, rangeMode: true, meta, path: file };
+  }
+  async readPdfRange(file, begin, end) {
+    file = await this.checked(file);
+    if (!/\.pdf$/i.test(file)) throw new Error('请选择 PDF 文件');
+    if (!Number.isFinite(begin) || !Number.isFinite(end)) throw new Error('PDF 读取范围无效');
+    const maxChunk = 16 * 1024 * 1024;
+    const handle = await fs.open(file, 'r');
+    try {
+      const stat = await handle.stat();
+      const start = Math.max(0, Math.min(Math.floor(begin), stat.size));
+      const finish = Math.max(start, Math.min(Math.floor(end), stat.size, start + maxChunk));
+      const length = finish - start;
+      if (length <= 0) return new Uint8Array(0);
+      const buffer = Buffer.allocUnsafe(length);
+      let offset = 0;
+      while (offset < length) {
+        const { bytesRead } = await handle.read(buffer, offset, length - offset, start + offset);
+        if (bytesRead <= 0) break;
+        offset += bytesRead;
+      }
+      return new Uint8Array(buffer.buffer, buffer.byteOffset, offset);
+    } finally {
+      await handle.close();
+    }
   }
   async savePdf(file, meta) {
     const normalized = normalizePdfMeta(meta, meta?.id);

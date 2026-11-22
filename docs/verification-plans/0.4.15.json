@@ -1,0 +1,27 @@
+{
+  "reason": "Directed Windows verification for startup and recovery, lazy reader loading and large PDF ranges, outline location feedback and navigation across Markdown/PDF/EPUB, and Markdown blockquote typography. Includes source and packaged reader interaction checks. Full regression, installed upgrade, cross-machine startup benchmarks and macOS are outside this plan.",
+  "source": [
+    "tests/epub-workspace-smoke.cjs",
+    "tests/markdown-presentation-smoke.cjs",
+    "tests/pdf-range-smoke.cjs",
+    "tests/pdf-selection-smoke.cjs",
+    "tests/pdf-toolbar-smoke.cjs",
+    "tests/reader-reliability-smoke.cjs",
+    "tests/session-startup-smoke.cjs",
+    "tests/settings-startup-smoke.cjs",
+    "tests/startup-preservation-smoke.cjs",
+    "tests/window-startup-smoke.cjs"
+  ],
+  "packaged": [
+    "tests/epub-workspace-smoke.cjs",
+    "tests/markdown-presentation-smoke.cjs",
+    "tests/pdf-range-smoke.cjs",
+    "tests/pdf-selection-smoke.cjs",
+    "tests/pdf-toolbar-smoke.cjs",
+    "tests/reader-reliability-smoke.cjs",
+    "tests/session-startup-smoke.cjs",
+    "tests/settings-startup-smoke.cjs",
+    "tests/startup-preservation-smoke.cjs",
+    "tests/window-startup-smoke.cjs"
+  ]
+}

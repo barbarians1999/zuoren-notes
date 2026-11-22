@@ -108,15 +108,15 @@ async function rememberFile(file) {
 }
 async function restoreGrants() {
   const settings = await readSettings();
-  const roots = [];
-  const recentFiles = [];
   const savedRoots = [...new Set([...(settings.roots || []), settings.session?.root].filter(Boolean))];
-  for (const root of savedRoots) try { roots.push(await store.grantRoot(root)); } catch { /* moved */ }
-  for (const file of settings.recentFiles || []) try { recentFiles.push(await store.grantFile(file)); } catch { /* moved */ }
-  // A workspace can retain more tabs than the recent-files list, including
-  // notes outside the chosen root. Restore grants for the complete session.
-  const sessionFiles = sessionFilePaths(settings.session);
-  for (const file of new Set(sessionFiles)) try { await store.grantFile(file); } catch { /* renderer reports unavailable files */ }
+  const sessionFiles = [...new Set(sessionFilePaths(settings.session))];
+  const [rootResults, recentResults] = await Promise.all([
+    Promise.all(savedRoots.map(root => store.grantRoot(root).catch(() => null))),
+    Promise.all((settings.recentFiles || []).map(file => store.grantFile(file).catch(() => null))),
+    Promise.all(sessionFiles.map(file => store.grantFile(file).catch(() => null))),
+  ]);
+  const roots = rootResults.filter(Boolean);
+  const recentFiles = recentResults.filter(Boolean);
   if (!fileMoves.journal.hasPending && !fileMoves.journal.problem && (roots.length !== (settings.roots || []).length || recentFiles.length !== (settings.recentFiles || []).length)) {
     // Keep cleanup inside the same read -> mutate -> write queue as every
     // other settings/session update.  A direct write here could otherwise
@@ -189,12 +189,12 @@ async function chooseFiles() {
 async function ensurePdf(file, expectedId) {
   const checked = await store.checked(file, { asset: true });
   if (!/\.pdf$/i.test(checked)) return null;
-  return digest(await fs.readFile(checked)) === expectedId ? checked : null;
+  return (await store.contentIdentity(checked)) === expectedId ? checked : null;
 }
 async function ensureEpub(file, expectedId) {
   const checked = await store.checked(file, { asset: true });
   if (!/\.epub$/i.test(checked)) return null;
-  return digest(await fs.readFile(checked)) === expectedId ? checked : null;
+  return (await store.contentIdentity(checked)) === expectedId ? checked : null;
 }
 function mimeFor(file) {
   return ({ '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml' })[path.extname(file).toLowerCase()] || 'application/octet-stream';
@@ -232,10 +232,11 @@ function installHandlers() {
   handle('check-recovery', (_event, input) => store.checkRecovery(input.sourcePath, input.recoveryId));
   handle('delete-recovery', (_event, input) => store.deleteRecoveryIfHash(input.sourcePath, input.recoveryId, input.draftHash));
   handle('open-pdf', async (_event, file) => {
-    const pdf = await store.pdf(await store.checked(file));
-    await rememberFile(pdf.path);
+    const pdf = await store.openPdfDescriptor(await store.checked(file));
+    void rememberFile(pdf.path).catch(() => {});
     return pdf;
   });
+  handle('read-pdf-range', async (_event, input) => store.readPdfRange(input.path, input.begin, input.end));
   handle('save-pdf-meta', async (_event, input) => store.savePdf(await store.checked(input.path), input.meta));
   handle('open-epub', async (_event, file) => {
     const book = await store.epub(await store.checked(file));
@@ -538,10 +539,14 @@ else {
         { id: 'quit-application', label: `退出 ${app.getName()}`, accelerator: 'Command+Q', click: () => app.quit() },
       ] }, { role: 'editMenu' }, { role: 'windowMenu' },
     ]) : null);
-    await fileMoves.journal.load();
+    await Promise.all([
+      fileMoves.journal.load(),
+      store.loadIdentityCache(path.join(app.getPath('userData'), 'content-identity-cache.json')),
+    ]);
     let settings = await restoreGrants().catch(() => emptySettings());
+    const hadPendingMoves = fileMoves.journal.hasPending;
     await fileMoves.resumeKnown();
-    settings = await readSettings().catch(() => settings);
+    if (hadPendingMoves) settings = await readSettings().catch(() => settings);
     if (fileMoves.sessionLocked) settingsWarning = [settingsWarning, '上次文件移动尚未确认，相关路径保持保护，请先核对移动结果。'].filter(Boolean).join('；');
     await authorizeLaunchArgs();
     protocol.handle('reader-asset', async request => {
@@ -557,4 +562,5 @@ else {
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(settings); });
   });
 }
+app.on('will-quit', () => { void store.flushIdentityCache().catch(() => {}); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

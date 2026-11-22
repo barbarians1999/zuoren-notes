@@ -29,10 +29,11 @@ const proseHighlighting = syntaxHighlighting(HighlightStyle.define(defaultHighli
   spec.textDecoration === 'underline' && spec.fontWeight === 'bold' ? { ...spec, textDecoration: 'none', fontWeight: 'inherit' } : spec
 )));
 
-export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, onMessage, sharedDocument, tab }: { notePath: string; onView: (view: EditorView | null) => void; onSelectionChange: (selection: { from: number; to: number; left: number; top: number; width: number; height: number } | null) => void; onMessage: (text: string) => void; sharedDocument: NoteDocument; tab: NoteViewState }) {
+export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, onCaretLine, onMessage, sharedDocument, tab }: { notePath: string; onView: (view: EditorView | null) => void; onSelectionChange: (selection: { from: number; to: number; left: number; top: number; width: number; height: number } | null) => void; onCaretLine: (line: number) => void; onMessage: (text: string) => void; sharedDocument: NoteDocument; tab: NoteViewState }) {
   const root = useRef<HTMLDivElement>(null), viewRef = useRef<EditorView | null>(null);
   const callback = useRef(onView); callback.current = onView;
   const selectionCallback = useRef(onSelectionChange); selectionCallback.current = onSelectionChange;
+  const caretCallback = useRef(onCaretLine); caretCallback.current = onCaretLine;
   const messageCallback = useRef(onMessage); messageCallback.current = onMessage;
   const previewConfig = useRef(new Compartment());
   const extensionsRef = useRef<Extension[]>([]);
@@ -102,6 +103,9 @@ export function MarkdownSourceEditor({ notePath, onView, onSelectionChange, onMe
         EditorView.lineWrapping, sourceOutlineScrollMotion,
         EditorView.updateListener.of(update => {
           updateMarkdownMotion(update);
+          if ((update.selectionSet || update.docChanged) && update.view.hasFocus) {
+            caretCallback.current(update.state.doc.lineAt(update.state.selection.main.head).number - 1);
+          }
           if (update.geometryChanged || update.docChanged || update.selectionSet) measureListSpace(update.view);
           if (update.selectionSet || update.focusChanged) {
             const selection = update.state.selection.main;

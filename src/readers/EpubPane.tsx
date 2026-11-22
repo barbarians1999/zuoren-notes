@@ -187,6 +187,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
   }, [epub.path]);
   const [toc, setToc] = useState<FlatNavItem[]>([]);
   const [currentHref, setCurrentHref] = useState('');
+  const clickedOutline = useRef<string | null>(null);
   const [chapter, setChapter] = useState('');
   const [loading, setLoading] = useState(true);
   const [selection, setSelection] = useState<Pick<EpubAnnotation, 'cfiRange' | 'quote' | 'chapterHref' | 'chapterLabel'> | null>(null);
@@ -249,6 +250,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
     const navigatePage = (direction: 'next' | 'prev') => {
       if (disposed || navigationLocked || reflow.current || interactions.current.closing) return;
       positionAnchor.current = null;
+      clickedOutline.current = null;
       navigationLocked = true;
       const request = direction === 'next' ? rendition.next() : rendition.prev();
       void request.catch(() => undefined).finally(() => {
@@ -290,7 +292,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
     };
     const activateReader = () => interactions.current.onActivate();
     const followBookLink = (event: MouseEvent) => {
-      if ((event.target as Element)?.closest?.('a[href]')) positionAnchor.current = null;
+      if ((event.target as Element)?.closest?.('a[href]')) { positionAnchor.current = null; clickedOutline.current = null; }
     };
     const handleWheel = (event: WheelEvent) => {
       if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
@@ -364,6 +366,9 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
         if (disposed) return;
         flat = flattenToc(navigation.toc || []);
         setToc(flat);
+        const outlineSections = flat.map(item => book.spine.get(item.href.split('#')[0])?.index ?? -1);
+        const outlineAnchors = new WeakMap<Document, Map<string, string | null>>();
+        const compareCfi = new EpubCFI();
         relocated = (location: Location) => {
           if (disposed || generationRef.current !== generation || reflow.current || !location?.start) return;
           if (hasInitialLocation && positionAnchor.current === null && !reducedMotionRef.current) {
@@ -388,7 +393,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
           hasInitialLocation = true;
           const href = location.start.href || '';
           const normalized = href.split('#')[0];
-          const item = flat.find(entry => entry.href.split('#')[0] === normalized);
+          const chapterEntry = flat.find(entry => entry.href.split('#')[0] === normalized);
           const displayed = location.start.displayed;
           const pageFraction = displayed?.total > 0 ? Math.max(0, displayed.page - 1) / displayed.total : 0;
           const tocIndex = Math.max(0, flat.findIndex(entry => entry.href.split('#')[0] === normalized));
@@ -396,8 +401,38 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
           const chapterEstimate = (sectionIndex + pageFraction) / Math.max(1, spine.length);
           const measured = locationsReady && location.start.cfi ? book.locations.percentageFromCfi(location.start.cfi) : chapterEstimate;
           const nextProgress = Number.isFinite(measured) ? Math.min(1, Math.max(0, measured)) : 0;
-          setCurrentHref(item?.href || href); setChapter(item?.label || '正文');
-          const position = { cfi: positionAnchor.current || visibleTextAnchor(rendition, element, location.start.cfi || ''), progress: nextProgress };
+          const cfi = positionAnchor.current || visibleTextAnchor(rendition, element, location.start.cfi || '');
+          const contents = (rendition.getContents() as unknown as { document: Document; sectionIndex: number; cfiFromRange(range: Range): string }[])
+            .find(value => value.sectionIndex === sectionIndex);
+          let item: FlatNavItem | undefined, closestAnchor: string | null = null, previousSection = -1;
+          for (const [index, entry] of flat.entries()) {
+            const [path, fragment] = entry.href.split('#', 2), entrySection = outlineSections[index];
+            if (entrySection !== sectionIndex && path !== normalized) {
+              if (entrySection >= 0 && entrySection < sectionIndex) previousSection = Math.max(previousSection, entrySection);
+              continue;
+            }
+            if (!fragment) { if (!closestAnchor && !item) item = entry; continue; }
+            if (!contents || !cfi) continue;
+            let anchors = outlineAnchors.get(contents.document);
+            if (!anchors) { anchors = new Map(); outlineAnchors.set(contents.document, anchors); }
+            if (!anchors.has(fragment)) {
+              let anchor = contents.document.getElementById(fragment);
+              try { anchor ??= contents.document.getElementById(decodeURIComponent(fragment)); } catch { /* malformed href */ }
+              if (anchor) {
+                const range = contents.document.createRange(); range.selectNodeContents(anchor); range.collapse(true);
+                try { anchors.set(fragment, contents.cfiFromRange(range)); } catch { anchors.set(fragment, null); }
+              } else anchors.set(fragment, null);
+            }
+            const anchor = anchors.get(fragment);
+            if (anchor && compareCfi.compare(anchor, cfi) <= 0 && (!closestAnchor || compareCfi.compare(anchor, closestAnchor) > 0)) {
+              closestAnchor = anchor; item = entry;
+            }
+          }
+          item ??= previousSection >= 0 ? flat[outlineSections.lastIndexOf(previousSection)] : chapterEntry;
+          const selectedHref = clickedOutline.current;
+          const selected = selectedHref && selectedHref.split('#')[0] === normalized ? selectedHref : null;
+          setCurrentHref(selected || item?.href || href); setChapter(chapterEntry?.label || '正文');
+          const position = { cfi, progress: nextProgress };
           readingPosition.current = { ...readingPosition.current, ...position };
           void metaWriter.current(current => ({ ...current, ...position }));
         };
@@ -430,7 +465,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
 
     return () => {
       disposed = true;
-      reflowToken.current++; reflow.current = null; positionAnchor.current = null; navigateRef.current = () => {};
+      reflowToken.current++; reflow.current = null; positionAnchor.current = null; clickedOutline.current = null; navigateRef.current = () => {};
       searchJumpToken.current++; searchHighlight.current = null;
       if (generationRef.current === generation) generationRef.current++;
       window.clearTimeout(navigationReleaseTimer);
@@ -509,6 +544,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
     if (!rendition) return;
     appliedTarget.current = target;
     positionAnchor.current = null;
+    clickedOutline.current = null;
     void displayLocation(rendition, target.cfiRange).then(() => {
       if (generationRef.current !== generation) return;
       setFlashId(target.annotationId || epub.meta.annotations.find(item => item.cfiRange === target.cfiRange)?.id || null);
@@ -599,6 +635,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
   async function jumpAnnotation(annotation: EpubAnnotation) {
     if (reflow.current || closing) return;
     positionAnchor.current = null;
+    clickedOutline.current = null;
     const generation = generationRef.current;
     try {
       if (renditionRef.current) await displayLocation(renditionRef.current, annotation.cfiRange);
@@ -625,9 +662,12 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
   function display(target: string) {
     if (target && !reflow.current && !closing) {
       positionAnchor.current = null;
+      clickedOutline.current = target;
       const generation = generationRef.current;
       setLoading(true);
-      void renditionRef.current?.display(target).catch(() => { if (generation === generationRef.current) onMessage('无法定位这个 EPUB 章节。'); })
+      void renditionRef.current?.display(target).then(() => {
+        if (generation === generationRef.current && clickedOutline.current === target) setCurrentHref(target);
+      }).catch(() => { if (generation === generationRef.current && clickedOutline.current === target) { clickedOutline.current = null; onMessage('无法定位这个 EPUB 章节。'); } })
         .finally(() => { if (generation === generationRef.current) setLoading(false); });
     }
   }
@@ -644,6 +684,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
     const rendition = renditionRef.current, generation = generationRef.current, token = searchJumpToken.current;
     if (!rendition || loading || reflow.current || closing) return false;
     positionAnchor.current = null;
+    clickedOutline.current = null;
     try {
       await displayLocation(rendition, result.cfi);
       if (generationRef.current !== generation || searchJumpToken.current !== token) return false;
@@ -660,6 +701,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
     clearSearchHighlight(); setSearchOpen(false); host.current?.focus({ preventScroll: true });
   }
 
+  const currentOutline = toc.find(item => item.href === currentHref);
   return <section className="pane epub-pane" inert={closing} data-reflowing={reflowing} data-current-chapter={chapter} onPointerDownCapture={onActivate} onFocusCapture={onActivate} onKeyDownCapture={event => {
     if (!event.defaultPrevented && !event.nativeEvent.isComposing && event.key === 'Escape' && outline) {
       event.preventDefault(); event.stopPropagation(); setOutline(false); return;
@@ -691,7 +733,7 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
     </div><OutlinePanel open={outline} label="EPUB 大纲" className="epub-outline" emptyText={loading ? '正在读取目录…' : '这本电子书没有提供目录。'}
       onClose={() => setOutline(false)}
       returnFocus={() => headerTarget?.querySelector('[data-outline-toggle]') || null}
-      items={toc.map((item, index) => ({ id: String(index), label: item.label, depth: item.depth, active: item.href === currentHref }))}
+      items={toc.map((item, index) => ({ id: String(index), label: item.label, depth: item.depth, active: item === currentOutline }))}
       onSelect={item => { const entry = toc[Number(item.id)]; if (entry) display(entry.href); }}/></div>
     <aside className="epub-annotation-panel">
       <div className="epub-annotation-heading">

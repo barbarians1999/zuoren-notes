@@ -4,7 +4,7 @@ export type { NoteMode } from './types';
 export type { ThemePreference } from './appearanceTheme.cjs';
 export type NoteBodyFont = 'default' | 'fangsong' | 'songti' | 'hanyi-shufang-55w';
 export type SaveLabel = '已保存' | '编辑中' | '保存中' | '外部冲突' | '保存失败';
-export type ActivePdf = { path: string; name: string; data: Uint8Array; meta: PdfMeta };
+export type ActivePdf = { path: string; name: string; data: Uint8Array; size?: number; rangeMode?: boolean; meta: PdfMeta };
 export type ActiveEpub = { path: string; name: string; data: Uint8Array; meta: EpubMeta };
 export type FlatNavItem = { href: string; label: string; depth: number };
 export type OcrDialog = { jobId: string; annotation: PdfAnnotation; imagePath: string; progress: number; status: string; text: string; error?: string };

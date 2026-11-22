@@ -7,7 +7,7 @@ const { createSmokeWorkspace, cleanupSmokeWorkspace } = require('./smokeWorkspac
 const { waitForFile } = require('./waitForFile.cjs');
 const { noteUI } = require('./noteUi.cjs');
 const root = path.resolve(__dirname, '..');
-const source = 'cursor\n\n> ```js\n> first\n>\n>   第二行😀\n> ```\n\n> | A | B |\n> | :--- | ---: |\n> | **加粗** | target😀 |\n\n> outer\n> > inner\n> > > deepest\n\n#### Heading four\n\n##### Heading five\n\n###### Heading six\n\n## **Outline** `code` &amp; ##\n\n\\*literal\\* &amp; &#x1F600;\n\ncontrol A&#10;B\n\n```text\n\\*literal\\* &amp;\n```\n';
+const source = 'cursor\n\n> ```js\n> first\n>\n>   第二行😀\n> ```\n\n> | A | B |\n> | :--- | ---: |\n> | **加粗** | target😀 |\n\n> outer *explicit emphasis*\n> > inner\n> > > deepest\n\n#### Heading four\n\n##### Heading five\n\n###### Heading six\n\n## **Outline** `code` &amp; ##\n\n\\*literal\\* &amp; &#x1F600;\n\ncontrol A&#10;B\n\n```text\n\\*literal\\* &amp;\n```\n';
 
 test('nested Markdown presentation maps clicks to source and preserves paste, outline, undo and saved content', { timeout: 90000 }, async t => {
   const workspace = await createSmokeWorkspace('markdown-presentation'); let app;
@@ -16,7 +16,8 @@ test('nested Markdown presentation maps clicks to source and preserves paste, ou
     await fs.mkdir(workspace.fixture, { recursive: true });
     const note = path.join(workspace.fixture, 'structure.md'), pasteNote = path.join(workspace.fixture, 'paste.md'), outlineNote = path.join(workspace.fixture, 'outline.md'), guidesNote = path.join(workspace.fixture, 'guides.md'), prefixesNote = path.join(workspace.fixture, 'prefixes.md');
     const guidesSource = 'cursor\n\n  - Parent\n    Continued ' + 'wrapped words '.repeat(18) + '\n\n    Second paragraph\n    - Child\n      Child continuation\n      - Grandchild\n        Deep continuation\n  - Sibling\n\n> - Quoted parent\n>   - Quoted child\n>     Quoted continuation\n\n  - Block parent\n\n    ```text\n    literal code\n    ```\n\n    | A | B |\n    | --- | --- |\n    | x | y |\n\n  Ordinary prose\n';
-    const outlineSource = '<h2 data-zuoren-heading="fake:2">HTML heading</h2>\n\n## <span id="first-md"></span>Same heading\n\n<h2>Another HTML heading</h2>\n\n<span id="second-md"></span>Same heading\n---\n\n> ## Quoted heading\n\n~~~md\n## Code only\n~~~\n';
+    const spacer = 'This paragraph keeps the headings on separate screens.\n\n'.repeat(34);
+    const outlineSource = '<h2 data-zuoren-heading="fake:2">HTML heading</h2>\n\n## <span id="first-md"></span>Same heading\n\n' + spacer + '<h2>Another HTML heading</h2>\n\n<span id="second-md"></span>Same heading\n---\n\n' + spacer + '> ## Quoted heading\n\n' + spacer + '~~~md\n## Code only\n~~~\n';
     const pasteBase = '# Paste base\n';
     const prefixesSource = '# \n\n- bullet body\n\n12. ordered body\n';
     await fs.writeFile(note, source); await fs.writeFile(pasteNote, pasteBase);
@@ -65,6 +66,15 @@ test('nested Markdown presentation maps clicks to source and preserves paste, ou
       assert.ok(depths[2].padding > depths[1].padding && depths[1].padding > depths[0].padding);
       assert.equal(await content.locator('.cm-md-code-preview code').filter({ hasText: '&amp;' }).textContent(), '\\*literal\\* &amp;', 'code is never entity-decoded or reformatted');
       assert.ok((await content.innerText()).includes('*literal* & 😀'), 'inactive prose decodes escapes and entities');
+      const quotedLine = content.locator('.cm-md-quote').filter({ hasText: 'explicit emphasis' });
+      const fontStyle = locator => locator.evaluate(element => getComputedStyle(element).fontStyle);
+      assert.equal(await fontStyle(quotedLine), 'normal');
+      assert.equal(await fontStyle(quotedLine.locator('.cm-md-emphasis')), 'italic');
+      await toPreview();
+      const quotedParagraph = pane.locator('.markdown-preview blockquote p').filter({ hasText: 'explicit emphasis' });
+      assert.equal(await fontStyle(quotedParagraph), 'normal');
+      assert.equal(await fontStyle(quotedParagraph.locator('em')), 'italic');
+      await toEdit();
       const control = await content.locator('.cm-line').filter({ hasText: 'control A' }).evaluate(el => ({ height: el.getBoundingClientRect().height, line: parseFloat(getComputedStyle(el).lineHeight) }));
       assert.ok(control.height < control.line * 1.5, 'decoded newline entities do not introduce untracked CodeMirror line breaks');
       assert.equal(await content.locator('.cm-line.cm-md-quote').filter({ hasText: /^\s*$/ }).count(), 0, 'rendered blocks do not leave an orphan quote line');
@@ -171,6 +181,11 @@ test('nested Markdown presentation maps clicks to source and preserves paste, ou
       await entries.nth(2).waitFor();
       assert.equal(await entries.count(), 3, 'raw HTML and code headings do not enter the source outline');
       const preview = pane.locator('.markdown-preview');
+      await outline.evaluate(element => {
+        element.addEventListener('transitionrun', event => {
+          if (event.target.matches('.outline-location-marker') && event.propertyName === 'transform') element.dataset.testLocationMoved = 'true';
+        });
+      });
       await preview.evaluate(element => {
         window.__outlineScroll = [];
         for (const heading of element.querySelectorAll('h1,h2,h3,h4,h5,h6')) {
@@ -181,11 +196,22 @@ test('nested Markdown presentation maps clicks to source and preserves paste, ou
       for (const [index, id] of ['first-md', 'second-md'].entries()) {
         await entries.nth(index).click();
         assert.equal(await page.evaluate(() => window.__outlineScroll.at(-1)?.id), id, 'outline clicks must not land on HTML or another same-named heading');
+        await page.waitForFunction(i => document.querySelectorAll('.note-outline button:not(.outline-close)')[i]?.getAttribute('aria-current') === 'location', index);
       }
+      if (await page.locator('.app').getAttribute('data-motion') === 'full') {
+        await page.waitForFunction(() => document.querySelector('.note-outline')?.dataset.testLocationMoved === 'true');
+      }
+      await preview.evaluate(element => { element.scrollTop = element.scrollHeight; });
+      await outline.locator('button[aria-current="location"]').filter({ hasText: 'Quoted heading' }).waitFor();
       await entries.nth(2).click();
       assert.equal(await page.evaluate(() => window.__outlineScroll.at(-1)?.text.trim()), 'Quoted heading');
       await toEdit(); await entries.nth(1).click();
       assert.ok((await content.locator('.cm-activeLine').innerText()).includes('second-md'), 'editing jumps to the same source heading');
+      assert.equal(await entries.nth(1).getAttribute('aria-current'), 'location');
+      await content.press('Control+End');
+      await outline.locator('button[aria-current="location"]').filter({ hasText: 'Quoted heading' }).waitFor();
+      await pane.locator('.cm-scroller').evaluate(element => { element.scrollTop = element.scrollHeight / 2; });
+      await entries.nth(1).and(outline.locator('[aria-current="location"]')).waitFor();
       assert.equal(await sourceText(), outlineSource);
       assert.equal(await fs.readFile(outlineNote, 'utf8'), outlineSource, 'outline navigation never changes stored Markdown');
     });

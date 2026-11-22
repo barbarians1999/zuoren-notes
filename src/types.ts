@@ -269,7 +269,8 @@ export interface ReaderApi {
   readNote(path: string): Promise<NoteRead>;
   saveNote(input: NoteSaveInput): Promise<SaveNoteResult>;
   noteHistory(path: string): Promise<HistoryEntry[]>;
-  openPdf(path: string): Promise<{ data: Uint8Array; meta: PdfMeta; path: string }>;
+  openPdf(path: string): Promise<{ data?: Uint8Array; size?: number; rangeMode?: boolean; meta: PdfMeta; path: string }>;
+  readPdfRange(input: { path: string; begin: number; end: number }): Promise<Uint8Array>;
   savePdfMeta(input: { path: string; meta: PdfMeta }): Promise<boolean>;
   openEpub(path: string): Promise<{ data: Uint8Array; meta: EpubMeta; warnings?: string[]; path: string }>;
   saveEpubMeta(input: { path: string; meta: EpubMeta }): Promise<boolean>;

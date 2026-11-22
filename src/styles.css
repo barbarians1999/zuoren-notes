@@ -878,7 +878,6 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .epub-content-row { position: relative; display: flex; flex: 1; min-height: 0; min-width: 0; overflow: clip; }
 /* Keep navigation beside the book so it cannot hide paginated text. */
 .note-outline.epub-outline { position: relative; z-index: 6; flex: 0 0 min(186px, 40%); width: min(186px, 40%); min-width: 0; }
-.note-outline button[aria-current="location"] { color: var(--accent); background: transparent; }
 
 .epub-reader-shell {
   position: relative;
@@ -1324,7 +1323,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   background-size: var(--md-list-guide-sizes, auto), calc(var(--md-quote-depth) * var(--md-quote-step)) 100%;
   background-repeat: no-repeat;
 }
-.markdown-source-editor .cm-md-quote { padding-left: calc(var(--md-quote-depth) * var(--md-quote-step)) !important; border-left: 0; color: var(--quote); font-style: italic; }
+.markdown-source-editor .cm-md-quote { padding-left: calc(var(--md-quote-depth) * var(--md-quote-step)) !important; border-left: 0; color: var(--quote); }
 .cm-md-block-wrapper { position: relative; display: flow-root; min-width: 0; padding-left: calc(var(--md-quote-depth) * var(--md-quote-step) + var(--md-list-indent, 0px)); }
 .cm-md-container-marker { position: absolute; top: .7em; color: var(--accent); font-weight: 700; cursor: text; }
 .cm-md-literal { white-space: normal; }
@@ -1784,12 +1783,14 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   .compact-note-controls :is(.workspace-icon-action, .workspace-mode-switch button) { width: 24px; min-width: 24px; min-height: 28px; height: 28px; padding: 3px; }
   .compact-note-controls .workspace-mode-switch { padding: 0; gap: 1px; }
 }
-.note-outline, .pdf-outline { width: 186px; flex: none; overflow: auto; border-left: 1px solid var(--line); background: var(--surface-subtle); padding: 10px 5px; scrollbar-width: thin; }
+.note-outline, .pdf-outline { position: relative; width: 186px; flex: none; overflow: auto; border-left: 1px solid var(--line); background: var(--surface-subtle); padding: 10px 5px; scrollbar-width: thin; }
 .outline-title { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--text-faint); padding: 4px 6px 10px 9px; }
 .outline-close { width: 22px !important; min-width: 22px !important; height: 22px; min-height: 22px; padding: 0 !important; display: grid !important; place-items: center; border-radius: var(--control-radius); color: var(--text-faint); }
 .outline-close:hover { background: var(--hover) !important; color: var(--accent) !important; }
 .note-outline button, .pdf-outline button { display: flex; gap: 6px; width: 100%; padding: 7px 10px; text-align: left; font-size: 12px; border-radius: 4px; color: var(--text-muted); line-height: 1.5; }
 .note-outline button:hover, .pdf-outline button:hover { background: transparent; color: var(--accent); }
+.app .note-outline button[aria-current="location"] { color: var(--accent); background: var(--accent-soft); }
+.note-outline .outline-location-marker { position: absolute; z-index: 1; top: -8px; left: 5px; width: 3px; height: 16px; border-radius: 3px; background: var(--accent); pointer-events: none; transition: transform var(--motion-feedback) var(--motion-ease-enter); }
 .note-outline small { opacity: .55; font-size: 9px; }
 .note-outline span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .note-outline p, .pdf-outline p { padding: 0 10px; color: var(--text-faint); font-size: 11px; line-height: 1.7; }

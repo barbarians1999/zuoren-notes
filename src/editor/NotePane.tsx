@@ -19,11 +19,11 @@ import { MarkdownWorkspaceHeader } from '../markdownWorkspace';
 import { createPortal } from 'react-dom';
 import { ContextMenu } from '../ui/overlays';
 import { taskToggleChange } from './markdownTasks';
-import { cancelSourceOutlineMotion, OutlineScrollMotion, outlineTargetTop, scrollSourceOutline } from './outlineScrollMotion';
+import { cancelSourceOutlineMotion, OutlineScrollMotion, outlineTargetTop, scrollSourceOutline, sourceOutlineScrolling } from './outlineScrollMotion';
 export function NotePane({ paneId, onActivate, findCommand, note, text, mode, setMode, onSave, onJump, revision, label, caption, scrollMemory, onScrollMemory, excerptRegister, hidden, sharedDocument, tab, unifiedHeader, headerTarget, headerControls }: { paneId: FindCommand['pane']; onActivate: (pane: FindCommand['pane']) => void; findCommand: FindCommand | null; note: NoteRead | null; text: string; mode: NoteMode; setMode: (mode: NoteMode) => void; onSave: () => void; onJump: (anchor: ReaderAnchor, fromNotePath?: string) => void; revision: number; label?: string; caption?: React.ReactNode; scrollMemory: MarkdownScrollMemory[]; onScrollMemory: (entry: MarkdownScrollMemory) => void; excerptRegister?: React.MutableRefObject<(block: string) => boolean>; hidden?: boolean; sharedDocument: NoteDocument | null; tab: NoteViewState | null; unifiedHeader?: boolean; headerTarget?: HTMLElement | null; headerControls?: React.ReactNode }) {
   const [outline, setOutline] = useState(false);
   const reducedMotion = useContext(ReducedMotionContext);
-  const [headings, setHeadings] = useState<{ text: string; level: number; line?: number }[]>([]);
+  const [activeHeading, setActiveHeading] = useState<number | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [findText, setFindText] = useState('');
@@ -277,10 +277,55 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
     () => (note?.path && outlineSource ? markdownOutline(outlineSource) : []),
     [note?.path, outlineSource, revision, text],
   );
+  const onCaretLine = useCallback((line: number) => {
+    if (!outline || hidden || mode !== 'edit') return;
+    let low = 0, high = currentHeadings.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (currentHeadings[mid].line <= line) low = mid + 1;
+      else high = mid;
+    }
+    setActiveHeading(low > 0 ? currentHeadings[low - 1].line : null);
+  }, [currentHeadings, hidden, mode, outline]);
   useEffect(() => {
-    if (!outline || !outlineSource || !note?.path) return;
-    setHeadings(previous => JSON.stringify(previous) === JSON.stringify(currentHeadings) ? previous : currentHeadings);
-  }, [outline, outlineSource, note?.path, currentHeadings]);
+    const container = host.current;
+    if (!outline || hidden || !container || !currentHeadings.length) { setActiveHeading(null); return; }
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      if (mode === 'edit' && sourceView?.scrollDOM.clientHeight) {
+        if (sourceOutlineScrolling(sourceView)) return;
+        const box = sourceView.scrollDOM.getBoundingClientRect();
+        const block = sourceView.lineBlockAtHeight(Math.max(0, box.top + Math.min(40, box.height * .2) - sourceView.documentTop));
+        onCaretLine(sourceView.state.doc.lineAt(block.from).number - 1);
+      } else if (mode === 'preview') {
+        if (outlineScroll.current?.active) return;
+        const preview = container.querySelector<HTMLElement>('.markdown-preview[data-preview-current="true"]');
+        const nonce = preview?.dataset.headingNonce;
+        if (!preview || !nonce) { setActiveHeading(null); return; }
+        const box = preview.getBoundingClientRect();
+        const probe = box.top + Math.min(40, box.height * .2);
+        let low = 0, high = currentHeadings.length;
+        while (low < high) {
+          const mid = (low + high) >>> 1;
+          const mark = preview.querySelector(`[data-zuoren-heading="${nonce}:${currentHeadings[mid].line}"]`);
+          if (mark && mark.getBoundingClientRect().top <= probe) low = mid + 1;
+          else high = mid;
+        }
+        setActiveHeading(low > 0 ? currentHeadings[low - 1].line : null);
+      }
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(update); };
+    const scroll = (event: Event) => {
+      if (event.target === sourceView?.scrollDOM || (event.target instanceof Element && event.target.matches('.markdown-preview'))) schedule();
+    };
+    container.addEventListener('scroll', scroll, true);
+    const resize = new ResizeObserver(schedule); resize.observe(container);
+    const preview = mode === 'preview' ? new MutationObserver(schedule) : null;
+    preview?.observe(container, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-preview-current', 'data-heading-nonce'] });
+    schedule();
+    return () => { cancelAnimationFrame(frame); container.removeEventListener('scroll', scroll, true); resize.disconnect(); preview?.disconnect(); };
+  }, [currentHeadings, hidden, mode, note?.path, onCaretLine, outline, sourceView, tab?.id]);
   useEffect(() => {
     setSelectedUnits(0); setParagraphUnits(0);
     const updateSelection = () => {
@@ -499,19 +544,19 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
       {imageMessage && <button aria-label="关闭编辑提示" onClick={() => setImageMessage('')}>×</button>}
     </div>}
     <div className="note-body" ref={host} onContextMenu={mode === 'edit' ? openClipboardMenu : undefined}>
-      {!note ? <div className="empty-state"><FileText size={28}/><p>打开或新建 Markdown 笔记</p><small>编辑后自动保存</small></div> : <div className="note-content"><div className="note-editor-surface" style={{ display: mode === 'preview' ? 'none' : 'flex' }}><MarkdownSourceEditor notePath={note.path} onView={setSourceView} onSelectionChange={handleSourceSelection} onMessage={setImageMessage} sharedDocument={sharedDocument!} tab={tab!}/></div>{mode === 'preview' && <MarkdownPreview notePath={note.path} text={text} headings={currentHeadings} onJump={stableJump} onToggleTask={toggleTask} onOpenLink={openMarkdownLink}/>}</div>}
+      {!note ? <div className="empty-state"><FileText size={28}/><p>打开或新建 Markdown 笔记</p><small>编辑后自动保存</small></div> : <div className="note-content"><div className="note-editor-surface" style={{ display: mode === 'preview' ? 'none' : 'flex' }}><MarkdownSourceEditor notePath={note.path} onView={setSourceView} onSelectionChange={handleSourceSelection} onCaretLine={onCaretLine} onMessage={setImageMessage} sharedDocument={sharedDocument!} tab={tab!}/></div>{mode === 'preview' && <MarkdownPreview notePath={note.path} text={text} headings={currentHeadings} onJump={stableJump} onToggleTask={toggleTask} onOpenLink={openMarkdownLink}/>}</div>}
       <OutlinePanel open={outline} label="Markdown 大纲" emptyText="使用标题组织笔记后，目录会出现在这里。"
         onClose={() => setOutline(false)}
         returnFocus={() => document.querySelector(`[data-note-controls="${paneId}"] [data-outline-toggle]`) || host.current?.querySelector('[data-outline-toggle]') || null}
-        items={headings.map((item, index) => ({ id: String(index), label: item.text, depth: item.level - 1, indicator: String(item.level) }))}
-        onSelect={(entry, { keyboard }) => { const index = Number(entry.id), item = headings[index]; if (!item) return;
-          if (mode === 'edit' && sourceView && item.line !== undefined) { const line = sourceView.state.doc.line(Math.min(item.line + 1, sourceView.state.doc.lines)); scrollSourceOutline(sourceView, line.from, !keyboard); return; }
+        items={currentHeadings.map((item, index) => ({ id: String(index), label: item.text, depth: item.level - 1, indicator: String(item.level), active: item.line === activeHeading }))}
+        onSelect={(entry, { keyboard }) => { const index = Number(entry.id), item = currentHeadings[index]; if (!item) return;
+          if (mode === 'edit' && sourceView) { const line = sourceView.state.doc.line(Math.min(item.line + 1, sourceView.state.doc.lines)); if (scrollSourceOutline(sourceView, line.from, !keyboard)) setActiveHeading(item.line); return; }
           const preview = host.current?.querySelector<HTMLElement>('.markdown-preview'), nonce = preview?.dataset.headingNonce;
           if (preview?.dataset.previewCurrent === 'true' && nonce && item.line !== undefined) {
             const heading = preview.querySelector(`[data-zuoren-heading="${nonce}:${item.line}"]`); if (!heading) return;
             heading.scrollIntoView?.({ block: 'start', behavior: 'auto' });
             if (outlineScroll.current?.host !== preview) { outlineScroll.current?.destroy(); outlineScroll.current = new OutlineScrollMotion(preview); }
-            outlineScroll.current.start(() => preview.dataset.previewCurrent === 'true' && preview.dataset.headingNonce === nonce ? outlineTargetTop(preview, heading) : null);
+            if (outlineScroll.current.start(() => preview.dataset.previewCurrent === 'true' && preview.dataset.headingNonce === nonce ? outlineTargetTop(preview, heading) : null)) setActiveHeading(item.line);
           } }}/>
     </div>
     <ContextMenu open={!!clipboardMenu && !hidden && mode === 'edit'} x={clipboardMenu?.x ?? 0} y={clipboardMenu?.y ?? 0}

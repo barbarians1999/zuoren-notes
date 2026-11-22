@@ -1,6 +1,5 @@
-import { PdfPane } from './readers/PdfPane';
+import { EmptyReaderPane } from './readers/EmptyReaderPane';
 import { createPdfTextAction, type PdfTextActionHandler } from './readers/pdfTextAction';
-import { EpubPane } from './readers/EpubPane';
 import { ReaderSession, type ReaderSaveFailure } from './readers/readerSession';
 import { createExcerptFlow, type ExcerptFlowFailure, type ExcerptFlowResult } from './readers/excerptFlow';
 import type { PdfExcerptContext } from './readers/pdfRegionAction';
@@ -10,7 +9,7 @@ import { useFileMoveUi } from './workspace/fileMoveUi';
 import { NoteGroupPane } from './workspace/NoteGroupPane';
 import { ConflictDialog, UnsavedDialog, ReaderUnsavedDialog, TrashConfirmation } from './workspace/DocumentDialogs';
 import { reader, NOTE_BODY_FONTS, type Layout, type ThemePreference, type NoteBodyFont, type ActivePdf, type ActiveEpub, type FileContextMenu, type InlineEntryEdit, type FindCommand } from './readerContext';
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import React, { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ArrowLeft, ChevronRight, Copy, FileText, Folder, FolderOpen, FolderPlus, Maximize2, Minimize2, Minus, Monitor, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings2, Square, X } from 'lucide-react';
 import { diagnostics } from './diagnostics.cjs';
@@ -33,6 +32,36 @@ import './ui/desk-glass.css';
 import { NOTE_FONT_FACES_CSS } from './noteFonts';
 
 Object.defineProperty(window, 'readerDiagnostics', { configurable: true, value: Object.freeze({ snapshot: () => diagnostics.snapshot() }) });
+
+let pdfPaneModulePromise: Promise<typeof import('./readers/PdfPane')> | null = null;
+function loadPdfPane() {
+  if (!pdfPaneModulePromise) {
+    pdfPaneModulePromise = import('./readers/PdfPane')
+      .then(mod => {
+        mod.warmPdfWorker();
+        return mod;
+      })
+      .catch(error => {
+        pdfPaneModulePromise = null;
+        throw error;
+      });
+  }
+  return pdfPaneModulePromise;
+}
+
+let epubPaneModulePromise: Promise<typeof import('./readers/EpubPane')> | null = null;
+function loadEpubPane() {
+  if (!epubPaneModulePromise) {
+    epubPaneModulePromise = import('./readers/EpubPane').catch(error => {
+      epubPaneModulePromise = null;
+      throw error;
+    });
+  }
+  return epubPaneModulePromise;
+}
+
+const LazyPdfPane = React.lazy(() => loadPdfPane().then(mod => ({ default: mod.PdfPane })));
+const LazyEpubPane = React.lazy(() => loadEpubPane().then(mod => ({ default: mod.EpubPane })));
 
 const readThemePreference = (): ThemePreference => {
   try {
@@ -147,7 +176,14 @@ function App() {
   const workspaceVersion = useSyncExternalStore(workspace.subscribe, workspace.getSnapshot);
   const readerSessionRef = useRef<ReaderSession | null>(null);
   if (!readerSessionRef.current) readerSessionRef.current = new ReaderSession({
-    openPdf: path => reader().openPdf(path), openEpub: path => reader().openEpub(path),
+    openPdf: async path => {
+      const [loaded] = await Promise.all([reader().openPdf(path), loadPdfPane()]);
+      return loaded;
+    },
+    openEpub: async path => {
+      const [loaded] = await Promise.all([reader().openEpub(path), loadEpubPane()]);
+      return loaded;
+    },
     savePdfMeta: input => reader().savePdfMeta(input), saveEpubMeta: input => reader().saveEpubMeta(input),
   }, setMessage);
   const readerSession = readerSessionRef.current;
@@ -289,60 +325,89 @@ function App() {
       const fromPath = (path: string): WorkspaceFile => ({ path, name: path.split(/[\\/]/).pop() || path, relative: path, type: /\.pdf$/i.test(path) ? 'pdf' : /\.epub$/i.test(path) ? 'epub' : 'md' });
       const warn = (text: string) => setMessage(previous => previous ? `${previous}；${text}` : text);
       try {
-        const launch = await reader().getLaunchItems();
-        const settings = await reader().getSettings();
+        const [launch, settings] = await Promise.all([reader().getLaunchItems(), reader().getSettings()]);
         if (settings.settingsReadFailed === true) throw new Error(settings.warning || '无法读取上次工作现场，已保留原恢复记录。');
         sessionRecovery.current.seed(settings.session);
         if (settings.warning) warn(settings.warning);
         const session = !launch.root && !launch.files.length ? settings.session : null;
         const savedRoot = session?.root || settings.roots?.[0] || '';
-        if (launch.root) {
-          setRoot(launch.root); setFiles(launch.files); await loadDirectory(launch.root, launch.root);
-        } else if (savedRoot) {
+        const shouldWarmPdf = launch.files[0]?.type === 'pdf' || (!launch.root && !launch.files.length && !!settings.session?.activePdf);
+        const shouldWarmEpub = launch.files[0]?.type === 'epub' || (!launch.root && !launch.files.length && !!settings.session?.activeEpub);
+        if (shouldWarmPdf) void loadPdfPane().catch(() => {});
+        if (shouldWarmEpub) void loadEpubPane().catch(() => {});
+        const loadSavedRoot = async () => {
+          if (!savedRoot) return false;
+          const currentDirectory = session?.currentDirectory || savedRoot;
           try {
-            const listing = await reader().listWorkspace(savedRoot);
-            setRoot(savedRoot); setFiles(listing.files);
-            const currentDirectory = session?.currentDirectory || savedRoot;
-            try { await loadDirectory(savedRoot, currentDirectory); } catch { await loadDirectory(savedRoot, savedRoot); warn('上次打开的文件夹已失效，已回到资料根目录'); }
-          } catch { warn('上次资料文件夹不可用，已跳过'); }
-        }
-        if (launch.files.length) {
-          setFiles(previous => [...launch.files, ...previous.filter(old => !launch.files.some(item => item.path === old.path))]);
-          // One initial request only: a second automatic open could override
-          // a sidebar choice made while the first recovery check was pending.
-          const opening = openSequence.current + 1;
-          await openEntry(launch.files[0], { replaceCurrentNote: !!launch.root });
-          if (!launch.root) {
-            for (const file of launch.files.slice(1).filter(file => file.type === 'md')) {
-              if (openSequence.current !== opening) break;
-              try { await sessionRecovery.current.open(workspace, file.path, 'primary', true); }
-              catch { warn(`笔记不可用，恢复记录已保留：${file.name}`); }
-            }
-            if (openSequence.current === opening && launch.files[0].type === 'md') {
-              const first = workspace.groups.primary.tabs.find(tab => tab.document?.note.path === launch.files[0].path);
-              if (first) workspace.activate('primary', first.id);
+            await loadDirectory(savedRoot, currentDirectory);
+            setRoot(savedRoot);
+            return true;
+          } catch {
+            try {
+              await loadDirectory(savedRoot, savedRoot);
+              setRoot(savedRoot);
+              if (currentDirectory !== savedRoot) warn('上次打开的文件夹已失效，已回到资料根目录');
+              return true;
+            } catch {
+              warn('上次资料文件夹不可用，已跳过');
+              return false;
             }
           }
+        };
+        if (launch.files.length) {
+          setFiles(previous => [...launch.files, ...previous.filter(old => !launch.files.some(item => item.path === old.path))]);
+          const directoryTask = launch.root
+            ? (setRoot(launch.root), setFiles(launch.files), loadDirectory(launch.root, launch.root))
+            : loadSavedRoot();
+          const openLaunchFilesTask = (async () => {
+            // One initial request only: a second automatic open could override
+            // a sidebar choice made while the first recovery check was pending.
+            const opening = openSequence.current + 1;
+            await openEntry(launch.files[0], { replaceCurrentNote: !!launch.root });
+            if (!launch.root) {
+              for (const file of launch.files.slice(1).filter(file => file.type === 'md')) {
+                if (openSequence.current !== opening) break;
+                try { await sessionRecovery.current.open(workspace, file.path, 'primary', true); }
+                catch { warn(`笔记不可用，恢复记录已保留：${file.name}`); }
+              }
+              if (openSequence.current === opening && launch.files[0].type === 'md') {
+                const first = workspace.groups.primary.tabs.find(tab => tab.document?.note.path === launch.files[0].path);
+                if (first) workspace.activate('primary', first.id);
+              }
+            }
+          })();
+          await Promise.all([directoryTask, openLaunchFilesTask]);
+        } else if (launch.root) {
+          setRoot(launch.root); setFiles(launch.files); await loadDirectory(launch.root, launch.root);
         } else if (session) {
           setSidebar(session.sidebar); setSplitAt(session.splitAt);
           setScrollMemory(session.version !== 1 ? session.scrollMemory : []);
           const restoring = openSequence.current;
-          await workspace.restore(session);
-          sessionRecovery.current.snapshot(workspace.documents.values());
-          if (!savedRoot && settings.recentFiles?.length) setFiles(settings.recentFiles.map(fromPath));
-          if (openSequence.current === restoring && session.activePdf) {
-            try {
-              const result = await readerSession.open(session.activePdf.path, 'pdf', { name: fromPath(session.activePdf.path).name, page: session.activePdf.page, scale: session.activePdf.scale });
-              if (result.status === 'save-failed') warn('上次阅读状态尚未保存，已保留当前会话');
-            } catch { warn(`上次 PDF 不可用，已跳过：${fromPath(session.activePdf.path).name}`); }
-          } else if (openSequence.current === restoring && session.activeEpub) {
-            try {
-              const result = await readerSession.open(session.activeEpub, 'epub', { name: fromPath(session.activeEpub).name });
-              if (result.status === 'opened' && result.warnings?.length) warn(result.warnings.join('；'));
-            } catch { warn(`上次 EPUB 不可用，已跳过：${fromPath(session.activeEpub).name}`); }
-          }
+          const openReaderTask = (async () => {
+            if (openSequence.current !== restoring) return;
+            if (session.activePdf) {
+              try {
+                const result = await readerSession.open(session.activePdf.path, 'pdf', { name: fromPath(session.activePdf.path).name, page: session.activePdf.page, scale: session.activePdf.scale });
+                if (result.status === 'save-failed') warn('上次阅读状态尚未保存，已保留当前会话');
+              } catch { warn(`上次 PDF 不可用，已跳过：${fromPath(session.activePdf.path).name}`); }
+            } else if (session.activeEpub) {
+              try {
+                const result = await readerSession.open(session.activeEpub, 'epub', { name: fromPath(session.activeEpub).name });
+                if (result.status === 'opened' && result.warnings?.length) warn(result.warnings.join('；'));
+              } catch { warn(`上次 EPUB 不可用，已跳过：${fromPath(session.activeEpub).name}`); }
+            }
+          })();
+          const restoreWorkspaceTask = (async () => {
+            await workspace.restore(session);
+            sessionRecovery.current.snapshot(workspace.documents.values());
+          })();
+          const [rootLoaded] = await Promise.all([loadSavedRoot(), restoreWorkspaceTask, openReaderTask]);
+          if (!rootLoaded && settings.recentFiles?.length) setFiles(settings.recentFiles.map(fromPath));
           if (openSequence.current === restoring) { setLayout(session.layout); setActiveSurface(session.layout === 'read' ? 'reader' : 'note'); }
-        } else if (settings.recentFiles?.length && !savedRoot) setFiles(settings.recentFiles.map(fromPath));
+        } else {
+          const rootLoaded = await loadSavedRoot();
+          if (!rootLoaded && settings.recentFiles?.length) setFiles(settings.recentFiles.map(fromPath));
+        }
       } catch (error) { setMessage(`恢复上次位置失败：${error instanceof Error ? error.message : String(error)}`); }
       finally { setSessionReady(true); }
     })();
@@ -872,7 +937,11 @@ function App() {
       </aside>}
       <main className="main">
         <div ref={panesRef} className={'panes ' + layout + (noteSplit ? ' dual-notes' : '')} style={{ '--split-at': `${splitAt}%` } as React.CSSProperties}>
-          {(layout === 'read' || layout === 'split') && (activeEpub ? <EpubPane key={activeEpub.path} epub={activeEpub} theme={resolvedTheme} noteBodyFont={noteBodyFont} readingSize={readingSize} headerTarget={readerHeaderTarget} active={activeSurface === 'reader'} closing={readerClosing} onActivate={() => setActiveSurface('reader')} onClose={() => void closeEpub()} onMeta={change => readerSession.updateEpub(change, activeEpub)} onMessage={setMessage} onExcerpt={insertEpubExcerpt} onSelectionAction={saveEpubSelection} excerptTarget={activeDoc ? (workspace.activeGroup === 'secondary' ? '摘录到右栏' : '摘录到当前笔记') : null} target={isEpubAnchor(target) ? target : null}/> : <PdfPane onActivate={() => setActiveSurface('reader')} dark={THEMES[resolvedTheme].colorScheme === 'dark'} pdf={activePdf} page={page} setPage={value => readerSession.setPage(value)} scale={scale} setScale={value => readerSession.setScale(value)} fullscreen={windowState.fullscreen} onToggleFullscreen={() => { void reader().windowControl('fullscreen'); }} onMeta={change => activePdf ? readerSession.updatePdf(change, activePdf) : Promise.resolve(false)} captureExcerpt={capturePdfExcerpt} onTextAction={onPdfTextAction} canExcerpt={!!activeDoc && !activeDoc.blocked()} target={target && 'pdfId' in target ? target : null} onMessage={setMessage} headerTarget={layout === 'split' || layout === 'read' ? readerHeaderTarget : null}/>)}
+          {(layout === 'read' || layout === 'split') && (activeEpub
+            ? <Suspense fallback={<section className="pane epub-pane"><div className="empty-state">正在载入电子书…</div></section>}><LazyEpubPane key={activeEpub.path} epub={activeEpub} theme={resolvedTheme} noteBodyFont={noteBodyFont} readingSize={readingSize} headerTarget={readerHeaderTarget} active={activeSurface === 'reader'} closing={readerClosing} onActivate={() => setActiveSurface('reader')} onClose={() => void closeEpub()} onMeta={change => readerSession.updateEpub(change, activeEpub)} onMessage={setMessage} onExcerpt={insertEpubExcerpt} onSelectionAction={saveEpubSelection} excerptTarget={activeDoc ? (workspace.activeGroup === 'secondary' ? '摘录到右栏' : '摘录到当前笔记') : null} target={isEpubAnchor(target) ? target : null}/></Suspense>
+            : activePdf
+              ? <Suspense fallback={<section className="pane pdf-pane"><div className="empty-state">正在载入 PDF…</div></section>}><LazyPdfPane onActivate={() => setActiveSurface('reader')} dark={THEMES[resolvedTheme].colorScheme === 'dark'} pdf={activePdf} page={page} setPage={value => readerSession.setPage(value)} scale={scale} setScale={value => readerSession.setScale(value)} fullscreen={windowState.fullscreen} onToggleFullscreen={() => { void reader().windowControl('fullscreen'); }} onMeta={change => activePdf ? readerSession.updatePdf(change, activePdf) : Promise.resolve(false)} captureExcerpt={capturePdfExcerpt} onTextAction={onPdfTextAction} canExcerpt={!!activeDoc && !activeDoc.blocked()} target={target && 'pdfId' in target ? target : null} onMessage={setMessage} headerTarget={layout === 'split' || layout === 'read' ? readerHeaderTarget : null}/></Suspense>
+              : <EmptyReaderPane fullscreen={windowState.fullscreen} onToggleFullscreen={() => { void reader().windowControl('fullscreen'); }} onActivate={() => setActiveSurface('reader')} headerTarget={layout === 'split' || layout === 'read' ? readerHeaderTarget : null}/>)}
           {(layout === 'split' || noteSplit) && <PaneSplitter key={'splitter:' + (noteSplit ? 'notes' : activeEpub?.path || activePdf?.path || 'reader')} container={panesRef} header={layout === 'split' ? splitHeaderRef : undefined} ratio={splitAt} onChange={setSplitAt} label={noteSplit ? '调整左右笔记宽度' : '调整阅读与笔记宽度'} deferred={!!activeEpub}/>}
           {(['primary', 'secondary'] as const).map(group => <NoteGroupPane key={group} workspace={workspace} group={group}
             split={noteSplit}

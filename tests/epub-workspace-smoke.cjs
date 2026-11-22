@@ -179,6 +179,7 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
     await page.getByRole('button', { name: '展开 EPUB 大纲', exact: true }).click();
     const outline = page.getByRole('complementary', { name: 'EPUB 大纲', exact: true });
     await outline.waitFor();
+    await outline.locator('button[aria-current="location"]').filter({ hasText: '第一章' }).waitFor();
     await outline.evaluate(async element => { await Promise.all(element.getAnimations().map(animation => animation.finished)); });
     await assertOutlineLayout();
     await page.getByRole('button', { name: '收起 EPUB 大纲', exact: true }).click();
@@ -186,6 +187,7 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
     await page.getByRole('button', { name: '展开 EPUB 大纲', exact: true }).click();
     await outline.getByRole('button', { name: '第二章中段', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('.epub-pane')?.dataset.currentChapter === '第二章');
+    await outline.getByRole('button', { name: '第二章中段', exact: true }).and(outline.locator('[aria-current="location"]')).waitFor();
     await waitForFile(metaPath, text => JSON.parse(text).cfi.includes('/6/4'));
     const beforeSize = JSON.parse(await fs.readFile(metaPath, 'utf8')).cfi;
     await waitForAnchor(beforeSize, 'the mid-chapter text anchor is visible before closing the outline');
@@ -303,6 +305,11 @@ test('EPUB shares tabs, typography and outline while close failures preserve its
     await assertCompactReaderTab();
     await waitForAnchor(savedAnchor, 'reading-only layout retains the saved text anchor');
     await capture('epub-unified-read-only');
+    await page.getByRole('button', { name: '展开 EPUB 大纲', exact: true }).click();
+    await outline.getByRole('button', { name: '第一章', exact: true }).click();
+    await outline.getByRole('button', { name: '第一章', exact: true }).and(outline.locator('[aria-current="location"]')).waitFor();
+    await page.getByRole('button', { name: '下一页', exact: true }).click();
+    await outline.getByRole('button', { name: '第二章', exact: true }).and(outline.locator('[aria-current="location"]')).waitFor();
     await readerTab.focus(); await page.keyboard.press('Control+w');
     await page.locator('.epub-pane').waitFor({ state: 'detached' });
     assert.equal(await page.getByRole('tab', { name: 'note.md', exact: true }).count(), 1, 'reader Ctrl+W does not close a note');

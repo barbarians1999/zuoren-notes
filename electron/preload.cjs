@@ -37,6 +37,7 @@ const api = {
   checkRecovery: input => invoke('check-recovery', input),
   deleteRecovery: input => invoke('delete-recovery', input),
   openPdf: file => invoke('open-pdf', file),
+  readPdfRange: input => invoke('read-pdf-range', input),
   savePdfMeta: input => invoke('save-pdf-meta', input),
   openEpub: file => invoke('open-epub', file),
   saveEpubMeta: input => invoke('save-epub-meta', input),
