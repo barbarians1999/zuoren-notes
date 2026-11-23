@@ -1,0 +1,16 @@
+# Quiet.md 给左人笔记的参考
+
+2026-11-22 核对 Quiet.md 的 GitHub 主分支 `0f408c4`、公开 Release、官网 Windows 更新清单，以及左人笔记 `740060f` 的源码。结论来自静态审查，未安装运行 Quiet.md。[Quiet.md 源码](https://github.com/s1dashu/quiet-md/tree/0f408c4579eb9300b046532f70d60497d3f77c5d) · [公开 Release](https://github.com/s1dashu/quiet-md/releases/tag/v0.1.13) · [官网更新清单](https://download.quiet.md/latest/update-windows-x64.json)
+
+## 优先参考
+
+1. **给已有的保存历史加一个界面入口。** Quiet.md 展示时间列表，可在原处只读预览、标出改动、再恢复或另存副本。左人笔记在保存前备份磁盘上的旧正文，单次运行中按文件以 30 秒节流，每篇保留最多 20 份，已有 `noteHistory` 读取接口。可以先做时间列表、只读预览和另存副本，再接差异对照与原地恢复。原地恢复应为当前版本留存快照，继续走现有的保存冲突检查，并同步同一文件的已打开视图。[Quiet.md 历史界面](https://github.com/s1dashu/quiet-md/blob/0f408c4579eb9300b046532f70d60497d3f77c5d/src/history.rs#L88-L185) · [恢复和另存](https://github.com/s1dashu/quiet-md/blob/0f408c4579eb9300b046532f70d60497d3f77c5d/src/history.rs#L288-L350) · [左人笔记保存快照](../electron/storage.cjs#L379-L405) · [读取快照](../electron/storage.cjs#L609-L621)
+2. **让搜到的内容更快打开。** Quiet.md 的搜索面板空查询显示最近文档，输入后先排标题命中，再排正文命中，支持方向键与回车，正文摘要标出关键词。其源码按内容变化复用搜索缓存，检索仍逐条比较。左人笔记已有文件名和 Markdown 正文搜索，后端返回命中行，结果按钮目前只打开文件。第一步可以让正文结果直接定位命中，再补键盘导航和标题优先。大资料库测到瓶颈后，再缓存未改动的正文。[Quiet.md 缓存和排序](https://github.com/s1dashu/quiet-md/blob/0f408c4579eb9300b046532f70d60497d3f77c5d/src/search.rs#L174-L229) · [搜索与键盘行为](https://github.com/s1dashu/quiet-md/blob/0f408c4579eb9300b046532f70d60497d3f77c5d/src/search.rs#L397-L438) · [左人笔记搜索接口](../electron/storage.cjs#L588-L607) · [结果点击](../src/main.tsx#L865-L872)
+3. **给长文档留下可重复的性能基线。** Quiet.md 公开合成文档、构建版本、硬件、测试脚本，连续测打字、退格和滚动，报告 P50、P95 与最大值。它的 5.06 ms 是一台 M5 Pro 上旧构建同步绘制的中位数，统计范围只到应用内绘制。左人笔记可在已有的动效诊断之外，用相同的 Windows 测试机持续测长篇中文 Markdown 的打字、删除、滚动及跳转，保留可比较的样本和原始记录。[Quiet.md 性能方法](https://github.com/s1dashu/quiet-md/blob/0f408c4579eb9300b046532f70d60497d3f77c5d/docs/PERFORMANCE.md#L5-L27) · [左人笔记动效诊断](verification-plans/2026-11-05-motion-perf-diagnostics.md)
+
+## 有明确需求再做
+
+- **Obsidian 链接**可以从 `[[文件]]`、`[[文件#标题|别名]]` 的应用内跳转开始。Quiet.md 按笔记库范围解析，相同名字先选当前目录，再按路径长短取舍。目前它的标题分割函数把 `#^block` 当作没有标题，因此可借鉴的范围是笔记和标题级导航。左人笔记可复用现有文件授权、阅读与编辑的链接交互，遇到同名目标时提供选择；反向引用可在实际使用后再加。[Quiet.md 链接解析](https://github.com/s1dashu/quiet-md/blob/0f408c4579eb9300b046532f70d60497d3f77c5d/crates/core/src/markdown.rs#L401-L468) · [Quiet.md 反向引用界面](https://github.com/s1dashu/quiet-md/blob/0f408c4579eb9300b046532f70d60497d3f77c5d/src/editor/links.rs#L1-L38) · [左人笔记本地链接入口](../electron/main.cjs#L363-L387)
+- **正则查找替换**适合反复清理特定格式，有明确需求时可作为现有笔记查找栏的可选项。Quiet.md 的主分支有错误提示、匹配上限和捕获组替换。左人笔记当前是字面查找，进入实现时应先确定所用正则引擎、空匹配和批量修改的范围。[Quiet.md 查找实现](https://github.com/s1dashu/quiet-md/blob/0f408c4579eb9300b046532f70d60497d3f77c5d/src/editor/find.rs#L18-L65) · [左人笔记字面查找](../src/findReplace.ts#L12-L45)
+
+Quiet.md 用 Rust、GPUI 与块树，富文档可存为 DocxXML，白板可嵌入其中。左人笔记的连续 Markdown、PDF／EPUB 分栏和摘录回链已经形成一套阅读写作流程。采用它的历史、搜索交互和基准方法，成本比更换编辑器或引入白板小。下载体积也要使用对应发布的实际资产数据。主分支已经写到 `0.1.14`，README 的 Windows 约 14 MB 是其说明口径，核对时公开 Release 和官网 Windows 更新清单都指向 `0.1.13`，安装包是 27,703,229 字节。[Quiet.md 架构](https://github.com/s1dashu/quiet-md/blob/0f408c4579eb9300b046532f70d60497d3f77c5d/docs/ARCHITECTURE.md#L1-L32) · [主分支 README](https://github.com/s1dashu/quiet-md/blob/0f408c4579eb9300b046532f70d60497d3f77c5d/README.zh-CN.md#L125-L146) · [实际更新清单](https://download.quiet.md/latest/update-windows-x64.json) · [左人笔记说明](../README.md)
