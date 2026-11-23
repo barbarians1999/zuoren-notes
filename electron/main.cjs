@@ -1,5 +1,6 @@
 const { app, BrowserWindow, dialog, ipcMain, protocol, Menu, shell, screen } = require('electron');
 const fs = require('node:fs/promises');
+const fsSync = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { fileURLToPath, pathToFileURL } = require('node:url');
@@ -199,7 +200,11 @@ async function ensureEpub(file, expectedId) {
 function mimeFor(file) {
   return ({ '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml' })[path.extname(file).toLowerCase()] || 'application/octet-stream';
 }
-function ocrResourcePath() { return path.join(app.getAppPath(), 'dist', 'ocr'); }
+function ocrResourcePath() {
+  const packed = path.join(app.getAppPath(), 'dist', 'ocr');
+  const unpacked = packed.replace(/\.asar([\\/]|$)/, '.asar.unpacked$1');
+  return unpacked !== packed && fsSync.existsSync(unpacked) ? unpacked : packed;
+}
 function windowState(window) { return { maximized: window.isMaximized(), fullscreen: window.isFullScreen() }; }
 
 function installHandlers() {

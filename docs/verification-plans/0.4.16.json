@@ -1,0 +1,27 @@
+{
+  "reason": "Directed Windows verification for 0.4.16 startup button font subsetting and post-ready activation, asarUnpack OCR assets, initialVisible PDF target page rendering, and packaged integrity/OCR checks. Full regression, installed upgrade, cross-machine startup benchmarks and macOS are outside this plan.",
+  "source": [
+    "tests/appearance-smoke.cjs",
+    "tests/body-font-smoke.cjs",
+    "tests/pdf-range-smoke.cjs",
+    "tests/pdf-selection-smoke.cjs",
+    "tests/pdf-toolbar-smoke.cjs",
+    "tests/reader-handoff-smoke.cjs",
+    "tests/session-startup-smoke.cjs",
+    "tests/startup-preservation-smoke.cjs",
+    "tests/themes-smoke.cjs",
+    "tests/window-startup-smoke.cjs"
+  ],
+  "packaged": [
+    "tests/appearance-smoke.cjs",
+    "tests/body-font-smoke.cjs",
+    "tests/pdf-range-smoke.cjs",
+    "tests/pdf-selection-smoke.cjs",
+    "tests/pdf-toolbar-smoke.cjs",
+    "tests/reader-handoff-smoke.cjs",
+    "tests/session-startup-smoke.cjs",
+    "tests/startup-preservation-smoke.cjs",
+    "tests/themes-smoke.cjs",
+    "tests/window-startup-smoke.cjs"
+  ]
+}

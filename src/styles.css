@@ -7,7 +7,7 @@
 }
 @font-face {
   font-family: "Zhaoye Buttons";
-  src: url("./assets/SourceHanSansSC-VF.woff2") format("woff2");
+  src: url("./assets/ZhaoyeButtons-Subset.woff2") format("woff2");
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
@@ -1877,11 +1877,13 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .app[data-theme^="constructivist"] { --radius: 10px; --control-radius: 9px; }
 .app[data-theme^="constructivist"] {
   --interface-font: "Cascadia Mono", "Consolas", "Microsoft YaHei UI", "Microsoft YaHei", monospace;
-  --button-font: "Zhaoye Buttons", "Source Han Sans SC", "Microsoft YaHei UI", sans-serif;
-  --note-heading-font: "Zhaoye Heading", "Source Han Serif SC", "SimSun", "Songti SC", "STSong", serif;
   font-family: var(--interface-font);
 }
-.app[data-theme^="constructivist"] button { font-family: var(--button-font); }
+.app[data-session-ready="true"][data-theme^="constructivist"] {
+  --button-font: "Zhaoye Buttons", "Source Han Sans SC", "Microsoft YaHei UI", sans-serif;
+  --note-heading-font: "Zhaoye Heading", "Source Han Serif SC", "SimSun", "Songti SC", "STSong", serif;
+}
+.app[data-theme^="constructivist"] button { font-family: var(--button-font, "Microsoft YaHei UI", sans-serif); }
 .app[data-theme^="constructivist"] :is(.file-row, .document-tab, .folder-crumbs button) { font-family: var(--interface-font); }
 .app[data-theme^="constructivist"] :is(.cm-md-code-language, .pdf-page-label) { font-family: var(--interface-font); }
 .app[data-theme^="constructivist"] .sidebar { border-radius: 0; box-shadow: none; }

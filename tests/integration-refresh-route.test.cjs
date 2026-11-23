@@ -1,11 +1,10 @@
-require('./typescript-loader.cjs');
+const { transformTypeScript } = require('./typescript-loader.cjs');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const vm = require('node:vm');
-const { stripTypeScriptTypes } = require('node:module');
 const { EventEmitter } = require('node:events');
 const { installFileRefreshShortcut } = require('../electron/file-refresh-shortcut.cjs');
 const { combinedWorkspace } = require('./helpers/combined-workspace.cjs');
@@ -28,7 +27,7 @@ async function wiring(workspace, options = {}) {
   const pdf = fs.readFileSync(path.join(__dirname, '../src/readers/PdfPane.tsx'), 'utf8');
   const activeSurfaceRef = { current: 'note' }, scheduledState = [], messages = [];
   const setter = /const setActiveSurface = useCallback\(([\s\S]*?), \[\]\);/.exec(main); assert.ok(setter, 'synchronous activation setter');
-  const compiled = stripTypeScriptTypes('const setSurface = ' + setter[1], { mode: 'transform' });
+  const compiled = transformTypeScript('setSurface.ts', 'const setSurface = ' + setter[1]);
   const setSurface = new Function('activeSurfaceRef', 'setActiveSurfaceState', compiled + ';return setSurface;')(activeSurfaceRef, value => scheduledState.push(value));
   const activatePdf = new Function('setActiveSurface', 'return (' + expression(main, '<LazyPdfPane onActivate={') + ');')(setSurface);
   let focused = 0;

@@ -73,7 +73,7 @@ export function warmPdfWorker(): pdfjsLib.PDFWorker {
 }
 type PdfTool = 'select' | 'highlight' | 'region' | 'note';
 export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen, onToggleFullscreen, onMeta, captureExcerpt, onTextAction, canExcerpt, target, onMessage, onActivate, headerTarget = null }: { dark: boolean; pdf: ActivePdf | null; page: number; setPage: (page: number) => void; scale: number; setScale: (scale: number) => void; fullscreen: boolean; onToggleFullscreen: () => void; onMeta: (change: (current: PdfMeta) => PdfMeta) => Promise<boolean>; captureExcerpt: (source: ActivePdf) => PdfExcerptContext | null; onTextAction: PdfTextActionHandler; canExcerpt: boolean; target: PdfAnchor | null; onMessage: (message: string) => void; onActivate: () => void; headerTarget?: HTMLElement | null }) {
-  const [loadedDocument, setLoadedDocument] = useState<{ path: string; id: string; document: any } | null>(null);
+  const [loadedDocument, setLoadedDocument] = useState<{ path: string; id: string; document: any; initialPage: number } | null>(null);
   // A path change renders before effects dispose the old worker. Never mount
   // the new file's page slots with a document proxy owned by the previous file.
   const document = loadedDocument?.path === pdf?.path && loadedDocument?.id === pdf?.meta.id ? loadedDocument?.document : null;
@@ -276,7 +276,7 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
       if (disposed) return;
       const initialSize = { width: viewport.width, height: viewport.height };
       pageSizeCache.current.set(initialPage, initialSize);
-      setSize(initialSize); setLoadedDocument({ path: pdf.path, id: pdf.meta.id, document: doc }); setPages(doc.numPages);
+      setSize(initialSize); setLoadedDocument({ path: pdf.path, id: pdf.meta.id, document: doc, initialPage }); setPages(doc.numPages);
     }).catch(error => {
       if (!disposed && !failed) {
         failed = true;
@@ -691,6 +691,7 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
               key={pdf.path + index}
               document={document}
               number={pageNumber}
+              initialVisible={pageNumber === loadedDocument?.initialPage}
               scale={scale}
               size={size}
               observeSlot={observeSlot}
@@ -753,8 +754,8 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
   </section>;
 }
 
-const PdfPageSlot = memo(function PdfPageSlot({ document, number, scale, size, observeSlot, pageSizeCache, bitmapCache, renderQueue, waitForScrollIdle, pinned, dark, pdfPath, pdfData, pdfId, pageAnnotations, onMeta, onShowAnnotation, deleting, captureExcerpt, targetActive, onMessage, tool, onOcrChange, textSelection, search }: {
-  document: any; number: number; scale: number; size: { width: number; height: number };
+const PdfPageSlot = memo(function PdfPageSlot({ document, number, initialVisible, scale, size, observeSlot, pageSizeCache, bitmapCache, renderQueue, waitForScrollIdle, pinned, dark, pdfPath, pdfData, pdfId, pageAnnotations, onMeta, onShowAnnotation, deleting, captureExcerpt, targetActive, onMessage, tool, onOcrChange, textSelection, search }: {
+  document: any; number: number; initialVisible: boolean; scale: number; size: { width: number; height: number };
   observeSlot: SlotObserverRegister; pageSizeCache: React.RefObject<Map<number, { width: number; height: number }>>;
   bitmapCache: React.RefObject<PdfBitmapCache>; renderQueue: React.RefObject<PdfRenderQueue>;
   waitForScrollIdle: WaitForScrollIdle;
@@ -765,7 +766,7 @@ const PdfPageSlot = memo(function PdfPageSlot({ document, number, scale, size, o
   onOcrChange: (page: number, active: boolean) => void; textSelection: PdfSelectedPage | null; search: PdfSearchSpec | null;
 }) {
   const host = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(false);
+  const [visible, setVisible] = useState(initialVisible);
   const [actual, setActual] = useState(() => pageSizeCache.current.get(number) || size);
   useEffect(() => {
     let disposed = false;
