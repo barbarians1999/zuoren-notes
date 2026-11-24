@@ -31,6 +31,11 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(-1);
   const [replacing, setReplacing] = useState(false);
+  const [findJumpSeq, setFindJumpSeq] = useState(0);
+  const lastAppliedJumpSeq = useRef(0);
+  const lastFindCommandSeq = useRef(0);
+  const findStateRef = useRef({ findOpen, replaceOpen, findText });
+  findStateRef.current = { findOpen, replaceOpen, findText };
   const [sourceView, setSourceView] = useState<CodeMirrorView | null>(null);
   const [imageMessage, setImageMessage] = useState('');
   const [clipboardMenu, setClipboardMenu] = useState<{ x: number; y: number; selected: boolean } | null>(null);
@@ -174,6 +179,7 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
   useEffect(() => {
     if (lastPath.current === note?.path) return;
     lastPath.current = note?.path;
+    lastAppliedJumpSeq.current = findJumpSeq;
     setSourceSelection(null); setSelectionToolbar(null); setSelectedUnits(0);
     setFindOpen(false); setReplaceOpen(false); setFindText(''); setReplaceText(''); setCurrentIndex(-1);
   }, [note?.path]);
@@ -234,8 +240,22 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
     };
   }, [note?.path, mode, paneId, tab?.id, hidden]);
   useLayoutEffect(() => {
-    if (!findCommand || findCommand.pane !== paneId) return;
+    if (!findCommand || findCommand.pane !== paneId || findCommand.sequence === lastFindCommandSeq.current) return;
+    lastFindCommandSeq.current = findCommand.sequence;
+    const { findOpen: isOpen, replaceOpen: isReplace, findText: currentQuery } = findStateRef.current;
+    if (isOpen && ((findCommand.mode === 'find' && !isReplace) || (findCommand.mode === 'replace' && isReplace))) {
+      closeFind(true);
+      return;
+    }
+    if (isOpen) {
+      const openingReplace = findCommand.mode === 'replace';
+      findFocusTarget.current = openingReplace && currentQuery ? 'replace' : 'find';
+      setReplaceOpen(openingReplace);
+      (findFocusTarget.current === 'replace' ? replaceInput.current : findInput.current)?.focus();
+      return;
+    }
     findFocusTarget.current = 'find';
+    setFindText(''); setReplaceText(''); setCurrentIndex(-1);
     setFindOpen(true); setReplaceOpen(findCommand.mode === 'replace');
     findInput.current?.focus();
   }, [findCommand?.sequence, findCommand?.pane, paneId]);
@@ -258,20 +278,23 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
     return () => observer.disconnect();
   }, [mode, findOpen, note?.path, text, revision]);
   useEffect(() => {
-    if (!findOpen || !activeMatch) return;
+    if (!findOpen || findJumpSeq === lastAppliedJumpSeq.current) return;
     if (mode === 'preview') {
       const root = host.current?.querySelector<HTMLElement>('.markdown-preview');
-      if (root) selectDomMatch(root, previewMap, activeMatch);
+      if (!root) return;
+      if (findText && previewMap.nodes.length === 0 && text.trim().length > 0) return;
+      lastAppliedJumpSeq.current = findJumpSeq;
+      if (activeMatch) selectDomMatch(root, previewMap, activeMatch);
       return;
     }
-    if (sourceView) {
-      if (activeMatch.to > sourceView.state.doc.length) return;
+    if (!sourceView) return;
+    lastAppliedJumpSeq.current = findJumpSeq;
+    if (activeMatch && activeMatch.to <= sourceView.state.doc.length) {
       sourceView.dispatch({ selection: { anchor: activeMatch.from, head: activeMatch.to }, effects: CodeMirrorView.scrollIntoView(activeMatch.from, { y: 'center' }) });
       // Keep keyboard focus in Find/Replace: Enter navigates matches instead
       // of replacing the selected document text with a newline.
-      return;
     }
-  }, [findOpen, mode, activeMatch?.from, activeMatch?.to, sourceView, previewMap]);
+  }, [findOpen, findJumpSeq, mode, activeMatch?.from, activeMatch?.to, sourceView, previewMap, findText, text]);
   const outlineSource = sharedDocument || sourceView;
   const currentHeadings = useMemo(
     () => (note?.path && outlineSource ? markdownOutline(outlineSource) : []),
@@ -427,26 +450,38 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
     };
   }, [sourceView, mode, note?.path, hidden]);
 
-  function navigate(direction: 1 | -1) { setCurrentIndex(stepMatchIndex(matches.length, currentIndex, direction)); }
+  function navigate(direction: 1 | -1) {
+    setCurrentIndex(stepMatchIndex(matches.length, currentIndex, direction));
+    setFindJumpSeq(seq => seq + 1);
+  }
   function toggleReplace() {
     const opening = !replaceOpen;
     findFocusTarget.current = opening ? 'replace' : 'find';
     setReplaceOpen(opening);
   }
-  function closeFind() {
+  function closeFind(restoreEditorFocus = false) {
+    lastAppliedJumpSeq.current = findJumpSeq;
     setFindOpen(false);
-    const preview = host.current?.querySelector('.markdown-preview');
+    setReplaceOpen(false);
+    setFindText('');
+    setReplaceText('');
+    setCurrentIndex(-1);
+    const preview = host.current?.querySelector<HTMLElement>('.markdown-preview');
     const selection = window.getSelection();
     if (preview && selection?.anchorNode && preview.contains(selection.anchorNode)) selection.removeAllRanges();
+    if (restoreEditorFocus) {
+      if (mode === 'edit' && sourceView) sourceView.focus();
+      else if (mode === 'preview') preview?.focus({ preventScroll: true });
+    }
   }
   function onFindKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeFind(); }
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeFind(true); }
     else if (event.key === 'Enter') { event.preventDefault(); navigate(event.shiftKey ? -1 : 1); }
   }
   function onReplaceKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeFind(); }
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeFind(true); }
     else if (event.key === 'Enter') { event.preventDefault(); void replaceCurrent(); }
   }
   function replaceCurrent() {
@@ -461,6 +496,7 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
         sourceView.dispatch({ changes: { from: liveMatch.from, to: liveMatch.to, insert: replaceText }, selection: { anchor: liveMatch.from + replaceText.length }, effects: CodeMirrorView.scrollIntoView(liveMatch.from, { y: 'center' }) });
         const nextMatches = findSourceMatches(sourceView, findText, caseSensitive);
         setCurrentIndex(nextMatches.length ? Math.min(liveIndex, nextMatches.length - 1) : -1);
+        if (nextMatches.length) setFindJumpSeq(seq => seq + 1);
       } finally { queueMicrotask(() => setReplacing(false)); }
       return;
     }
@@ -520,21 +556,25 @@ export function NotePane({ paneId, onActivate, findCommand, note, text, mode, se
     event.preventDefault(); event.stopPropagation(); onSave();
   }}>
     {(() => {
-      const header = <MarkdownWorkspaceHeader path={note?.path || ''} caption={caption} label={label} onSave={onSave} canSave={!!note && (label === '编辑中' || label === '保存失败')} mode={mode === 'preview' ? 'preview' : 'edit'} outline={outline} onFind={() => { findFocusTarget.current = 'find'; setFindOpen(true); setReplaceOpen(false); findInput.current?.focus(); }} onToggleMode={() => setMode(mode === 'preview' ? 'edit' : 'preview')} onToggleOutline={() => setOutline(value => !value)} compact={unifiedHeader} enabled={!!note} controls={headerControls}/>;
+      const header = <MarkdownWorkspaceHeader path={note?.path || ''} caption={caption} label={label} onSave={onSave} canSave={!!note && (label === '编辑中' || label === '保存失败')} mode={mode === 'preview' ? 'preview' : 'edit'} outline={outline} onFind={() => {
+        if (findOpen && !replaceOpen) { closeFind(true); return; }
+        if (findOpen) { findFocusTarget.current = 'find'; setReplaceOpen(false); findInput.current?.focus(); return; }
+        findFocusTarget.current = 'find'; setFindText(''); setReplaceText(''); setCurrentIndex(-1); setFindOpen(true); setReplaceOpen(false); findInput.current?.focus();
+      }} onToggleMode={() => setMode(mode === 'preview' ? 'edit' : 'preview')} onToggleOutline={() => setOutline(value => !value)} compact={unifiedHeader} enabled={!!note} controls={headerControls}/>;
       return unifiedHeader ? headerTarget && createPortal(<div data-note-controls={paneId}>{header}</div>, headerTarget) : header;
     })()}
     {findMotion.present && <div ref={findMotion.ref as React.RefObject<HTMLDivElement | null>} className="find-bar" role="search" aria-label={`查找当前${paneId === 'primary' ? '左' : '右'}栏笔记`} aria-hidden={!findOpen}>
-      <div className="search find-search"><Search size={16} aria-hidden="true"/><input ref={findInput} aria-label="查找文本" placeholder="查找" value={findText} onChange={event => setFindText(event.target.value)} onKeyDown={onFindKeyDown}/></div>
+      <div className="search find-search"><Search size={16} aria-hidden="true"/><input ref={findInput} aria-label="查找文本" placeholder="查找" value={findText} onChange={event => { setFindText(event.target.value); setCurrentIndex(0); setFindJumpSeq(seq => seq + 1); }} onKeyDown={onFindKeyDown}/></div>
       <button type="button" className="find-replace-toggle" aria-label={replaceOpen ? '收起替换' : '展开替换'} title={replaceOpen ? '收起替换' : '展开替换'} aria-expanded={replaceOpen} onClick={toggleReplace}><span aria-hidden="true">替</span></button>
       {replaceOpen && <div className="search find-search"><input ref={replaceInput} aria-label="替换为" placeholder="替换为" value={replaceText} onChange={event => setReplaceText(event.target.value)} onKeyDown={onReplaceKeyDown}/></div>}
       <span className="find-count" aria-live="polite">{matches.length ? `${activeMatch ? currentIndex + 1 : 0} / ${matches.length}` : '0 / 0'}</span>
-      <button type="button" className={caseSensitive ? 'selected' : ''} aria-label="区分大小写" aria-pressed={caseSensitive} title="区分大小写" onClick={() => setCaseSensitive(value => !value)}>Aa</button>
+      <button type="button" className={caseSensitive ? 'selected' : ''} aria-label="区分大小写" aria-pressed={caseSensitive} title="区分大小写" onClick={() => { setCaseSensitive(value => !value); setCurrentIndex(0); setFindJumpSeq(seq => seq + 1); }}>Aa</button>
       <button type="button" aria-label="上一个匹配" title="上一个（Shift+Enter）" disabled={!matches.length} onClick={() => navigate(-1)}>↑</button>
       <button type="button" aria-label="下一个匹配" title="下一个（Enter）" disabled={!matches.length} onClick={() => navigate(1)}>↓</button>
       {replaceOpen && (mode === 'preview'
-        ? <button type="button" className="find-replace-action" onClick={() => setMode('edit')}>切到编辑后替换</button>
+        ? <button type="button" className="find-replace-action" onClick={() => { setMode('edit'); if (findText) setFindJumpSeq(seq => seq + 1); }}>切到编辑后替换</button>
         : <><button type="button" className="find-replace-action" disabled={!activeMatch || replacing} onClick={replaceCurrent}>替换</button><button type="button" className="find-replace-action" disabled={!matches.length || replacing} onClick={replaceAll}>全部替换</button></>)}
-      <button type="button" aria-label="关闭查找" title="关闭（Esc）" onClick={closeFind}>×</button>
+      <button type="button" aria-label="关闭查找" title="关闭（Esc）" onClick={() => closeFind(true)}>×</button>
     </div>}
     {(imageMessage || pendingImage?.error) && <div className="note-image-paste-status" role="status">
       {imageMessage && <span>{imageMessage}</span>}

@@ -302,6 +302,48 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   await page.keyboard.press('Escape');
   await primaryPane.locator('.find-bar').waitFor({ state: 'detached' });
 
+  // Bug 2 & 3 regression: editing elsewhere must not snap back to the find match,
+  // and pressing Ctrl+F twice closes and clears the find box.
+  await primaryPane.locator('.markdown-source-editor .cm-content').click();
+  await page.keyboard.press('Control+f');
+  await primaryPane.locator('.find-bar').waitFor();
+  await primaryPane.getByRole('textbox', { name: '查找文本' }).fill('第一项正文');
+  await primaryPane.getByText('1 / 1', { exact: true }).waitFor();
+  await primaryPane.locator('.markdown-source-editor .cm-content').click();
+  await page.keyboard.press('Control+Home');
+  await page.keyboard.insertText('前缀检查 ');
+  await page.waitForTimeout(150);
+  const editState = await primaryPane.locator('.markdown-source-editor .cm-content').evaluate(el => {
+    const view = el.cmTile?.root?.view;
+    const main = view?.state.selection.main;
+    return {
+      text: view ? view.state.doc.toString() : el.innerText,
+      empty: main ? main.empty : null,
+      head: main ? main.head : null,
+    };
+  });
+  assert.match(editState.text, /^前缀检查 /, 'editing at document start while find is open stays at the edited position');
+  assert.equal(editState.empty, true, 'editing elsewhere must not snap back and select the find match');
+  assert.equal(editState.head, '前缀检查 '.length);
+  await primaryPane.getByText('1 / 1', { exact: true }).waitFor();
+  await primaryPane.getByRole('textbox', { name: '查找文本' }).focus();
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => {
+    const view = document.querySelector('[data-pane-id="primary"] .cm-content')?.cmTile?.root?.view;
+    const sel = view?.state.selection.main;
+    return !!(view && sel && !sel.empty && view.state.sliceDoc(sel.from, sel.to) === '第一项正文');
+  });
+  await page.keyboard.press('Control+f');
+  await primaryPane.locator('.find-bar').waitFor({ state: 'detached' });
+  await page.keyboard.press('Control+f');
+  await primaryPane.locator('.find-bar').waitFor();
+  assert.equal(await primaryPane.getByRole('textbox', { name: '查找文本' }).inputValue(), '', 'reopening after double Ctrl+F clears previous search text');
+  await page.keyboard.press('Escape');
+  await primaryPane.locator('.find-bar').waitFor({ state: 'detached' });
+  await primaryPane.locator('.markdown-source-editor .cm-content').click();
+  await page.keyboard.press('Control+Home');
+  for (let i = 0; i < '前缀检查 '.length; i++) await page.keyboard.press('Delete');
+
   await page.getByRole('button', { name: '收起资料栏', exact: true }).click();
   await page.getByRole('button', { name: '展开资料栏', exact: true }).focus();
   await page.keyboard.press('Control+f');
@@ -330,6 +372,13 @@ test('production UI opens original files, autosaves, searches, annotates and ret
   assert.match(replacedSecondary, /第二栏右栏自动保存/);
   assert.doesNotMatch(replacedSecondary, /独立/);
   assert.match(await fs.readFile(path.join(fixtureRoot, '研究笔记.md'), 'utf8'), /第一项正文/);
+  await secondaryPane.getByRole('textbox', { name: '查找文本' }).focus();
+  await page.keyboard.press('Control+h');
+  await secondaryPane.locator('.find-bar').waitFor({ state: 'detached' });
+  await page.keyboard.press('Control+h');
+  await secondaryPane.locator('.find-bar').waitFor();
+  assert.equal(await secondaryPane.getByRole('textbox', { name: '查找文本' }).inputValue(), '', 'reopening after double Ctrl+H clears find text');
+  assert.equal(await secondaryPane.getByRole('textbox', { name: '替换为' }).inputValue(), '', 'reopening after double Ctrl+H clears replace text');
   stage('dual-pane find/replace passed');
 
   stage('preview: closing secondary find');

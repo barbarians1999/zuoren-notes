@@ -1,0 +1,23 @@
+{
+  "reason": "Directed Windows verification for 0.4.17 covering topbar/PDF immersive window drag regions, Markdown/PDF/EPUB find-and-replace non-jumping edit and double-shortcut cancel/clear, move undo receipt auto-dismiss/close, sidebar file-list drag auto-scroll, and packaged integrity checks. Full regression, installed upgrade, removable-drive recycle checks and macOS are outside this plan.",
+  "source": [
+    "tests/chrome-interaction-smoke.cjs",
+    "tests/editor-polish-smoke.cjs",
+    "tests/epub-search-smoke.cjs",
+    "tests/fullscreen-chrome-smoke.cjs",
+    "tests/note-toolbar-smoke.cjs",
+    "tests/pdf-toolbar-smoke.cjs",
+    "tests/stability-smoke.cjs",
+    "tests/window-startup-smoke.cjs"
+  ],
+  "packaged": [
+    "tests/chrome-interaction-smoke.cjs",
+    "tests/editor-polish-smoke.cjs",
+    "tests/epub-search-smoke.cjs",
+    "tests/fullscreen-chrome-smoke.cjs",
+    "tests/note-toolbar-smoke.cjs",
+    "tests/pdf-toolbar-smoke.cjs",
+    "tests/stability-smoke.cjs",
+    "tests/window-startup-smoke.cjs"
+  ]
+}

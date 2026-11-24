@@ -18,6 +18,9 @@ export function EpubSearchPanel({ open, motionRef, data, toc, onNavigate, onClos
   const needle = query.trim();
   const current = snapshot?.query === needle && snapshot.caseSensitive === caseSensitive ? snapshot : null;
   useEffect(() => {
+    if (!open) { setQuery(''); setSnapshot(null); setActiveCfi(''); }
+  }, [open]);
+  useEffect(() => {
     const token = ++generation.current, controller = new AbortController();
     clearRef.current(); setActiveCfi('');
     if (!needle) { setSnapshot(null); return () => { controller.abort(); generation.current++; }; }

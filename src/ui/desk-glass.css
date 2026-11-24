@@ -333,7 +333,7 @@
   align-items: center;
   gap: 7px;
   overflow: hidden;
-  -webkit-app-region: no-drag;
+  -webkit-app-region: drag;
 }
 
 .app .pdf-doc-pill > span {
@@ -806,16 +806,6 @@
   scroll-padding-top: 64px;
 }
 .app[data-theme^="constructivist"]:not([data-fullscreen="true"]) .pdf-pane[data-pdf-immersive="true"] .pdf-outline { padding-top: 62px; }
-
-/* 沉浸滚动开启时，顶栏透明留白与非按钮标题胶囊让出点击与划词通道 */
-.app[data-theme^="constructivist"]:not([data-fullscreen="true"])[data-pdf-immersive="true"] :is(.topbar, .topbar-mode-cap, .note-workspace-bar, .reader-header-slot, .pdf-top-bar, .pdf-doc-pill) {
-  pointer-events: none;
-  -webkit-app-region: no-drag;
-}
-
-.app[data-theme^="constructivist"]:not([data-fullscreen="true"])[data-pdf-immersive="true"] :is(.layout-tabs, .pdf-top-actions, .note-header-slot, .window-controls, .epub-navigation) {
-  pointer-events: auto;
-}
 
 .app .pdf-viewport-stage {
   position: relative;
@@ -1329,7 +1319,7 @@
   background: transparent;
 }
 
-.app[data-theme^="constructivist"][data-fullscreen="true"] .pdf-top-bar {
+.app[data-theme^="constructivist"][data-fullscreen="true"] :is(.pdf-top-bar, .pdf-doc-pill) {
   -webkit-app-region: no-drag;
 }
 

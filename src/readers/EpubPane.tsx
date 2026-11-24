@@ -161,9 +161,11 @@ export function EpubPane({ epub, theme, noteBodyFont, readingSize, headerTarget,
   const selectionAnnotation = useRef<EpubAnnotation | null>(null);
   const [annotationFlows, setAnnotationFlows] = useState<Record<string, ExcerptFlowResult>>({});
   const [searchOpen, setSearchOpen] = useState(false);
+  const searchOpenRef = useRef(searchOpen); searchOpenRef.current = searchOpen;
   const searchHighlight = useRef<string | null>(null), searchJumpToken = useRef(0);
   const showSearchRef = useRef(() => {});
   showSearchRef.current = () => {
+    if (searchOpenRef.current) { closeSearch(); return; }
     setOutline(false);
     setSearchOpen(true);
     requestAnimationFrame(() => host.current?.parentElement?.querySelector<HTMLInputElement>('[aria-label="EPUB 搜索文本"]')?.focus());

@@ -151,7 +151,11 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
 .app [data-drop-state="blocked"] { background: color-mix(in srgb, var(--danger) 8%, var(--surface)); box-shadow: inset 0 0 0 1px var(--danger); cursor: not-allowed; }
 .file-drag-status, .file-move-receipt { padding: 8px 10px; font-size: 11px; line-height: 1.5; color: var(--text-muted); border-block: 1px solid var(--line); }
 .file-move-receipt { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.file-move-receipt > span { min-width: 0; overflow-wrap: anywhere; }
+.file-move-receipt-actions { display: inline-flex; align-items: center; gap: 4px; flex: none; }
 .file-move-receipt button { display: inline-flex; gap: 4px; align-items: center; flex: none; color: var(--accent); }
+.file-move-receipt .file-move-receipt-close { width: 22px; height: 22px; justify-content: center; padding: 0; border-radius: 5px; color: var(--text-faint); font-size: 14px; line-height: 1; }
+.file-move-receipt .file-move-receipt-close:hover { color: var(--text); }
 .file-drop-preview { padding: 8px; max-height: 220px; overflow: auto; border-bottom: 1px solid var(--line); background: var(--surface-subtle); }
 .file-drop-preview > div { display: flex; gap: 6px; align-items: center; font-size: 11px; color: var(--text-muted); }
 .file-drop-preview > div span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1621,7 +1625,7 @@ input:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible {
   -webkit-app-region: drag;
   user-select: none;
 }
-.topbar button, .topbar input, .topbar select, .settings-popover { -webkit-app-region: no-drag; }
+.topbar button, .topbar input, .topbar select, .topbar .document-tab, .settings-popover { -webkit-app-region: no-drag; }
 .sidebar-toggle { flex: none; min-width: 34px; }
 .top-actions { margin-left: auto; }
 .window-controls { height: auto; flex: none; display: flex; align-self: stretch; -webkit-app-region: no-drag; }

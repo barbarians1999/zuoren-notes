@@ -121,6 +121,7 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
   const scrollIdleTimer = useRef<number | null>(null);
   const scrollIdleWaiters = useRef(new Set<() => void>());
   const scrolledStateRef = useRef<{ scrolled: boolean; immersive: boolean } | null>(null);
+  const appNodeRef = useRef<HTMLElement | null>(null);
   const searchOpenRef = useRef(searchOpen); searchOpenRef.current = searchOpen;
   const slotCallbacks = useRef(new Map<Element, (visible: boolean) => void>());
   const slotObserver = useRef<IntersectionObserver | null>(null);
@@ -450,8 +451,16 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
       const origin = event.target instanceof Node ? event.target : window.document.activeElement;
       if (!origin || (!pane.current?.contains(origin) && !searchTrigger.current?.parentElement?.contains(origin))) return;
       if (origin instanceof Element && origin.closest('[aria-modal="true"]')) return;
-      event.preventDefault(); event.stopPropagation(); setSearchOpen(true);
-      requestAnimationFrame(() => { searchInput.current?.focus(); searchInput.current?.select(); });
+      event.preventDefault(); event.stopPropagation();
+      if (searchOpenRef.current) {
+        setSearchOpen(false);
+        setSearchText('');
+        pane.current?.focus();
+        return;
+      }
+      setSearchText('');
+      setSearchOpen(true);
+      requestAnimationFrame(() => { searchInput.current?.focus(); });
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
@@ -530,7 +539,8 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
     scrolledStateRef.current = { scrolled: nextScrolled, immersive: nextImmersive };
     node.dataset.pdfScrolled = nextScrolled ? 'true' : 'false';
     node.dataset.pdfImmersive = nextImmersive ? 'true' : 'false';
-    const appNode = node.closest<HTMLElement>('.app');
+    const appNode = node.closest<HTMLElement>('.app') || appNodeRef.current || window.document.querySelector<HTMLElement>('.app');
+    appNodeRef.current = appNode;
     if (appNode) {
       if (nextImmersive) appNode.dataset.pdfImmersive = 'true';
       else delete appNode.dataset.pdfImmersive;
@@ -579,16 +589,18 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
   useEffect(() => {
     const node = pane.current;
     if (!node) return;
+    const appNode = node.closest<HTMLElement>('.app') || appNodeRef.current || window.document.querySelector<HTMLElement>('.app');
+    appNodeRef.current = appNode;
     scrolledStateRef.current = null;
     if (!pdf) {
       delete node.dataset.pdfScrolled;
       delete node.dataset.pdfImmersive;
-      delete node.closest<HTMLElement>('.app')?.dataset.pdfImmersive;
+      delete appNode?.dataset.pdfImmersive;
       return;
     }
     const host = scroll.current;
     syncScrolledState(!!(host && host.scrollTop > 42), searchOpen);
-    return () => { scrolledStateRef.current = null; delete node.closest<HTMLElement>('.app')?.dataset.pdfImmersive; };
+    return () => { scrolledStateRef.current = null; delete appNode?.dataset.pdfImmersive; };
   }, [pdf?.path, searchOpen, syncScrolledState]);
   useEffect(() => {
     const host = scroll.current;
@@ -635,7 +647,10 @@ export function PdfPane({ dark, pdf, page, setPage, scale, setScale, fullscreen,
     {pdf && headerTarget && <div className="document-tab active reader-tab pdf-doc-pill" title={pdf.path}><FileText size={13}/><span className="tab-file-name">{pdf.name}</span>{pdf.meta.annotations.length > 0 && <span className="pdf-annotation-badge" title={`${pdf.meta.annotations.length} 处标注`}>{pdf.meta.annotations.length}</span>}</div>}
     <span className="toolbar-spacer"/>
     <div className="pdf-top-actions">
-      <button ref={searchTrigger} className="icon-button" aria-label="在 PDF 中查找" title="在 PDF 中查找（Ctrl+F）" onClick={() => { setSearchOpen(true); requestAnimationFrame(() => searchInput.current?.focus()); }}><Search size={16}/></button>
+      <button ref={searchTrigger} className="icon-button" aria-label="在 PDF 中查找" title="在 PDF 中查找（Ctrl+F）" onClick={() => {
+        if (searchOpen) { setSearchOpen(false); setSearchText(''); pane.current?.focus(); return; }
+        setSearchText(''); setSearchOpen(true); requestAnimationFrame(() => searchInput.current?.focus());
+      }}><Search size={16}/></button>
       {!fullscreen && <button className="icon-button" aria-pressed={false} title="进入全屏阅读" aria-label="进入全屏阅读" onClick={onToggleFullscreen}><Maximize2 size={17}/></button>}
       <button data-pdf-outline-toggle className={'icon-button' + (showToc ? ' active' : '')} aria-pressed={showToc} aria-expanded={showToc} aria-label={showToc ? '收起 PDF 大纲' : '展开 PDF 大纲'} title={pdf ? `${pdf.name}\n${showToc ? '收起大纲' : '展开大纲'}` : '展开大纲'} onClick={() => setShowToc(value => !value)}><List size={17}/></button>
     </div>

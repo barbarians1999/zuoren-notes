@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type DragEvent, type HTMLAttributes } from 'react';
+import { useEffect, useId, useRef, useState, type DragEvent, type HTMLAttributes, type RefObject } from 'react';
 import { ArrowLeft, Folder, FolderOpen, MoveRight, Undo2 } from 'lucide-react';
 import { DialogFrame } from '../ui/overlays';
 import { reader } from '../readerContext';
@@ -11,15 +11,35 @@ import { filePathKey } from '../pathIdentity.cjs';
 import { FileMoveCoordinator, fileDropPermission, fileMoveParent as parentPath, type MoveIssue, type MoveOutcome } from './fileMove';
 
 const MIME = 'application/x-zuoren-file-move';
+const UNDO_RECEIPT_MS = 6000;
 type TargetProps = HTMLAttributes<HTMLElement> & { 'data-drop-state'?: string; 'data-move-received'?: boolean };
+type ListProps = HTMLAttributes<HTMLDivElement> & { ref: RefObject<HTMLDivElement | null> };
 type Options = { root: string; directory: DirectoryListing | null; workspace: NoteWorkspace; readers: ReaderSession; barrier: MutationBarrier;
   blocked: boolean; remap(previous: string, next: string): void; persistSession(): Promise<boolean>; reload(): Promise<void>; message(text: string): void };
+
+export function computeDragScrollVelocity(clientY: number, rect: { top: number; bottom: number; height: number }): number {
+  if (!rect || rect.height <= 0) return 0;
+  const edge = Math.min(56, Math.max(28, rect.height * 0.22));
+  if (clientY >= rect.top - 28 && clientY < rect.top + edge) {
+    const t = Math.min(1, Math.max(0.15, (rect.top + edge - clientY) / edge));
+    return -Math.round(180 + t * 540);
+  }
+  if (clientY > rect.bottom - edge && clientY <= rect.bottom + 28) {
+    const t = Math.min(1, Math.max(0.15, (clientY - (rect.bottom - edge)) / edge));
+    return Math.round(180 + t * 540);
+  }
+  return 0;
+}
 
 export function useFileMoveUi(options: Options) {
   const current = useRef(options); current.current = options;
   const coordinator = useRef(new FileMoveCoordinator());
   const drag = useRef<{ id: string; source: WorkspaceFile; root: string } | null>(null);
   const hover = useRef(''), timer = useRef(0);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const autoScrollFrame = useRef(0);
+  const autoScrollVelocity = useRef(0);
+  const autoScrollLastTime = useRef(0);
   const openRequest = useRef(0);
   const pendingRequest = useRef(0);
   const [dragging, setDragging] = useState(false), [hovered, setHovered] = useState<{ path: string; allowed: boolean; reason: string } | null>(null);
@@ -28,12 +48,79 @@ export function useFileMoveUi(options: Options) {
   const [busy, setBusy] = useState(false), [issue, setIssue] = useState<MoveIssue | null>(null);
   const [checkingPending, setCheckingPending] = useState(true), [pendingError, setPendingError] = useState('');
   const [undo, setUndo] = useState<{ root: string; source: WorkspaceFile; directory: string; token: string } | null>(null);
+  const [undoPaused, setUndoPaused] = useState(false);
   const [received, setReceived] = useState('');
   const returnFocus = useRef<HTMLElement | null>(null);
-  function clearDrag() { drag.current = null; hover.current = ''; window.clearTimeout(timer.current); setDragging(false); setHovered(null); setPreview(null); }
+  function stopAutoScroll() {
+    if (autoScrollFrame.current && typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(autoScrollFrame.current);
+    }
+    autoScrollFrame.current = 0;
+    autoScrollVelocity.current = 0;
+    autoScrollLastTime.current = 0;
+  }
+  function updateAutoScroll(element: HTMLElement, clientY: number) {
+    const rect = element.getBoundingClientRect?.();
+    if (!rect || !rect.height) { stopAutoScroll(); return; }
+    const velocity = computeDragScrollVelocity(clientY, rect);
+    const maxScroll = Math.max(0, element.scrollHeight - element.clientHeight);
+    const canScroll = (velocity < 0 && element.scrollTop > 0) || (velocity > 0 && element.scrollTop < maxScroll);
+    if (!velocity || !canScroll) { stopAutoScroll(); return; }
+    window.clearTimeout(timer.current);
+    autoScrollVelocity.current = velocity;
+    if (autoScrollFrame.current) return;
+    const step = (now: number) => {
+      autoScrollFrame.current = 0;
+      const currentElement = listRef.current;
+      const currentVelocity = autoScrollVelocity.current;
+      if (!drag.current || !currentElement || !currentVelocity) { stopAutoScroll(); return; }
+      const dt = autoScrollLastTime.current ? Math.min(50, Math.max(8, now - autoScrollLastTime.current)) : 16;
+      autoScrollLastTime.current = now;
+      const limit = Math.max(0, currentElement.scrollHeight - currentElement.clientHeight);
+      const next = Math.min(limit, Math.max(0, currentElement.scrollTop + currentVelocity * dt / 1000));
+      if (next === currentElement.scrollTop) { stopAutoScroll(); return; }
+      currentElement.scrollTop = next;
+      if ((currentVelocity < 0 && next > 0) || (currentVelocity > 0 && next < limit)) {
+        autoScrollFrame.current = window.requestAnimationFrame(step);
+      } else {
+        stopAutoScroll();
+      }
+    };
+    if (typeof window.requestAnimationFrame === 'function') {
+      autoScrollLastTime.current = 0;
+      autoScrollFrame.current = window.requestAnimationFrame(step);
+    } else {
+      element.scrollTop = Math.min(maxScroll, Math.max(0, element.scrollTop + velocity * 0.016));
+    }
+  }
+  function clearDrag() { stopAutoScroll(); drag.current = null; hover.current = ''; window.clearTimeout(timer.current); setDragging(false); setHovered(null); setPreview(null); }
   useEffect(() => { openRequest.current++; clearDrag(); setProposal(null); setUndo(null); }, [options.root]);
+  useEffect(() => { setUndoPaused(false); }, [undo?.token]);
+  useEffect(() => {
+    if (!undo || busy || undoPaused) return;
+    const token = undo.token;
+    const id = window.setTimeout(() => setUndo(current => current?.token === token ? null : current), UNDO_RECEIPT_MS);
+    return () => window.clearTimeout(id);
+  }, [undo, busy, undoPaused]);
   useEffect(() => { if (!received) return; const id = window.setTimeout(() => setReceived(''), 1000); return () => window.clearTimeout(id); }, [received]);
-  useEffect(() => { const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { openRequest.current++; clearDrag(); } }; window.addEventListener('keydown', escape); return () => { openRequest.current++; window.removeEventListener('keydown', escape); window.clearTimeout(timer.current); }; }, []);
+  useEffect(() => { const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { openRequest.current++; clearDrag(); } }; window.addEventListener('keydown', escape); return () => { openRequest.current++; stopAutoScroll(); window.removeEventListener('keydown', escape); window.clearTimeout(timer.current); }; }, []);
+  useEffect(() => {
+    if (!dragging) return;
+    const onWindowDragOver = (event: globalThis.DragEvent) => {
+      if (!drag.current || !listRef.current || !event.dataTransfer?.types?.includes(MIME)) return;
+      const target = typeof Element !== 'undefined' && event.target instanceof Element ? event.target : null;
+      if (target?.closest('.folder-navigation, .file-drop-preview')) { stopAutoScroll(); return; }
+      const rect = listRef.current.getBoundingClientRect?.();
+      if (!rect) return;
+      if (event.clientX >= rect.left - 12 && event.clientX <= rect.right + 12) {
+        updateAutoScroll(listRef.current, event.clientY);
+      } else {
+        stopAutoScroll();
+      }
+    };
+    window.addEventListener('dragover', onWindowDragOver);
+    return () => { window.removeEventListener('dragover', onWindowDragOver); stopAutoScroll(); };
+  }, [dragging]);
   useEffect(() => { void checkPending(); return () => { pendingRequest.current++; }; }, []);
   function context() { const value = current.current; return { workspace: value.workspace, readers: value.readers, barrier: value.barrier, api: reader(), remap: value.remap, persistSession: value.persistSession,
     valid: () => current.current.root === value.root && !current.current.blocked }; }
@@ -89,9 +176,9 @@ export function useFileMoveUi(options: Options) {
     try { return await accept(await coordinator.current.run(context(), { root, source, directory, undoToken }), root, !!undoToken); }
     finally { setBusy(false); }
   }
+  const ours = (event: DragEvent) => !!drag.current && event.dataTransfer.types.includes(MIME);
   function targetProps(directory: string): TargetProps {
     const permission = () => fileDropPermission(drag.current?.source || null, current.current.root, directory, !available());
-    const ours = (event: DragEvent) => !!drag.current && event.dataTransfer.types.includes(MIME);
     return { 'data-drop-state': dragging && hovered?.path === directory ? hovered.allowed ? 'allowed' : 'blocked' : undefined,
       'data-move-received': received === directory || undefined,
       onDragOver(event) {
@@ -115,6 +202,26 @@ export function useFileMoveUi(options: Options) {
         const source = session.source; clearDrag(); void execute(source, directory);
       } };
   }
+  const listProps: ListProps = {
+    ref: listRef,
+    onDragOverCapture(event) {
+      if (!ours(event)) return;
+      updateAutoScroll(event.currentTarget, event.clientY);
+    },
+    onDragOver(event) {
+      if (!ours(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'none';
+    },
+    onDragLeave(event) {
+      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) stopAutoScroll();
+    },
+    onDrop(event) {
+      if (!ours(event)) return;
+      event.preventDefault();
+      clearDrag();
+    },
+  };
   function entryProps(entry: WorkspaceDirectoryEntry): TargetProps {
     if (entry.kind === 'folder') return targetProps(entry.path);
     return { draggable: available(), 'data-move-received': received === entry.path || undefined,
@@ -135,7 +242,7 @@ export function useFileMoveUi(options: Options) {
       {preview.entries.filter(item => item.kind === 'folder').map(item => <button key={item.path} {...targetProps(item.path)} tabIndex={-1}><Folder size={13}/>{item.name}</button>)}
       {!preview.entries.some(item => item.kind === 'folder') && <small>没有下级文件夹，松开后移动到此处。</small>}
     </div>}
-    {undo && <div className="file-move-receipt" role="status"><span>已移动“{undo.source.name}”</span><button disabled={busy || !available()} onClick={() => void execute(undo.source, undo.directory, undo.token)}><Undo2 size={13}/>撤销移动</button></div>}
+    {undo && <div className="file-move-receipt" role="status" onMouseEnter={() => setUndoPaused(true)} onMouseLeave={() => setUndoPaused(false)} onFocus={() => setUndoPaused(true)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setUndoPaused(false); }}><span>已移动“{undo.source.name}”</span><div className="file-move-receipt-actions"><button type="button" disabled={busy || !available()} onClick={() => void execute(undo.source, undo.directory, undo.token)}><Undo2 size={13}/>撤销移动</button><button type="button" className="file-move-receipt-close" aria-label="关闭移动提示" title="关闭" disabled={busy} onClick={() => setUndo(null)}>×</button></div></div>}
   </>;
   const dialogs = <>
     {proposal && !options.blocked && <FileMoveDialog root={options.root} source={proposal.source} initialDirectory={proposal.directory} refreshKey={proposal.id} busy={busy}
@@ -145,7 +252,7 @@ export function useFileMoveUi(options: Options) {
       setBusy(true); try { await accept(recover ? await coordinator.current.recover(context()) : await coordinator.current.recheck(context()), options.root); } finally { setBusy(false); }
     }}/>}
   </>;
-  return { entryProps, targetProps, open, panel, dialogs, busy };
+  return { entryProps, targetProps, listProps, open, panel, dialogs, busy };
 }
 
 function FileMoveDialog({ root, source, initialDirectory, refreshKey, onCancel, onConfirm, onRefresh, busy, returnFocus }: {

@@ -11,7 +11,7 @@ let code,policy;
 before(async()=>{
  const {transformWithOxc}=await import(pathToFileURL(require.resolve('vite')).href);
  code=(await transformWithOxc(fs.readFileSync(path.join(__dirname,'../src/workspace/fileMoveUi.tsx'),'utf8'),'fileMoveUi.tsx',{jsx:{runtime:'classic'}})).code
-  .replace(/^import[^;]+;\n/gm,'').replace(/^export function /gm,'function ')+ '\nmodule.exports={useFileMoveUi};';
+  .replace(/^import[^;]+;\n/gm,'').replace(/^export function /gm,'function ')+ '\nmodule.exports={useFileMoveUi,computeDragScrollVelocity};';
  policy=await import('../src/workspace/fileMove.ts');
 });
 const source={path:'/root-A/a.md',name:'a.md',relative:'a.md',type:'md',kind:'file',moveVersion:'listed'};
@@ -27,11 +27,24 @@ function harness(overrides={}){
  const api={pendingFileMove:async()=>null,fileMoveCapability:async()=>({supported:true}),finalizeFileMove:async()=>true,
   moveFile:async input=>{calls.push(input);return{ok:true,operationId:input.operationId,oldPath:source.path,entry:{...source,path:target},undoToken:'undo',recovered:true};},fileMoveStatus:async()=>({status:'unknown'}),...overrides};
  let options={root:'/root-A',directory:null,workspace:{committing:false,documents:new Map(),beginCommit:()=>()=>{},saveAll:async()=>true},readers:{flush:async()=>true,currentPdf:()=>null,currentEpub:()=>null},barrier,blocked:false,remap(){},persistSession:async()=>true,reload:async()=>{},message:value=>messages.push(value)};
- class El{constructor(){this.isConnected=true;}contains(node){return node===this;}focus(){}}
- const origin=new El(),window={setTimeout:()=>1,clearTimeout(){},addEventListener(){},removeEventListener(){}};
- vm.runInNewContext(code,{...hooks,module,reader:()=>api,...policy,parentPath:policy.fileMoveParent,sameOrDescendantPath,filePathKey,crypto:globalThis.crypto,window,document:{activeElement:origin,querySelector:()=>origin},HTMLElement:El,DialogFrame:'DialogFrame',ArrowLeft:'ArrowLeft',Folder:'Folder',FolderOpen:'FolderOpen',MoveRight:'MoveRight',Undo2:'Undo2',React:{Fragment:'Fragment',createElement:(type,props,...children)=>({type,props:{...props,children}})}});
+ class El{constructor(){this.isConnected=true;this.scrollTop=0;this.scrollHeight=400;this.clientHeight=160;}contains(node){return node===this;}closest(){return null;}getBoundingClientRect(){return{top:100,bottom:260,left:0,right:200,height:160,width:200};}focus(){}}
+ const origin=new El();
+ let timerSeq=0,rafSeq=0;
+ const timers=new Map(),rafs=new Map(),listeners=new Map();
+ const window={
+  setTimeout(fn,ms){const id=++timerSeq;timers.set(id,{fn,ms});return id;},
+  clearTimeout(id){timers.delete(id);},
+  requestAnimationFrame(fn){const id=++rafSeq;rafs.set(id,fn);return id;},
+  cancelAnimationFrame(id){rafs.delete(id);},
+  addEventListener(type,fn){if(!listeners.has(type))listeners.set(type,new Set());listeners.get(type).add(fn);},
+  removeEventListener(type,fn){listeners.get(type)?.delete(fn);},
+ };
+ vm.runInNewContext(code,{...hooks,module,reader:()=>api,...policy,parentPath:policy.fileMoveParent,sameOrDescendantPath,filePathKey,crypto:globalThis.crypto,window,document:{activeElement:origin,querySelector:()=>origin},HTMLElement:El,Element:El,DialogFrame:'DialogFrame',ArrowLeft:'ArrowLeft',Folder:'Folder',FolderOpen:'FolderOpen',MoveRight:'MoveRight',Undo2:'Undo2',React:{Fragment:'Fragment',createElement:(type,props,...children)=>({type,props:{...props,children}})}});
  function render(next={}){options={...options,...next};let round=0;do{assert.ok(round++<20);at=0;effects=[];dirty=false;view=module.exports.useFileMoveUi(options);effects.forEach(fn=>fn());}while(dirty);return view;}
- render();return{api,barrier,messages,calls,render,get view(){return view;},get lateUpdates(){return lateUpdates;},async settle(){for(let i=0;i<8;i++){await Promise.resolve();render();}return view;},unmount(){dead=true;slots.forEach(slot=>slot?.cleanup?.());}};
+ render();return{api,barrier,messages,calls,render,timers,rafs,El,get view(){return view;},get lateUpdates(){return lateUpdates;},
+  fireTimers(minMs=0){for(const [id,entry] of [...timers.entries()]){if(entry.ms>=minMs){timers.delete(id);entry.fn();}}render();},
+  stepRaf(now=100){for(const [id,fn] of [...rafs.entries()]){rafs.delete(id);fn(now);}render();},
+  async settle(){for(let i=0;i<8;i++){await Promise.resolve();render();}return view;},unmount(){dead=true;slots.forEach(slot=>slot?.cleanup?.());}};
 }
 test('mount waits for pending lookup and root switches cannot discard a restored operation or its two pins',async()=>{
  const pending=deferred(),h=harness({pendingFileMove:()=>pending.promise});assert.equal(h.view.entryProps(source).draggable,false);await h.view.open(source,'/root-A/child');assert.equal(tree(h.view.dialogs).some(n=>n.props?.source),false);
@@ -74,4 +87,54 @@ test('an unmounted pending lookup cannot update hook state but still restores sa
 test('a restored pending operation from another root cannot install an undo receipt in the current root',async()=>{
  const issue={operationId:'root-A-restart',oldPath:source.path,targetPath:target,message:'root A pending'},result={ok:true,operationId:issue.operationId,oldPath:source.path,entry:{...source,path:target},undoToken:'A-only-undo',recovered:true};
  const h=harness({pendingFileMove:async()=>issue,fileMoveStatus:async()=>({status:'finished',result})});await h.settle();let reloads=0;h.render({root:'/root-B',reload:async()=>{reloads++;}});await tree(h.view.dialogs).find(n=>n.props?.issue).props.onCheck(false);await h.settle();assert.equal(tree(h.view.dialogs).some(n=>n.props?.issue),false);assert.doesNotMatch(text(h.view.panel),/撤销移动|已移动/);assert.equal(reloads,0);assert.ok(h.messages.at(-1).includes(source.path));assert.ok(h.messages.at(-1).includes(target));assert.match(h.messages.at(-1),/此处不提供撤销/);assert.doesNotMatch(h.messages.at(-1),/可撤销/);assert.equal(h.barrier.pins.size,0);h.unmount();
+});
+
+test('move undo receipt can be manually dismissed and auto-dismisses after timeout unless hovered',async()=>{
+ const h=harness();await h.settle();
+ const values=new Map();
+ const dataTransfer={types:[],clearData(){values.clear();this.types=[];},setData(k,v){values.set(k,v);this.types.push(k);},getData:k=>values.get(k)||''};
+ const event={dataTransfer,preventDefault(){},stopPropagation(){}};
+ h.view.entryProps(source).onDragStart(event);h.render();h.view.targetProps('/root-A/child').onDrop(event);
+ await h.settle();await h.settle();
+ const closeButton=tree(h.view.panel).find(n=>n.type==='button'&&n.props?.['aria-label']==='关闭移动提示');
+ assert.ok(closeButton,'undo receipt includes a close button');
+ closeButton.props.onClick();h.render();
+ assert.doesNotMatch(text(h.view.panel),/撤销移动/);
+
+ h.view.entryProps(source).onDragStart(event);h.render();h.view.targetProps('/root-A/child').onDrop(event);
+ await h.settle();await h.settle();
+ const receipt=tree(h.view.panel).find(n=>n.props?.className==='file-move-receipt'&&text(n).includes('撤销移动'));
+ assert.ok(receipt);
+ receipt.props.onMouseEnter();h.render();
+ assert.equal([...h.timers.values()].some(t=>t.ms===6000),false,'hovering pauses the 6000ms auto-dismiss timer');
+ receipt.props.onMouseLeave();h.render();
+ assert.equal([...h.timers.values()].some(t=>t.ms===6000),true,'leaving reschedules the 6000ms auto-dismiss timer');
+ h.fireTimers(6000);
+ assert.doesNotMatch(text(h.view.panel),/撤销移动/,'receipt auto-dismisses when timer expires');
+ h.unmount();
+});
+
+test('file-list dragover auto-scrolls near top and bottom edges and stops in middle or on drag end',async()=>{
+ const h=harness();await h.settle();
+ const listEl=new h.El();
+ h.view.listProps.ref.current=listEl;
+ const values=new Map();
+ const dataTransfer={types:[],dropEffect:'none',clearData(){values.clear();this.types=[];},setData(k,v){values.set(k,v);this.types.push(k);},getData:k=>values.get(k)||''};
+ const startEvent={dataTransfer,preventDefault(){},stopPropagation(){}};
+ h.view.entryProps(source).onDragStart(startEvent);h.render();
+ h.view.targetProps('/root-A/child').onDragOver({dataTransfer,preventDefault(){},stopPropagation(){},currentTarget:new h.El(),relatedTarget:null});
+ assert.equal([...h.timers.values()].some(t=>t.ms===550),true);
+ h.view.listProps.onDragOverCapture({dataTransfer,currentTarget:listEl,clientY:250});
+ assert.equal([...h.timers.values()].some(t=>t.ms===550),false,'edge auto-scroll cancels folder preview timer');
+ h.stepRaf(100);h.stepRaf(130);
+ assert.ok(listEl.scrollTop>0,'dragging near bottom edge scrolls down');
+ const scrolledDown=listEl.scrollTop;
+ h.view.listProps.onDragOverCapture({dataTransfer,currentTarget:listEl,clientY:180});
+ assert.equal(h.rafs.size,0,'middle zone stops auto-scroll');
+ h.view.listProps.onDragOverCapture({dataTransfer,currentTarget:listEl,clientY:105});
+ h.stepRaf(200);h.stepRaf(230);
+ assert.ok(listEl.scrollTop<scrolledDown,'dragging near top edge scrolls up');
+ h.view.entryProps(source).onDragEnd();h.render();
+ assert.equal(h.rafs.size,0);
+ h.unmount();
 });

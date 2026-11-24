@@ -227,6 +227,36 @@ test('shared chrome preserves focus, async failures and confirmed copy feedback'
       assert.equal(await page.evaluate(() => window.__splitEditor === document.querySelector('.cm-content')), true);
       assert.equal(await page.locator('.cm-content').evaluate(el => getComputedStyle(el).userSelect === 'none'), false);
     });
+    await t.test('file-list auto-scrolls up and down when dragging a file near edges', async () => {
+      const subDir = path.join(workspace.fixture, 'scroll-folder');
+      await fs.mkdir(subDir, { recursive: true });
+      for (let i = 1; i <= 26; i++) await fs.writeFile(path.join(subDir, `item-${String(i).padStart(2, '0')}.md`), `# Item ${i}\n`);
+      await page.locator('.folder-crumbs button').first().click();
+      await row('scroll-folder').click();
+      await page.locator('.file-row').filter({ hasText: 'item-26.md' }).waitFor();
+      const dragResult = await page.evaluate(async () => {
+        const list = document.querySelector('.file-list');
+        const firstRow = list.querySelector('.file-row[draggable="true"]');
+        const rect = list.getBoundingClientRect();
+        const dt = new DataTransfer();
+        firstRow.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: dt }));
+        const step = async (clientY) => {
+          for (let i = 0; i < 6; i++) {
+            list.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt, clientX: rect.left + 24, clientY }));
+            await new Promise(resolve => setTimeout(resolve, 40));
+          }
+        };
+        await step(rect.bottom - 8);
+        const afterDown = list.scrollTop;
+        await step(rect.top + 8);
+        const afterUp = list.scrollTop;
+        firstRow.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }));
+        return { scrollHeight: list.scrollHeight, clientHeight: list.clientHeight, afterDown, afterUp };
+      });
+      assert.ok(dragResult.scrollHeight > dragResult.clientHeight, 'list must overflow to verify drag scroll');
+      assert.ok(dragResult.afterDown > 0, `expected drag near bottom to scroll down: ${JSON.stringify(dragResult)}`);
+      assert.ok(dragResult.afterUp < dragResult.afterDown, `expected drag near top to scroll back up: ${JSON.stringify(dragResult)}`);
+    });
     assert.deepEqual(errors, []);
     for (const name of ['a.md', 'b.md']) assert.equal(await fs.readFile(path.join(workspace.fixture, name), 'utf8'), original);
   } finally {

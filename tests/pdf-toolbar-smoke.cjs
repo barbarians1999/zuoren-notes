@@ -290,6 +290,27 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
     await page.waitForTimeout(100);
     assert.equal(await topBar.locator('button[aria-label="进入全屏阅读"]').isVisible(), true);
   });
+  await t.test('scrolled PDF and note exit keep topbar window drag regions active', async () => {
+    await page.locator('.pdf-canvas-wrap').evaluate(el => { el.scrollTop = 180; });
+    await page.waitForFunction(() => document.querySelector('.app')?.dataset.pdfImmersive === 'true');
+    const immersiveRegions = await page.evaluate(() => ({
+      topbarDrag: getComputedStyle(document.querySelector('.topbar')).getPropertyValue('-webkit-app-region').trim(),
+      topbarPointer: getComputedStyle(document.querySelector('.topbar')).pointerEvents,
+      pdfBarDrag: getComputedStyle(document.querySelector('.pdf-top-bar')).getPropertyValue('-webkit-app-region').trim(),
+      pillDrag: getComputedStyle(document.querySelector('.pdf-doc-pill')).getPropertyValue('-webkit-app-region').trim(),
+    }));
+    assert.deepEqual(immersiveRegions, { topbarDrag: 'drag', topbarPointer: 'auto', pdfBarDrag: 'drag', pillDrag: 'drag' });
+    await layout('对照').click();
+    await page.waitForFunction(() => document.querySelector('.app')?.dataset.layout === 'split');
+    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.topbar')).getPropertyValue('-webkit-app-region').trim()), 'drag');
+    await layout('笔记').click();
+    await page.waitForFunction(() => document.querySelector('.app')?.dataset.layout === 'note');
+    const afterNote = await page.evaluate(() => ({
+      immersiveAttr: document.querySelector('.app')?.dataset.pdfImmersive ?? null,
+      topbarDrag: getComputedStyle(document.querySelector('.topbar')).getPropertyValue('-webkit-app-region').trim(),
+    }));
+    assert.deepEqual(afterNote, { immersiveAttr: null, topbarDrag: 'drag' });
+  });
   await t.test('embedded PDF bookmarks track jumps and scrolling, including two destinations on one page', async () => {
     await page.locator('.file-row').filter({ hasText: bookmarkName }).click(); await layout('阅读').click();
     await readerReady(page, 'pdf', 1);

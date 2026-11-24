@@ -250,6 +250,12 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (layout === 'note' || !activePdf || !!activeEpub) {
+      delete appMotionRef.current?.dataset.pdfImmersive;
+    }
+  }, [layout, activePdf, activeEpub]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.isComposing || event.keyCode === 229 || !event.ctrlKey || event.metaKey || event.altKey) return;
       const mode = event.key.toLowerCase() === 'f' ? 'find' : event.key.toLowerCase() === 'h' ? 'replace' : null;
@@ -925,7 +931,7 @@ function App() {
         </div>}
         <div className={'section-title ' + (root ? 'after-address' : '')}><span>{root ? '当前文件夹' : '最近文件'}</span><span>{root ? visibleDirectory.length : visibleRecent.length}</span></div>
         {fileMoveUi.panel}
-        <div key={directoryMotion?.sequence ?? 0} className="file-list" data-folder-motion={directoryMotion?.active ? directoryMotion.direction : undefined}>
+        <div key={directoryMotion?.sequence ?? 0} {...fileMoveUi.listProps} className="file-list" data-folder-motion={directoryMotion?.active ? directoryMotion.direction : undefined}>
           {inlineEntryEdit && inlineEntryEdit.kind !== 'rename' && <div className="file-row inline-entry-row"><span className={inlineEntryEdit.kind === 'folder' ? 'folder-icon' : 'file-icon md'}>{inlineEntryEdit.kind === 'folder' ? <Folder size={17}/> : 'MD'}</span><input ref={inlineEntryInputRef} className="inline-entry-input" aria-label={inlineEntryEdit.kind === 'folder' ? '新文件夹名称' : '新笔记名称'} value={inlineEntryEdit.value} disabled={inlineEntryEdit.busy} onChange={event => setInlineEntryEdit(value => value && ({ ...value, value: event.target.value }))} onKeyDown={event => { if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return; if (event.key === 'Enter') void commitInline(); if (event.key === 'Escape') setInlineEntryEdit(null); }} />{inlineEntryEdit.error && <small className="inline-entry-error">{inlineEntryEdit.error}</small>}</div>}{root ? visibleDirectory.map((entry, index) => {
           const activePath = entry.kind === 'file' ? entry.type === 'pdf' ? activePdf?.path : entry.type === 'epub' ? activeEpub?.path : workspace.currentDocument()?.note.path : null;
           const renaming = inlineEntryEdit?.kind === 'rename' && inlineEntryEdit.entry?.path === entry.path;

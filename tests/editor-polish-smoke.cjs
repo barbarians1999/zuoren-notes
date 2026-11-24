@@ -122,6 +122,57 @@ test('manual save, smooth preview and deferred counts preserve document boundari
     await primary.getByRole('textbox', { name: '查找文本', exact: true }).press('Control+s');
     await waitForFile(first, text => text.includes('-find-save'));
     await primary.getByRole('textbox', { name: '查找文本', exact: true }).press('Escape');
+    await primary.locator('.find-bar').waitFor({ state: 'detached' });
+
+    await page.keyboard.press('Control+f');
+    await primary.locator('.find-bar').waitFor();
+    await primary.getByRole('textbox', { name: '查找文本', exact: true }).fill('-find-save');
+    await primary.getByText('1 / 1', { exact: true }).waitFor();
+    await editor.click();
+    await page.keyboard.press('Control+Home');
+    await page.keyboard.insertText('编前');
+    await page.waitForTimeout(150);
+    const findEditState = await editor.evaluate(el => {
+      const view = el.cmTile?.root?.view;
+      const sel = view?.state.selection.main;
+      return {
+        startsWithPrefix: view ? view.state.doc.toString().startsWith('编前') : false,
+        empty: sel ? sel.empty : null,
+        head: sel ? sel.head : null,
+      };
+    });
+    assert.deepEqual(findEditState, { startsWithPrefix: true, empty: true, head: 2 }, 'editing elsewhere while find is open keeps caret at edited spot');
+    await primary.getByRole('textbox', { name: '查找文本', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => {
+      const view = document.querySelector('[data-pane-id="primary"] .cm-content')?.cmTile?.root?.view;
+      const sel = view?.state.selection.main;
+      return !!(view && sel && !sel.empty && view.state.sliceDoc(sel.from, sel.to) === '-find-save');
+    });
+    await page.keyboard.press('Control+f');
+    await primary.locator('.find-bar').waitFor({ state: 'detached' });
+    await page.keyboard.press('Control+f');
+    await primary.locator('.find-bar').waitFor();
+    assert.equal(await primary.getByRole('textbox', { name: '查找文本', exact: true }).inputValue(), '');
+    await page.keyboard.press('Control+h');
+    await primary.getByRole('textbox', { name: '替换为', exact: true }).waitFor();
+    await primary.getByRole('textbox', { name: '查找文本', exact: true }).fill('temp-find');
+    await primary.getByRole('textbox', { name: '替换为', exact: true }).fill('temp-replace');
+    await primary.getByRole('textbox', { name: '替换为', exact: true }).focus();
+    await page.keyboard.press('Control+h');
+    await primary.locator('.find-bar').waitFor({ state: 'detached' });
+    await page.keyboard.press('Control+h');
+    await primary.locator('.find-bar').waitFor();
+    assert.equal(await primary.getByRole('textbox', { name: '查找文本', exact: true }).inputValue(), '');
+    assert.equal(await primary.getByRole('textbox', { name: '替换为', exact: true }).inputValue(), '');
+    await primary.getByRole('textbox', { name: '查找文本', exact: true }).press('Escape');
+    await primary.locator('.find-bar').waitFor({ state: 'detached' });
+    await editor.click();
+    await page.keyboard.press('Control+Home');
+    await page.keyboard.press('Delete');
+    await page.keyboard.press('Delete');
+    await page.keyboard.press('Control+s');
+    await primary.locator('.markdown-save-state.state-已保存').waitFor();
   });
 
   await t.test('left/right and reading-mode shortcuts save only the focused document', async () => {
