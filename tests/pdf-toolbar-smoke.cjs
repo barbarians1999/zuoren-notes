@@ -175,6 +175,7 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
   });
   await t.test('split and narrow panes retain one row with reachable labeled icons', async () => {
     await page.locator('.file-row').filter({ hasText: 'note.md' }).dblclick();
+    await page.locator('[data-pane-id="primary"] .cm-content').waitFor();
     await page.locator('.file-row').filter({ hasText: 'note-two.md' }).click({ button: 'right' });
     await page.getByRole('menuitem', { name: '在右侧打开', exact: true }).click();
     await page.locator('[data-pane-id="secondary"] .cm-content').waitFor();
