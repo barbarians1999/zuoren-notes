@@ -131,12 +131,13 @@ test('themes persist, share reader colors and preserve editing history, PDF pape
     const colors = await page.evaluate(() => {
       const css = selector => getComputedStyle(document.querySelector(selector));
       return { background: css('.cm-editor').backgroundColor, text: css('.cm-content').color,
-        settingsBlur: css('.settings-popover').backdropFilter, sidebar: css('.sidebar').backgroundColor,
+        settingsBlur: css('.settings-popover').backdropFilter, settingsBg: css('.settings-popover').backgroundColor, sidebar: css('.sidebar').backgroundColor,
         scheme: getComputedStyle(document.documentElement).colorScheme, sameEditor: window.__themeEditor === document.querySelector('.cm-content') };
     });
     assert.equal(colors.background, rgb(theme.colors.surface), name);
     assert.equal(colors.text, rgb(theme.colors.text), name);
-    assert.match(colors.settingsBlur, /blur\(/, name);
+    assert.equal(colors.settingsBlur, 'none', name);
+    assert.notEqual(colors.settingsBg, 'rgba(0, 0, 0, 0)', name);
     assert.equal(colors.sidebar, 'rgba(0, 0, 0, 0)', name);
     assert.equal(colors.scheme, theme.colorScheme, name);
     assert.equal(colors.sameEditor, true, name);

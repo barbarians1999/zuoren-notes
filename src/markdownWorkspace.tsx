@@ -43,8 +43,8 @@ export function MarkdownWorkspaceHeader({ path, caption, label, onSave, canSave,
     <div className="markdown-workspace-actions">
       <button className="workspace-icon-action" aria-label="查找" title="查找（Ctrl+F）" disabled={!enabled} onClick={onFind}><Search size={15} /></button>
       <div ref={modeSwitchRef} className="workspace-mode-switch" role="group" aria-label="笔记模式">
-        <button disabled={!enabled} className={mode === 'edit' ? 'active' : ''} aria-pressed={mode === 'edit'} aria-label={mode === 'edit' ? '源码编辑模式' : '切换到源码编辑'} title={mode === 'edit' ? '源码编辑模式（Obsidian）' : '切换到源码编辑'} onClick={() => mode !== 'edit' && onToggleMode()}><Pencil size={14} /><span>编辑</span></button>
-        <button disabled={!enabled} className={mode === 'preview' ? 'active' : ''} aria-pressed={mode === 'preview'} aria-label={mode === 'preview' ? '阅读模式' : '切换到预览'} title={mode === 'preview' ? '阅读模式' : '切换到预览'} onClick={() => mode !== 'preview' && onToggleMode()}><Eye size={14} /><span>阅读</span></button>
+        <button disabled={!enabled} className={mode === 'edit' ? 'active' : ''} aria-pressed={mode === 'edit'} aria-label={mode === 'edit' ? '源码编辑模式' : '切换到源码编辑'} title={mode === 'edit' ? '编辑模式（实时排版）' : '切换到编辑'} onClick={() => mode !== 'edit' && onToggleMode()}><Pencil size={14} /><span>编辑</span></button>
+        <button disabled={!enabled} className={mode === 'preview' ? 'active' : ''} aria-pressed={mode === 'preview'} aria-label={mode === 'preview' ? '预览模式' : '切换到预览'} title={mode === 'preview' ? '预览模式' : '切换到预览'} onClick={() => mode !== 'preview' && onToggleMode()}><Eye size={14} /><span>预览</span></button>
       </div>
       {!compact && <button data-outline-toggle className={'workspace-icon-action ' + (outline ? 'active' : '')} aria-label={outline ? '收起大纲' : '展开大纲'} aria-pressed={outline} title={outline ? '收起大纲' : '展开大纲'} onClick={onToggleOutline}><List size={15} /></button>}
       {controls}

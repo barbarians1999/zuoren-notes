@@ -7,64 +7,67 @@
   --topbar-cap-w: 206px;
   --radius: 14px;
   --card-radius: 18px;
-  --glass-bg: rgba(255, 255, 255, 0.72);
-  --glass-bg-strong: rgba(255, 255, 255, 0.90);
-  --liquid-glass-bg: rgba(255, 255, 255, 0.58);
-  --liquid-glass-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.80) 0%, rgba(255, 255, 255, 0.24) 32%, rgba(255, 255, 255, 0.04) 68%, rgba(255, 255, 255, 0.28) 100%);
-  --liquid-glass-blur: blur(24px) saturate(185%) brightness(1.03);
-  --glass-border: rgba(255, 255, 255, 0.90);
-  --glass-edge: rgba(40, 32, 24, 0.055);
-  --glass-shadow: 0 5px 14px rgba(34, 28, 22, 0.055), 0 1px 3px rgba(34, 28, 22, 0.03), inset 0 1.5px 2px rgba(255, 255, 255, 0.96), inset 0 -1.5px 3px rgba(130, 118, 102, 0.065);
-  --mode-pill-active-bg: linear-gradient(175deg, rgba(226, 108, 78, 0.24) 0%, rgba(210, 88, 60, 0.12) 100%);
-  --mode-pill-active-border: rgba(216, 102, 74, 0.30);
+  --glass-bg: #f9f9f7;
+  --glass-bg-strong: #ffffff;
+  --liquid-glass-bg: #f9f9f7;
+  --liquid-glass-sheen: none;
+  --liquid-glass-blur: none;
+  --glass-border: rgba(34, 28, 22, 0.11);
+  --glass-edge: rgba(40, 32, 24, 0.08);
+  --glass-shadow: 0 2px 8px rgba(34, 28, 22, 0.045), 0 1px 2px rgba(34, 28, 22, 0.025);
+  --mode-pill-active-bg: #ffffff;
+  --mode-pill-active-border: rgba(188, 60, 43, 0.28);
   --card-bg: #ffffff;
   --card-border: rgba(34, 28, 22, 0.09);
-  --card-shadow: 0 8px 22px rgba(34, 28, 22, 0.052), 0 2px 6px rgba(34, 28, 22, 0.026), inset 0 1px 0 rgba(255, 255, 255, 0.95);
-  --coral-grad: linear-gradient(175deg, #ea7d62 0%, #d86048 50%, #c04832 100%);
-  --coral-glow: 0 3px 9px rgba(192, 72, 50, 0.22), 0 1px 3px rgba(192, 72, 50, 0.14), inset 0 1.5px 2px rgba(255, 255, 255, 0.42), inset 0 -1.5px 3px rgba(120, 28, 16, 0.14);
+  --card-shadow: 0 6px 20px rgba(34, 28, 22, 0.045), 0 1px 3px rgba(34, 28, 22, 0.022);
+  --coral-grad: linear-gradient(180deg, #b8402f 0%, #a53525 100%);
+  --coral-glow: 0 2px 6px rgba(165, 53, 37, 0.22);
   --pill-hover: rgba(34, 28, 22, 0.05);
   --rail-icon: #4d4840;
-  --desk-backdrop: radial-gradient(circle at 18% 12%, rgba(255, 255, 255, 0.84) 0%, transparent 46%), radial-gradient(circle at 82% 88%, rgba(222, 214, 200, 0.44) 0%, transparent 50%), linear-gradient(160deg, #f7f4ee 0%, #ece6dc 100%);
+  --desk-backdrop: linear-gradient(165deg, #f5f5f2 0%, #ecece8 100%);
   background: var(--desk-backdrop);
 }
 
 .app[data-theme="constructivist-paper"] {
-  --glass-bg: rgba(255, 252, 246, 0.74);
-  --glass-bg-strong: rgba(255, 252, 246, 0.90);
-  --liquid-glass-bg: rgba(255, 250, 240, 0.60);
-  --liquid-glass-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.82) 0%, rgba(255, 252, 246, 0.26) 32%, rgba(255, 251, 242, 0.05) 68%, rgba(255, 253, 248, 0.28) 100%);
-  --glass-border: rgba(255, 255, 255, 0.90);
-  --glass-edge: rgba(68, 52, 32, 0.06);
-  --glass-shadow: 0 4px 12px rgba(56, 42, 22, 0.045), 0 1px 3px rgba(56, 42, 22, 0.025), inset 0 1.5px 2px rgba(255, 255, 255, 0.98), inset 0 -1.5px 3px rgba(150, 128, 98, 0.07);
-  --card-bg: #fffbf3;
-  --card-border: rgba(112, 88, 56, 0.11);
-  --card-shadow: 0 8px 22px rgba(52, 38, 18, 0.055), 0 2px 6px rgba(52, 38, 18, 0.028), inset 0 1px 0 rgba(255, 255, 255, 0.95);
-  --coral-grad: linear-gradient(175deg, #ec8064 0%, #da6249 50%, #c24b34 100%);
-  --coral-glow: 0 3px 9px rgba(194, 75, 52, 0.22), 0 1px 3px rgba(194, 75, 52, 0.14), inset 0 1.5px 2px rgba(255, 255, 255, 0.42), inset 0 -1.5px 3px rgba(126, 32, 18, 0.14);
+  --glass-bg: #f8f4eb;
+  --glass-bg-strong: #fffdf8;
+  --liquid-glass-bg: #f8f4eb;
+  --liquid-glass-sheen: none;
+  --liquid-glass-blur: none;
+  --glass-border: rgba(112, 88, 56, 0.14);
+  --glass-edge: rgba(68, 52, 32, 0.08);
+  --glass-shadow: 0 2px 8px rgba(52, 38, 18, 0.045), 0 1px 2px rgba(52, 38, 18, 0.025);
+  --mode-pill-active-bg: #fffdf8;
+  --mode-pill-active-border: rgba(179, 59, 43, 0.26);
+  --card-bg: #fffdf8;
+  --card-border: rgba(112, 88, 56, 0.13);
+  --card-shadow: 0 6px 20px rgba(52, 38, 18, 0.05), 0 1px 3px rgba(52, 38, 18, 0.02);
+  --coral-grad: linear-gradient(180deg, #b8402f 0%, #a53525 100%);
+  --coral-glow: 0 2px 6px rgba(165, 53, 37, 0.22);
   --pill-hover: rgba(52, 38, 18, 0.05);
   --rail-icon: #4e473c;
-  --desk-backdrop: radial-gradient(circle at 18% 12%, rgba(255, 252, 244, 0.90) 0%, transparent 46%), radial-gradient(circle at 84% 88%, rgba(223, 206, 179, 0.48) 0%, transparent 50%), linear-gradient(160deg, #faf4e8 0%, #efe4d2 100%);
+  --desk-backdrop: linear-gradient(165deg, #f6f1e6 0%, #ede4d3 100%);
 }
 
 .app[data-theme="constructivist-dark"] {
-  --glass-bg: rgba(34, 36, 44, 0.72);
-  --glass-bg-strong: rgba(40, 43, 52, 0.90);
-  --liquid-glass-bg: rgba(34, 38, 48, 0.56);
-  --liquid-glass-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.04) 30%, rgba(255, 255, 255, 0.008) 64%, rgba(0, 0, 0, 0.10) 90%, rgba(255, 255, 255, 0.04) 100%);
-  --liquid-glass-blur: blur(24px) saturate(175%) brightness(1.06);
-  --glass-border: rgba(255, 255, 255, 0.15);
-  --glass-edge: rgba(0, 0, 0, 0.26);
-  --glass-shadow: 0 6px 16px rgba(0, 0, 0, 0.28), 0 1px 4px rgba(0, 0, 0, 0.16), inset 0 1px 1.5px rgba(255, 255, 255, 0.14), inset 0 -1px 2px rgba(0, 0, 0, 0.18);
-  --mode-pill-active-bg: linear-gradient(175deg, rgba(224, 118, 94, 0.30) 0%, rgba(224, 118, 94, 0.15) 100%);
-  --mode-pill-active-border: rgba(224, 118, 94, 0.34);
+  --glass-bg: #1e2027;
+  --glass-bg-strong: #22242c;
+  --liquid-glass-bg: #1e2027;
+  --liquid-glass-sheen: none;
+  --liquid-glass-blur: none;
+  --glass-border: rgba(255, 255, 255, 0.11);
+  --glass-edge: rgba(0, 0, 0, 0.28);
+  --glass-shadow: 0 3px 10px rgba(0, 0, 0, 0.26), 0 1px 3px rgba(0, 0, 0, 0.16);
+  --mode-pill-active-bg: #2b2e37;
+  --mode-pill-active-border: rgba(232, 116, 97, 0.34);
   --card-bg: #1b1c20;
   --card-border: rgba(255, 255, 255, 0.10);
-  --card-shadow: 0 8px 22px rgba(0, 0, 0, 0.28), 0 2px 6px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  --coral-grad: linear-gradient(175deg, #ea846c 0%, #d4644e 50%, #bc4e39 100%);
-  --coral-glow: 0 3px 10px rgba(224, 118, 94, 0.22), inset 0 1px 1.5px rgba(255, 255, 255, 0.22), inset 0 -1px 2px rgba(0, 0, 0, 0.16);
+  --card-shadow: 0 8px 22px rgba(0, 0, 0, 0.28), 0 2px 6px rgba(0, 0, 0, 0.16);
+  --coral-grad: linear-gradient(180deg, #c94e3b 0%, #b33c2a 100%);
+  --coral-glow: 0 2px 8px rgba(179, 60, 42, 0.28);
   --pill-hover: rgba(255, 255, 255, 0.08);
   --rail-icon: #c4c7cf;
-  --desk-backdrop: radial-gradient(circle at 20% 14%, rgba(56, 62, 82, 0.28) 0%, transparent 48%), linear-gradient(160deg, #101216 0%, #171a22 100%);
+  --desk-backdrop: linear-gradient(165deg, #111318 0%, #171a21 100%);
 }
 
 /* 恢复悬浮胶囊、轨道的真圆弧圆角（保留新建方圆按钮、左侧列表大弧度方圆形及工作区卡片连续曲率 squircle） */
@@ -242,14 +245,13 @@
 .app[data-theme^="constructivist"] .topbar .layout-tabs .mode-switch-thumb {
   border-radius: 999px;
   background-color: var(--accent);
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.03) 50%, rgba(0, 0, 0, 0.06) 100%), var(--coral-grad);
+  background-image: var(--coral-grad);
   box-shadow: var(--coral-glow);
   transition: box-shadow 180ms ease-out, filter 180ms ease-out;
 }
 
 .app[data-theme^="constructivist"] .topbar .layout-tabs .mode-switch-thumb.is-gliding {
-  box-shadow: 0 6px 16px rgba(192, 72, 50, 0.30), 0 2px 5px rgba(192, 72, 50, 0.18), inset 0 1.5px 3px rgba(255, 255, 255, 0.52), inset 0 -1.5px 3px rgba(120, 28, 16, 0.16);
-  filter: saturate(1.08) brightness(1.03);
+  box-shadow: 0 4px 12px rgba(165, 53, 37, 0.28), 0 1px 4px rgba(165, 53, 37, 0.16);
 }
 
 .app[data-theme^="constructivist"] .topbar .layout-tabs button:not(.active):hover {
@@ -435,6 +437,28 @@
 
 .app[data-theme^="constructivist"] .note-workspace-bar .document-tab-strip {
   height: 30px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.app[data-theme^="constructivist"] .note-tab-add-slot {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+.app[data-theme^="constructivist"] .note-header-spacer {
+  flex: 1 1 0;
+  min-width: 4px;
+}
+
+.app[data-theme^="constructivist"] .note-controls-divider {
+  width: 1px;
+  height: 15px;
+  margin: 0 2px;
+  flex: none;
+  background: color-mix(in srgb, var(--line-strong) 45%, transparent);
 }
 
 .app[data-theme^="constructivist"] .note-workspace-bar .document-tab {
@@ -453,15 +477,25 @@
 
 .app[data-theme^="constructivist"] .note-workspace-bar .document-tab.active,
 .app[data-theme^="constructivist"] .note-workspace-bar .document-tab.foreground-tab {
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--card-bg);
   color: var(--text);
-  box-shadow: 0 2px 6px rgba(42, 34, 22, 0.06), inset 0 1px 0 rgba(255, 255, 255, 1);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px var(--card-border), 0 1px 4px rgba(34, 28, 22, 0.06) !important;
+}
+
+.app[data-theme^="constructivist"] .note-workspace-bar .document-tab.foreground-tab > [role="tab"]::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  flex: none;
 }
 
 .app[data-theme="constructivist-dark"] .note-workspace-bar .document-tab.active,
 .app[data-theme="constructivist-dark"] .note-workspace-bar .document-tab.foreground-tab {
-  background: rgba(255, 255, 255, 0.13);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  background: #2b2e37;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14), 0 1px 4px rgba(0, 0, 0, 0.24) !important;
 }
 
 .app[data-theme^="constructivist"] .document-tab.active::after {
@@ -486,17 +520,15 @@
 
 .app[data-theme^="constructivist"] .note-workspace-bar .workspace-mode-switch .mode-switch-thumb {
   border-radius: 999px;
-  background-color: rgba(255, 255, 255, 0.34);
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.56) 0%, rgba(255, 255, 255, 0.08) 48%, transparent 100%), var(--mode-pill-active-bg);
+  background-color: var(--mode-pill-active-bg);
+  background-image: none;
   border: 1px solid var(--mode-pill-active-border);
-  backdrop-filter: blur(12px) saturate(165%);
-  -webkit-backdrop-filter: blur(12px) saturate(165%);
-  box-shadow: 0 2px 7px rgba(193, 75, 53, 0.13), inset 0 1px 0 rgba(255, 255, 255, 0.78);
+  box-shadow: 0 1px 3px rgba(52, 38, 18, 0.07);
   transition: box-shadow 180ms ease-out, border-color 180ms ease-out;
 }
 
 .app[data-theme^="constructivist"] .note-workspace-bar .workspace-mode-switch .mode-switch-thumb.is-gliding {
-  box-shadow: 0 4px 12px rgba(193, 75, 53, 0.20), inset 0 1.5px 2px rgba(255, 255, 255, 0.90);
+  box-shadow: 0 2px 6px rgba(52, 38, 18, 0.10);
 }
 
 .app[data-theme^="constructivist"] .note-workspace-bar .workspace-mode-switch button {
@@ -522,12 +554,12 @@
 
 .app[data-theme^="constructivist"] .note-workspace-bar .workspace-mode-switch button.active,
 .app[data-theme^="constructivist"] .note-workspace-bar .workspace-mode-switch button.active:hover {
-  background-color: transparent !important;
-  background-image: var(--mode-pill-active-bg);
+  background-color: var(--mode-pill-active-bg) !important;
+  background-image: none;
   border: 1px solid var(--mode-pill-active-border);
   color: var(--accent);
   font-weight: 600;
-  box-shadow: 0 2px 6px rgba(193, 75, 53, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.65);
+  box-shadow: 0 1px 3px rgba(52, 38, 18, 0.07);
 }
 
 .app[data-theme^="constructivist"] .note-workspace-bar .workspace-mode-switch[data-pill-motion="true"] button.active,
@@ -540,21 +572,22 @@
 }
 
 .app[data-theme="constructivist-dark"] .note-workspace-bar .workspace-mode-switch .mode-switch-thumb {
-  background-color: rgba(255, 255, 255, 0.04);
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.01) 52%, transparent 100%), var(--mode-pill-active-bg);
+  background-color: var(--mode-pill-active-bg);
+  background-image: none;
   border: 1px solid var(--mode-pill-active-border);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.24);
 }
 
 .app[data-theme="constructivist-dark"] .note-workspace-bar .workspace-mode-switch .mode-switch-thumb.is-gliding {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.36), inset 0 1px 2px rgba(255, 255, 255, 0.24);
+  box-shadow: 0 3px 9px rgba(0, 0, 0, 0.30);
 }
 
 .app[data-theme="constructivist-dark"] .note-workspace-bar .workspace-mode-switch button.active,
 .app[data-theme="constructivist-dark"] .note-workspace-bar .workspace-mode-switch button.active:hover {
-  background-image: var(--mode-pill-active-bg);
+  background-color: var(--mode-pill-active-bg) !important;
+  background-image: none;
   border: 1px solid var(--mode-pill-active-border);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.24);
 }
 
 .app[data-theme="constructivist-dark"] .note-workspace-bar .workspace-mode-switch[data-pill-motion="true"] button.active,
@@ -680,7 +713,8 @@
 
 .app[data-theme^="constructivist"] .search {
   height: 36px;
-  padding: 0 13px;
+  padding: 0 8px 0 11px;
+  gap: 5px;
   border-radius: 999px;
   border: 1px solid var(--glass-border);
   background-color: var(--liquid-glass-bg);
@@ -708,7 +742,7 @@
   background-image: var(--liquid-glass-sheen);
   backdrop-filter: var(--liquid-glass-blur);
   -webkit-backdrop-filter: var(--liquid-glass-blur);
-  box-shadow: 0 3px 8px rgba(42, 34, 22, 0.04), inset 0 1.5px 2px rgba(255, 255, 255, 0.96), inset 0 -1.5px 3px rgba(150, 128, 98, 0.06);
+  box-shadow: var(--glass-shadow);
 }
 
 .app .section-title {
@@ -720,11 +754,11 @@
 
 .app[data-theme^="constructivist"] .file-list {
   margin: 0 -8px;
-  padding: 4px 8px 36px;
+  padding: 4px 8px 16px;
   gap: 4px;
   scrollbar-width: auto;
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0px, #000 8px, #000 calc(100% - 34px), transparent 100%);
-  mask-image: linear-gradient(to bottom, transparent 0px, #000 8px, #000 calc(100% - 34px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0px, #000 6px, #000 calc(100% - 10px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0px, #000 6px, #000 calc(100% - 10px), transparent 100%);
 }
 
 .app[data-theme^="constructivist"] .file-row {
@@ -736,29 +770,23 @@
 }
 
 .app[data-theme^="constructivist"] .file-row:hover {
-  background-color: color-mix(in srgb, var(--liquid-glass-bg) 76%, transparent);
+  background-color: var(--pill-hover);
 }
 
 .app[data-theme^="constructivist"] .file-row.selected {
-  background-color: color-mix(in srgb, var(--surface) 90%, transparent);
-  background-image: var(--liquid-glass-sheen);
-  backdrop-filter: var(--liquid-glass-blur);
-  -webkit-backdrop-filter: var(--liquid-glass-blur);
+  background-color: var(--card-bg);
+  background-image: none;
   border-color: var(--glass-border);
-  box-shadow: 0 4px 10px rgba(42, 34, 22, 0.045), 0 1px 3px rgba(42, 34, 22, 0.025), inset 0 1.5px 2px rgba(255, 255, 255, 0.98), inset 0 -1.5px 3px rgba(150, 128, 98, 0.065);
+  box-shadow: var(--glass-shadow);
   color: var(--text);
   font-weight: 560;
 }
 
 .app[data-theme="constructivist-dark"] .file-row.selected {
   background-color: var(--selected-row-bg);
-  background-image: var(--liquid-glass-sheen);
+  background-image: none;
   border-color: var(--glass-border);
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.20), inset 0 1px 1.5px rgba(255, 255, 255, 0.09);
-}
-
-.app[data-theme^="constructivist"] .file-row.selected::before {
-  display: none;
+  box-shadow: var(--glass-shadow);
 }
 
 .app[data-theme^="constructivist"] :is(.file-icon, .folder-icon) {
@@ -766,13 +794,19 @@
   min-width: 34px;
   padding: 0 7px;
   border-radius: 999px;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 680;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.02em;
+}
+
+.app[data-theme^="constructivist"] .file-icon.epub {
+  min-width: 44px;
+  font-size: 11px;
+  letter-spacing: 0.01em;
 }
 
 .app[data-theme^="constructivist"] .file-icon.md {
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent);
 }
 
@@ -1257,8 +1291,7 @@
   border-radius: 18px;
   border: 1px solid var(--glass-border);
   background: var(--glass-bg-strong);
-  backdrop-filter: blur(10px) saturate(125%);
-  box-shadow: var(--glass-shadow), 0 8px 22px rgba(0, 0, 0, 0.14);
+  box-shadow: var(--glass-shadow), 0 8px 22px rgba(0, 0, 0, 0.12);
 }
 
 .app[data-theme^="constructivist"] .selection-toolbar,
@@ -1383,22 +1416,22 @@
     gap: 1px;
   }
   .app[data-theme^="constructivist"] .note-workspace-bar .compact-note-controls .workspace-icon-action {
-    width: 24px;
-    min-width: 24px;
-    height: 24px;
-    min-height: 24px;
+    width: 28px;
+    min-width: 28px;
+    height: 28px;
+    min-height: 28px;
     padding: 0;
   }
   .app[data-theme^="constructivist"] .note-workspace-bar .compact-note-controls .workspace-mode-switch {
     padding: 2px;
-    gap: 1px;
-    height: 26px;
+    gap: 2px;
+    height: 30px;
   }
   .app[data-theme^="constructivist"] .note-workspace-bar .compact-note-controls .workspace-mode-switch button {
-    width: 24px;
-    min-width: 24px;
-    height: 22px;
-    min-height: 22px;
+    width: 28px;
+    min-width: 28px;
+    height: 26px;
+    min-height: 26px;
     padding: 0;
     border-radius: 999px;
   }

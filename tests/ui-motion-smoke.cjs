@@ -52,7 +52,7 @@ test('short UI motion preserves editor history, panel focus, PDF page and reduce
       return Math.abs(btn.left - t.left) <= 1 && Math.abs(btn.width - t.width) <= 1;
     });
     assert.equal(alignedNoteThumb, true, 'edit/read thumb lands cleanly on active button');
-    const readingModeButton = noteMode.getByRole('button', { name: '阅读模式', exact: true });
+    const readingModeButton = noteMode.getByRole('button', { name: '预览模式', exact: true });
     await readingModeButton.evaluate(button => Promise.all(button.getAnimations({ subtree: true }).map(a => a.finished.catch(() => {}))));
     await readingModeButton.hover();
     const controlMotion = await readingModeButton.evaluate(button => ({

@@ -90,6 +90,7 @@ applyTheme(resolveTheme(initialThemePreference, window.matchMedia('(prefers-colo
 function App() {
   const appMotionRef = useRef<HTMLDivElement>(null);
   const [noteTabsTarget, setNoteTabsTarget] = useState<HTMLDivElement | null>(null);
+  const [noteTabAddTarget, setNoteTabAddTarget] = useState<HTMLDivElement | null>(null);
   const [noteControlsTarget, setNoteControlsTarget] = useState<HTMLDivElement | null>(null);
   const [readerHeaderTarget, setReaderHeaderTarget] = useState<HTMLDivElement | null>(null);
   const [activeSurface, setActiveSurfaceState] = useState<'reader' | 'note'>('note');
@@ -143,6 +144,8 @@ function App() {
   const directoryMotionSequence = useRef(0);
   const [query, setQueryState] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchedQuery, setSearchedQuery] = useState('');
   const secondInsertExcerpt = useRef<(block: string) => boolean>(() => false);
   const primaryInsertExcerpt = useRef<(block: string) => boolean>(() => false);
   const [message, setMessage] = useState('');
@@ -158,8 +161,16 @@ function App() {
   // Shared layout intent only; NoteWorkspace owns independent per-group opens.
   const openSequence = useRef(0);
   const directoryRequest = useRef(new LatestRequest()), searchRequest = useRef(new LatestRequest());
+  const searchTimerRef = useRef<number | null>(null);
   const setRoot = useCallback((value: string) => { directoryRequest.current.invalidate(); searchRequest.current.invalidate(); setRootState(value); }, []);
-  const setQuery = useCallback((value: string) => { searchRequest.current.invalidate(); setQueryState(value); setResults([]); }, []);
+  const setQuery = useCallback((value: string) => {
+    if (searchTimerRef.current !== null) { window.clearTimeout(searchTimerRef.current); searchTimerRef.current = null; }
+    searchRequest.current.invalidate();
+    setQueryState(value);
+    setResults([]);
+    setSearchLoading(false);
+    setSearchedQuery('');
+  }, []);
   const sessionWriter = useRef(new SessionWriter());
   const sessionRecovery = useRef(new SessionRecovery());
   const settingsRef = useRef<HTMLDivElement>(null);
@@ -645,11 +656,20 @@ function App() {
     try { releaseMutationBarrier(file.path); const tab = await sessionRecovery.current.open(workspace, file.path, group, true); if (tab && request === openSequence.current) setLayout(alongsideReader ? 'split' : 'note'); }
     catch (error) { setMessage(`无法在右栏打开：${String(error)}`); }
   }
-  async function runSearch() {
+  async function runSearch(searchTerm = query) {
+    if (searchTimerRef.current !== null) { window.clearTimeout(searchTimerRef.current); searchTimerRef.current = null; }
+    const trimmed = searchTerm.trim();
     const current = searchRequest.current.begin();
-    if (!root || !query.trim()) { setResults([]); return; }
-    try { const results = await reader().search({ root, query }); if (current()) setResults(results); }
-    catch (error) { if (current()) setMessage(`搜索失败：${error instanceof Error ? error.message : String(error)}`); }
+    if (!root || !trimmed) { setResults([]); setSearchLoading(false); setSearchedQuery(''); return; }
+    setSearchLoading(true);
+    try {
+      const nextResults = await reader().search({ root, query: searchTerm });
+      if (current()) { setResults(nextResults); setSearchedQuery(trimmed); }
+    } catch (error) {
+      if (current()) setMessage(`搜索失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      if (current()) setSearchLoading(false);
+    }
   }
   async function persistPdfChange(active: ActivePdf, change: (current: PdfMeta) => PdfMeta) {
     return readerSession.updatePdf(change, active);
@@ -660,6 +680,18 @@ function App() {
     const insertRef = target.group === 'primary' ? primaryInsertExcerpt : secondInsertExcerpt;
     return { ...target, insert: (block: string) => target.valid() && insertRef.current(block) };
   }
+  const runSearchRef = useRef(runSearch);
+  runSearchRef.current = runSearch;
+  useEffect(() => {
+    if (!root || !query.trim()) return;
+    searchTimerRef.current = window.setTimeout(() => {
+      searchTimerRef.current = null;
+      void runSearchRef.current(query);
+    }, 240);
+    return () => {
+      if (searchTimerRef.current !== null) { window.clearTimeout(searchTimerRef.current); searchTimerRef.current = null; }
+    };
+  }, [root, query]);
   const onPdfTextAction: PdfTextActionHandler = async (selection, action) => {
     const pdf = readerSession.currentPdf();
     const sessionGeneration = readerSession.currentGeneration();
@@ -891,6 +923,16 @@ function App() {
           <div className="settings-section">
             <button className="settings-row" title="F11 切换全屏；全屏时移到顶边显示工具栏，F6 聚焦工具栏" onClick={() => { setSettingsOpen(false); void reader().windowControl('fullscreen'); }}>{windowState.fullscreen ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}<span>全屏阅读</span><small>{windowState.fullscreen ? '退出' : '进入'} · F11</small></button>
           </div>
+          <details className="settings-section settings-shortcuts">
+            <summary>快捷键</summary>
+            <dl className="shortcut-list">
+              <div className="shortcut-row"><dt>保存笔记</dt><dd><kbd>Ctrl+S</kbd></dd></div>
+              <div className="shortcut-row"><dt>查找 / 替换</dt><dd><kbd>Ctrl+F</kbd> / <kbd>Ctrl+H</kbd></dd></div>
+              <div className="shortcut-row"><dt>切换 / 关闭标签</dt><dd><kbd>Ctrl+Tab</kbd> / <kbd>Ctrl+W</kbd></dd></div>
+              <div className="shortcut-row"><dt>从磁盘刷新</dt><dd><kbd>F5</kbd></dd></div>
+              <div className="shortcut-row"><dt>全屏阅读</dt><dd><kbd>F11</kbd></dd></div>
+            </dl>
+          </details>
           <details className="settings-section settings-about">
             <summary>关于</summary>
             <div className="about-content">
@@ -913,6 +955,8 @@ function App() {
           <div className="reader-header-slot" ref={setReaderHeaderTarget} style={epubVisible || layout === 'split' || layout === 'read' ? undefined : { display: 'none' }}/>
           <div className="note-header-slot" style={layout === 'read' ? { display: 'none' } : undefined}>
             <div className="document-tab-strip" ref={setNoteTabsTarget}/>
+            <div className="note-tab-add-slot" ref={setNoteTabAddTarget}/>
+            <span className="note-header-spacer" aria-hidden="true"/>
             <div className="note-controls-slot" ref={setNoteControlsTarget}/>
           </div>
         </div>
@@ -924,7 +968,12 @@ function App() {
       </header>
     <div className={sidebarMotion.present ? 'body' : 'body sidebar-hidden'}>
       {sidebarMotion.present && <aside ref={sidebarMotion.ref} className="sidebar" aria-hidden={!sidebar}>
-        <div className="search"><Search size={16}/><input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => event.key === 'Enter' && void runSearch()} placeholder="搜索文件名或笔记内容" aria-label="搜索文件名或笔记内容"/>{query && <button aria-label="清空搜索" title="清空搜索" onClick={() => { setQuery(''); setResults([]); }}><X size={14}/></button>}</div>
+        <div className="search"><Search size={16}/><input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => event.key === 'Enter' && void runSearch()} placeholder="搜索文件名或笔记内容" aria-label="搜索文件名或笔记内容"/>{!query && <span className="search-hint-tag" aria-hidden="true">搜全文</span>}{query && <button aria-label="清空搜索" title="清空搜索" onClick={() => setQuery('')}><X size={14}/></button>}</div>
+        {!!root && !!query.trim() && (searchLoading || searchedQuery === query.trim() || results.length > 0) && <div className="sidebar-search-results" aria-live="polite">
+          <div className="section-title"><span>搜索结果</span><span>{searchLoading ? '搜索中…' : `${results.length} 项`}</span></div>
+          {results.map(result => <button className="result-row" key={result.path} onContextMenu={event => showContext(event, { ...result, kind: 'file' })} onClick={event => void openEntry(result, { replaceCurrentNote: !event.ctrlKey })} onDoubleClick={() => void openEntry(result)}><b>{result.name}</b><small>{result.snippet || '文件名匹配'}</small></button>)}
+          {!searchLoading && !results.length && <div className="search-status-empty">没有找到包含“{query.trim()}”的笔记</div>}
+        </div>}
         {root && directory && <div className="folder-navigation">
           <button {...(directory.parent ? fileMoveUi.targetProps(directory.parent) : {})} className="folder-back" aria-label="返回上一级文件夹" title="返回上一级" disabled={!directory.parent} onClick={() => directory.parent && void loadDirectory(root, directory.parent, 'exit')}><ArrowLeft size={16}/></button>
           <div className="folder-address" aria-label="当前文件夹地址" title={directory.directory}><FolderOpen size={14}/><div className="folder-crumbs">{directory.breadcrumbs.map((crumb, index) => <React.Fragment key={crumb.path}>{index > 0 && <ChevronRight size={11} className="crumb-separator"/>}<button {...fileMoveUi.targetProps(crumb.path)} title={crumb.path} aria-current={index === directory.breadcrumbs.length - 1 ? 'location' : undefined} onClick={() => void loadDirectory(root, crumb.path, index < directory.breadcrumbs.length - 1 ? 'exit' : undefined)}>{crumb.name}</button></React.Fragment>)}</div></div>
@@ -939,7 +988,6 @@ function App() {
           return renaming ? <div className="file-row inline-entry-row" key={entry.path}>{body}</div> : <button {...fileMoveUi.entryProps(entry)} data-entry-path={entry.path} title={entry.path} className={'file-row ' + (activePath === entry.path ? 'selected' : '')} key={entry.path} style={{ '--folder-row-delay': `${Math.min(index, 3) * 18}ms` } as React.CSSProperties} onContextMenu={event => showContext(event, entry)} onClick={event => void openBrowserEntry(entry, event.ctrlKey)} onDoubleClick={() => void openBrowserEntry(entry, true)}>{body}{entry.kind === 'folder' && <ChevronRight size={14} className="folder-enter"/>}</button>;
         }) : visibleRecent.map(file => { const activePath = file.type === 'pdf' ? activePdf?.path : file.type === 'epub' ? activeEpub?.path : workspace.currentDocument()?.note.path; return <button title={file.path} className={'file-row ' + (activePath === file.path ? 'selected' : '')} key={file.path} onContextMenu={event => showContext(event, { ...file, kind: 'file' })} onClick={event => void openEntry(file, { replaceCurrentNote: !event.ctrlKey })} onDoubleClick={() => void openEntry(file)}><span className={'file-icon ' + file.type}>{file.type === 'pdf' ? 'PDF' : file.type === 'epub' ? 'EPUB' : 'MD'}</span><span className="file-name">{file.name}</span></button>; })}{!(root ? visibleDirectory.length : visibleRecent.length) && <div className="empty-small"><FolderOpen size={20}/><span>{root ? '这个文件夹里没有可阅读的文件' : '打开文件夹后，资料会显示在这里'}</span></div>}
         </div>
-        {!!results.length && <><div className="section-title">搜索结果</div>{results.map(result => <button className="result-row" key={result.path} onContextMenu={event => showContext(event, { ...result, kind: 'file' })} onClick={event => void openEntry(result, { replaceCurrentNote: !event.ctrlKey })} onDoubleClick={() => void openEntry(result)}><b>{result.name}</b><small>{result.snippet || '文件名匹配'}</small></button>)}</>}
       </aside>}
       <main className="main">
         <div ref={panesRef} className={'panes ' + layout + (noteSplit ? ' dual-notes' : '')} style={{ '--split-at': `${splitAt}%` } as React.CSSProperties}>
@@ -947,12 +995,12 @@ function App() {
             ? <Suspense fallback={<section className="pane epub-pane"><div className="empty-state">正在载入电子书…</div></section>}><LazyEpubPane key={activeEpub.path} epub={activeEpub} theme={resolvedTheme} noteBodyFont={noteBodyFont} readingSize={readingSize} headerTarget={readerHeaderTarget} active={activeSurface === 'reader'} closing={readerClosing} onActivate={() => setActiveSurface('reader')} onClose={() => void closeEpub()} onMeta={change => readerSession.updateEpub(change, activeEpub)} onMessage={setMessage} onExcerpt={insertEpubExcerpt} onSelectionAction={saveEpubSelection} excerptTarget={activeDoc ? (workspace.activeGroup === 'secondary' ? '摘录到右栏' : '摘录到当前笔记') : null} target={isEpubAnchor(target) ? target : null}/></Suspense>
             : activePdf
               ? <Suspense fallback={<section className="pane pdf-pane"><div className="empty-state">正在载入 PDF…</div></section>}><LazyPdfPane onActivate={() => setActiveSurface('reader')} dark={THEMES[resolvedTheme].colorScheme === 'dark'} pdf={activePdf} page={page} setPage={value => readerSession.setPage(value)} scale={scale} setScale={value => readerSession.setScale(value)} fullscreen={windowState.fullscreen} onToggleFullscreen={() => { void reader().windowControl('fullscreen'); }} onMeta={change => activePdf ? readerSession.updatePdf(change, activePdf) : Promise.resolve(false)} captureExcerpt={capturePdfExcerpt} onTextAction={onPdfTextAction} canExcerpt={!!activeDoc && !activeDoc.blocked()} target={target && 'pdfId' in target ? target : null} onMessage={setMessage} headerTarget={layout === 'split' || layout === 'read' ? readerHeaderTarget : null}/></Suspense>
-              : <EmptyReaderPane fullscreen={windowState.fullscreen} onToggleFullscreen={() => { void reader().windowControl('fullscreen'); }} onActivate={() => setActiveSurface('reader')} headerTarget={layout === 'split' || layout === 'read' ? readerHeaderTarget : null}/>)}
+              : <EmptyReaderPane fullscreen={windowState.fullscreen} onToggleFullscreen={() => { void reader().windowControl('fullscreen'); }} onActivate={() => setActiveSurface('reader')} onOpenFiles={() => void openFiles()} onOpenWorkspace={openWorkspace} headerTarget={layout === 'split' || layout === 'read' ? readerHeaderTarget : null}/>)}
           {(layout === 'split' || noteSplit) && <PaneSplitter key={'splitter:' + (noteSplit ? 'notes' : activeEpub?.path || activePdf?.path || 'reader')} container={panesRef} header={layout === 'split' ? splitHeaderRef : undefined} ratio={splitAt} onChange={setSplitAt} label={noteSplit ? '调整左右笔记宽度' : '调整阅读与笔记宽度'} deferred={!!activeEpub}/>}
           {(['primary', 'secondary'] as const).map(group => <NoteGroupPane key={group} workspace={workspace} group={group}
             split={noteSplit}
             showSplitButton={layout !== 'split'}
-            tabsTarget={noteTabsTarget} controlsTarget={noteControlsTarget}
+            tabsTarget={noteTabsTarget} tabAddTarget={noteTabAddTarget} controlsTarget={noteControlsTarget}
             foreground={!epubVisible || activeSurface === 'note'} onFocus={() => setActiveSurface('note')}
             hidden={layout === 'read' || (layout === 'split' ? workspace.activeGroup !== group : group === 'secondary' && !workspace.groups.secondary.tabs.length)}
             findCommand={findCommand?.pane === group ? findCommand : null} onJump={jumpTo}

@@ -205,8 +205,10 @@ test('PDF single-row controls preserve tools, navigation and usable narrow readi
       const rect = await button.boundingBox(), bounds = await host.boundingBox();
       assert.ok(rect && bounds && rect.x >= bounds.x - 1 && rect.x + rect.width <= bounds.x + bounds.width + 1, name);
     }
-    for (const name of ['查找', '源码编辑模式', '切换到预览', '展开大纲', '新建空白标签']) {
-      const button = noteTools.getByRole('button', { name, exact: true });
+    for (const [host, name] of [
+      [noteTools, '查找'], [noteTools, '源码编辑模式'], [noteTools, '切换到预览'], [noteTools, '展开大纲'], [noteSlot, '新建空白标签'],
+    ]) {
+      const button = host.getByRole('button', { name, exact: true });
       await button.scrollIntoViewIfNeeded();
       const rect = await button.boundingBox(), bounds = await noteSlot.boundingBox();
       assert.ok(rect && bounds && rect.x >= bounds.x - 1 && rect.x + rect.width <= bounds.x + bounds.width + 1, `note control is reachable: ${name}`);

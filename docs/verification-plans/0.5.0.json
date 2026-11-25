@@ -1,0 +1,27 @@
+{
+  "reason": "Directed Windows verification for 0.5.0 covering Option B matte stationery redesign across all three themes, topbar tab/preview/add-tab layout, live sidebar search, empty reader actions, and core editor/reader stability.",
+  "source": [
+    "tests/appearance-smoke.cjs",
+    "tests/body-font-smoke.cjs",
+    "tests/chrome-interaction-smoke.cjs",
+    "tests/editor-polish-smoke.cjs",
+    "tests/fullscreen-chrome-smoke.cjs",
+    "tests/note-tabs-smoke.cjs",
+    "tests/note-toolbar-smoke.cjs",
+    "tests/pdf-toolbar-smoke.cjs",
+    "tests/themes-smoke.cjs",
+    "tests/window-startup-smoke.cjs"
+  ],
+  "packaged": [
+    "tests/appearance-smoke.cjs",
+    "tests/body-font-smoke.cjs",
+    "tests/chrome-interaction-smoke.cjs",
+    "tests/editor-polish-smoke.cjs",
+    "tests/fullscreen-chrome-smoke.cjs",
+    "tests/note-tabs-smoke.cjs",
+    "tests/note-toolbar-smoke.cjs",
+    "tests/pdf-toolbar-smoke.cjs",
+    "tests/themes-smoke.cjs",
+    "tests/window-startup-smoke.cjs"
+  ]
+}

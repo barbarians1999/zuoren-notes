@@ -8,12 +8,12 @@ import { createPortal } from 'react-dom';
 import type { NoteWorkspace, NoteGroupId } from './noteWorkspace';
 import { ContextMenu } from '../ui/overlays';
 
-export function NoteGroupPane({ workspace, group, findCommand, onJump, insertRegister, scrollMemory, rememberScroll, onOpen, onNew, onRight, onSplit, split, showSplitButton = true, hidden = false, tabsTarget, controlsTarget, foreground = true, onFocus }: {
+export function NoteGroupPane({ workspace, group, findCommand, onJump, insertRegister, scrollMemory, rememberScroll, onOpen, onNew, onRight, onSplit, split, showSplitButton = true, hidden = false, tabsTarget, tabAddTarget = null, controlsTarget, foreground = true, onFocus }: {
   workspace: NoteWorkspace; group: NoteGroupId; findCommand: FindCommand | null;
   onJump: (anchor: ReaderAnchor, path?: string) => void; insertRegister: MutableRefObject<(block: string) => boolean>;
   scrollMemory: MarkdownScrollMemory[]; rememberScroll: (entry: MarkdownScrollMemory) => void;
   onOpen: () => void; onNew: () => void; onRight: (path: string) => void; onSplit: () => void; split: boolean; showSplitButton?: boolean; hidden?: boolean;
-  tabsTarget: HTMLElement | null; controlsTarget: HTMLElement | null;
+  tabsTarget: HTMLElement | null; tabAddTarget?: HTMLElement | null; controlsTarget: HTMLElement | null;
   foreground?: boolean; onFocus?: () => void;
 }) {
   const [menu, setMenu] = useState<{ id: string; x: number; y: number; trigger: HTMLElement | null } | null>(null);
@@ -82,17 +82,20 @@ export function NoteGroupPane({ workspace, group, findCommand, onJump, insertReg
         <button tabIndex={-1} aria-label={'关闭 ' + (item.document?.note.path.split(/[\\/]/).pop() || '空白标签')} title="关闭标签（Ctrl+W）" onClick={() => void workspace.close(group, item)}><X size={13}/></button>
       </div>)}
     </div>, tabsTarget)}
+    {tabAddTarget && !hidden && workspace.activeGroup === group && createPortal(<span className="note-tab-add-group" data-tabs-group={group}><button className="workspace-icon-action" aria-label="新建空白标签" title="新建空白标签" onClick={() => workspace.blank(group)}><Plus size={16}/></button></span>, tabAddTarget)}
     <NotePane paneId={group} onActivate={id => workspace.activeGroup !== id && workspace.activate(id)} findCommand={findCommand}
       note={doc?.note || null} text={doc?.text || ''} label={doc?.label} mode={tab?.mode || 'edit'} setMode={mode => { if (tab) workspace.setMode(group, tab.id, mode === 'preview' ? 'preview' : 'edit'); }}
       onSave={() => { if (doc) void doc.save(); }} onJump={onJump} revision={doc?.revision || 0} excerptRegister={insertRegister}
       sharedDocument={doc} tab={tab} scrollMemory={scrollMemory} onScrollMemory={scroll} hidden={hidden}
       unifiedHeader headerTarget={!hidden && workspace.activeGroup === group ? controlsTarget : null}
-      headerControls={<><button className="workspace-icon-action" aria-label="新建空白标签" title="新标签" onClick={() => workspace.blank(group)}><Plus size={16}/></button>
-        <button className="workspace-icon-action" aria-label="从磁盘刷新笔记" title={doc?.externalReadError || '从磁盘刷新（F5）：保留未保存内容，发生冲突时提示'} disabled={!doc || doc.polling || doc.blocked() || workspace.committing} onClick={() => { if (doc) void doc.refresh(); }}><RefreshCw size={16}/></button>
+      headerControls={<>{!tabAddTarget && <button className="workspace-icon-action" aria-label="新建空白标签" title="新标签" onClick={() => workspace.blank(group)}><Plus size={16}/></button>}
+        {doc?.externalReadError && <button className="workspace-icon-action" aria-label="从磁盘刷新笔记" title={doc.externalReadError} disabled={doc.polling || doc.blocked() || workspace.committing} onClick={() => void doc.refresh()}><RefreshCw size={16}/></button>}
+        <span className="note-controls-divider" aria-hidden="true" />
         {showSplitButton && <button className={'workspace-icon-action' + (split ? ' active' : '')} aria-label="左右分屏笔记" aria-pressed={split} title={split ? '恢复单栏（保留全部标签）' : '在右侧打开当前笔记'} onClick={onSplit}><Columns2 size={17}/></button>}</>}/>
     {!doc && <div className="empty-tab-actions"><button onClick={onOpen}>打开笔记</button><button onClick={onNew}>新建笔记</button></div>}
     <ContextMenu open={!!(selected && menu)} x={menu?.x ?? 0} y={menu?.y ?? 0} returnFocus={menu?.trigger} label="标签操作" onClose={() => setMenu(null)}>
       {selected && menu && selected.document && <button role="menuitem" onClick={() => { setMenu(null); onRight(selected.document!.note.path); }}>在右侧打开</button>}
+      {selected && menu && selected.document && <button role="menuitem" disabled={selected.document.polling || selected.document.blocked() || workspace.committing} onClick={() => { const targetDoc = selected.document; setMenu(null); if (targetDoc) void targetDoc.refresh(); }}><span>从磁盘刷新</span><kbd aria-hidden="true">F5</kbd></button>}
       {selected && menu && !!workspace.groups.secondary.tabs.length && <><button role="menuitem" aria-label="交换左右笔记" onClick={() => { setMenu(null); workspace.swap(); }}><ArrowLeftRight size={15}/>交换左右笔记</button>
         <button role="menuitem" aria-label="关闭笔记分屏" onClick={() => { setMenu(null); workspace.merge(); }}><Columns2 size={15}/>合并左右标签</button></>}
       {selected && menu && !!selected.document?.retainedRecoveryIds.length && <button role="menuitem" onClick={() => { setMenu(null); void workspace.copyRetainedRecovery(selected.document!).catch(workspace.report); }}>旧恢复稿副本</button>}

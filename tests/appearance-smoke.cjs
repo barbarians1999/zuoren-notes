@@ -159,17 +159,17 @@ test('note font setting persists without rebuilding editors and context menus st
   assert.equal(await page.evaluate(() => localStorage.getItem('zhaoye-note-font')), 'fangsong');
 
   const interfaceFont = await fontFamily(page.locator('.settings-popover'));
-  assert.match(interfaceFont, /Consolas/);
-  assert.match(await fontFamily(page.locator('.sidebar')), /Consolas/);
-  assert.match(await fontFamily(page.locator('.file-row').first()), /Consolas/);
-  assert.match(await fontFamily(page.locator('.document-tab').first()), /Consolas/);
+  assert.doesNotMatch(interfaceFont, /Consolas/);
+  assert.doesNotMatch(await fontFamily(page.locator('.sidebar')), /Consolas/);
+  assert.doesNotMatch(await fontFamily(page.locator('.file-row').first()), /Consolas/);
+  assert.doesNotMatch(await fontFamily(page.locator('.document-tab').first()), /Consolas/);
   assert.match(await fontFamily(page.getByRole('button', { name: '设置', exact: true })), /Zhaoye Buttons/);
   const uiWidths = await page.locator('.settings-popover').evaluate(element => {
     const probe = document.createElement('span'); probe.style.font = getComputedStyle(element).font; probe.style.position = 'absolute'; element.append(probe);
     probe.textContent = 'iiii'; const narrow = probe.getBoundingClientRect().width;
     probe.textContent = 'WWWW'; const wide = probe.getBoundingClientRect().width; probe.remove(); return { narrow, wide };
   });
-  assert.ok(Math.abs(uiWidths.narrow - uiWidths.wide) < .1, 'UI Latin glyphs must be monospaced');
+  assert.ok(uiWidths.narrow < uiWidths.wide, 'UI Latin glyphs use proportional sans-serif');
   assert.match(await fontFamily(primaryHeading), /Zhaoye Heading/);
   const codeFont = await fontFamily(codeScroller);
   const inlineCodeFont = await fontFamily(primary.locator('.cm-md-inline-code-content').first());

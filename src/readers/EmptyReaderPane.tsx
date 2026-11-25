@@ -5,11 +5,15 @@ export function EmptyReaderPane({
   fullscreen,
   onToggleFullscreen,
   onActivate,
+  onOpenFiles,
+  onOpenWorkspace,
   headerTarget = null,
 }: {
   fullscreen: boolean;
   onToggleFullscreen: () => void;
   onActivate: () => void;
+  onOpenFiles?: () => void;
+  onOpenWorkspace?: () => void;
   headerTarget?: HTMLElement | null;
 }) {
   const headerToolbar = (
@@ -42,8 +46,15 @@ export function EmptyReaderPane({
         <div className="pdf-viewport-stage">
           <div className="pdf-canvas-wrap continuous-pdf">
             <div className="empty-state">
-              <BookOpen size={28} />
+              <div className="empty-icon"><BookOpen size={26} /></div>
               <p>打开 PDF 或 EPUB 开始阅读</p>
+              <small>支持批注高亮、划词摘录，并与右侧 Markdown 笔记双向回跳原文</small>
+              {(onOpenFiles || onOpenWorkspace) && (
+                <div className="empty-reader-actions">
+                  {onOpenFiles && <button type="button" className="empty-reader-primary" onClick={onOpenFiles}>打开 PDF / EPUB</button>}
+                  {onOpenWorkspace && <button type="button" className="empty-reader-secondary" onClick={onOpenWorkspace}>打开资料文件夹</button>}
+                </div>
+              )}
             </div>
           </div>
         </div>
