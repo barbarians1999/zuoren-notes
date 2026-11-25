@@ -4,7 +4,7 @@
 
 ## 1. 确定范围并提交
 
-先核对工作区、确定版本与发布范围，审查源码、`package.json`、锁文件、CHANGELOG 和回归，再明确暂存并提交。脚本不自动暂存或提交。正式构建要求干净工作区。
+先核对工作区、确定版本与发布范围，审查源码、`package.json`、锁文件、CHANGELOG 和回归，再明确暂存并提交。脚本不自动暂存或提交。正式构建要求干净工作区。正式 `pnpm release`（以及本地 `post-commit` Git 钩子）在处于 `codex/release-*` 分支时，会自动将分支名称对齐到 `package.json` 中的版本号（不改写提交记录，也不影响非发布分支）。
 
 入口是 `pnpm release`；`pnpm package:installer` 只是同一入口的别名，不再额外跑一遍 `verify`。低层 `scripts/installer.cjs` 只制作构建，不等于验收。不要叠加执行多个完整入口。
 

@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { createWriteStream } = require('node:fs');
-const { options, passed, tapResult } = require('./release-support.cjs');
+const { options, passed, tapResult, syncReleaseBranch } = require('./release-support.cjs');
 const { testPlan } = require('./verification-plan.cjs');
 const { releaseDirectory } = require('./release-paths.cjs');
 const { sha256, sourceIdentity, testIdentity, readJson, writeJson, verifyReceipt, assertReusableBuild, directoryIdentity } = require('./delivery-receipt.cjs');
@@ -42,6 +42,11 @@ async function main() {
   if (args.version && args.version !== manifest.version) throw Error('Version differs from package.json');
   if (source.dirty && !args.localTest) throw Error('Review and commit release source first; --local-test is explicitly non-publishable');
   const plan = testPlan(root, args.profile, args.plan && path.resolve(args.plan)), version = manifest.version;
+  if (!args.localTest) {
+    const branchSync = syncReleaseBranch(root, version);
+    if (branchSync.changed) console.log(`[delivery] release branch synced: ${branchSync.from} -> ${branchSync.branch}`);
+    else if (branchSync.conflict) console.log(`[delivery] branch ${branchSync.target} exists at another commit; staying on ${branchSync.branch}`);
+  }
   const directory = args.receipt ? path.dirname(path.resolve(args.receipt)) : args.localTest
     ? path.join(root, 'releases', `local-test-${version}-${source.inputs.sha256.slice(0, 12)}`) : releaseDirectory(root);
   if (path.dirname(directory) !== path.join(root, 'releases')) throw Error('Delivery must stay inside this repository releases directory');

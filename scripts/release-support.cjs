@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
 
 function options(args) {
   const result = { profile: 'full', publish: false, cleanup: false, resume: false, version: null, plan: null, localTest: false, receipt: null };
@@ -151,4 +152,36 @@ async function checkPublication(api, { releaseId, tag, sourceCommit, assets, pub
   }
   return release;
 }
-module.exports = { options, changes, checkMac, passed, tapResult, releaseForTag, checkPublication, tagCommit };
+/**
+ * Align a `codex/release-*` branch name with the current package version without changing HEAD.
+ * @param {string} root
+ * @param {string} version
+ * @param {{ git?: string }} [options]
+ */
+function syncReleaseBranch(root, version, { git = process.env.ZUOREN_RELEASE_GIT || 'git' } = {}) {
+  const runGit = args => execFileSync(git, args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const current = runGit(['rev-parse', '--abbrev-ref', 'HEAD']);
+  const target = `codex/release-${version}`;
+  if (!current || current === 'HEAD' || !/^codex\/release-/.test(current) || current === target) {
+    return { changed: false, branch: current || target, reason: current === target ? 'already-aligned' : 'non-release-branch' };
+  }
+  let targetExists = true;
+  try {
+    runGit(['show-ref', '--verify', '--quiet', `refs/heads/${target}`]);
+  } catch {
+    targetExists = false;
+  }
+  if (!targetExists) {
+    runGit(['checkout', '-b', target]);
+    return { changed: true, created: true, from: current, branch: target };
+  }
+  const headSha = runGit(['rev-parse', 'HEAD']);
+  const targetSha = runGit(['rev-parse', `refs/heads/${target}`]);
+  if (headSha === targetSha) {
+    runGit(['checkout', target]);
+    return { changed: true, created: false, from: current, branch: target };
+  }
+  return { changed: false, conflict: true, branch: current, target };
+}
+
+module.exports = { options, changes, checkMac, passed, tapResult, releaseForTag, checkPublication, tagCommit, syncReleaseBranch };

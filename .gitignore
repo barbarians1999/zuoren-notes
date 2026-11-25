@@ -11,6 +11,7 @@ exports/
 *.log
 *.traineddata
 .reader/
+.impeccable/
 .DS_Store
 Thumbs.db
 
